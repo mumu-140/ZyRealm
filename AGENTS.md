@@ -4,6 +4,24 @@
 开始任何工作前必须先读本文件，再按需读取 `docs/octopus-development-governance.md` 和
 `docs/octopus-production.md`。
 
+## 0. 验证执行位置（本节优先于本文件其余各节）
+
+- 禁止在本机开发工作站执行任何构建与测试验证，包括但不限于 `go build`、`go test`、
+  `go vet`、`docker build`、`pnpm install`、`pnpm lint`、`pnpm test`、`pnpm build`
+  和镜像旁路构建。本机只允许读取、编辑、搜索、`gofmt`/格式化和 `git` 操作。
+- 构建与测试只允许在服务器侧执行，位置只有两处：
+  1. GitHub CI：主题分支推送后的 `governance`、`backend`、`frontend` 三个 job；
+  2. fwq57ys 的 `/opt/octopus-mumu/`，且 Go 与前端命令必须在固定版本容器内运行。
+     宿主没有 `go`，`go: command not found` 不是通过证据；容器按 §6 使用唯一名称并在
+     验证后精确删除。
+- 唯一例外是 `.githooks/pre-push` 调用的 `scripts/check-governance.sh --repo`：
+  它只做文本、Git 和 JSON 一致性检查，不编译也不跑测试，本机必须保持可执行。
+  禁止用本节当作 `--no-verify` 或跳过 hook 的理由。
+- 本机产生的构建或测试输出不是验证证据，禁止写入完成报告或用于判定“已验证”。
+  报告只接受 CI run URL，或服务器容器内命令的原始输出。
+- 服务器侧无法执行时停止并说明原因，不得退回本机自行验证，也不得把静态阅读
+  写成验证通过。
+
 ## 1. 唯一真值
 
 | 对象 | 唯一位置 | 允许操作 |
@@ -53,12 +71,14 @@
 
 ## 4. 标准开发流程
 
-1. 运行 `scripts/check-governance.sh --repo`。
+1. 运行 `scripts/check-governance.sh --repo`（纯文本/Git 检查，不属于 §0 禁止的构建测试）。
 2. 确认工作树干净，执行 `git fetch origin`，从 `origin/main` 创建主题分支。
-3. 只实现当前任务；代码变更先测试，再实现，再回归。
-4. 后端至少运行 `go test -buildvcs=false ./...`；前端至少运行
-   `pnpm install --frozen-lockfile` 和 `pnpm lint`。
-5. 构建或部署相关变更必须额外运行 Dockerfile、compose 和完整镜像旁路构建检查。
+3. 只实现当前任务；代码变更先写测试，再实现，再回归；本机只写代码与测试，不执行它们。
+4. 验证在服务器侧完成（见 §0）：后端至少 `go test -buildvcs=false ./...`；前端至少
+   `pnpm install --frozen-lockfile` 和 `pnpm lint`、`pnpm test`。推送主题分支由 GitHub CI
+   执行三个 job，或在 fwq57ys 固定版本容器内执行同样命令。
+5. 构建或部署相关变更必须额外完成 Dockerfile、compose 和完整镜像旁路构建检查，
+   同样只在服务器侧执行。
 6. 提交并推送主题分支，等待 GitHub CI 全部通过。
 7. 审查通过后才允许普通快进 `main`。本机 hook 要求显式设置
    `OCTOPUS_MAIN_PROMOTION=1`，该变量表示“已核对 CI 与审查”，不是免检开关。

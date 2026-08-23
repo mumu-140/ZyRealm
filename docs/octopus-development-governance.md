@@ -126,11 +126,14 @@ CI 的 SHA 晋级。发布和部署另行授权，合并 `main` 不自动触发�
 
 ## 按改动类型验证
 
-下表是最低门禁，不替代针对缺陷新增的测试。fwq57ys 宿主当前没有 `go` 命令；
+下表是最低门禁，不替代针对缺陷新增的测试。**执行位置按 `AGENTS.md` §0：下表所有构建与
+测试命令一律禁止在本机开发工作站执行，只在 GitHub CI 或 fwq57ys 的固定版本容器内运行。**
+唯一例外是 `scripts/check-governance.sh --repo`（纯文本/Git/JSON 检查，不编译不跑测试），
+本机保持可执行以支撑 `.githooks/pre-push`。fwq57ys 宿主当前没有 `go` 命令；
 `go: command not found` 不是通过证据，后端全量测试必须由 GitHub CI 或等价的固定 Go 1.25
-环境完成。
+环境完成。本机跑出的测试输出不得写入完成报告。
 
-| 改动 | 最低本地/固定环境验证 | 额外证据 |
+| 改动 | 最低服务器侧验证（CI 或 fwq57ys 容器） | 额外证据 |
 | --- | --- | --- |
 | 仅文档/治理脚本 | `bash -n scripts/check-governance.sh`；`scripts/check-governance.sh --repo` | 新旧路径搜索、主题分支 governance CI |
 | 普通 Go 逻辑 | 相关 package 测试；`go test -buildvcs=false ./...` | 失败用例先失败、修复后通过；backend CI |
@@ -190,6 +193,9 @@ descriptor … not found` 失败，`gh run rerun --failed` 即成功）。先按
 - 禁止把 `latest`、上游基础镜像、Docker Hub 同名镜像或本地测试镜像当生产镜像。
 - 禁止设置 `UPDATE_PRICE_DATA=1` 顺带刷新价格；价格更新必须独立审查差异。
 - 禁止因宿主缺少 Go/pnpm 而跳过测试并把静态阅读写成验证通过。
+- 禁止在本机开发工作站执行构建与测试（`go build/test/vet`、`docker build`、`pnpm
+  install/lint/test/build`、旁路镜像构建）；也禁止把本机跑出的结果当验证证据。
+  见 `AGENTS.md` §0。
 - 禁止未获维护窗口授权时执行生产容器生命周期命令或生产数据写入。
 - 禁止在当前代理 API 所依赖的前台 SSH 会话中 stop/restart/recreate Octopus。
 
@@ -202,6 +208,7 @@ descriptor … not found` 失败，`gh run rerun --failed` 即成功）。先按
 | 前端 Docker 安装阶段找不到/拒绝构建原生依赖 | pnpm 版本或原生依赖许可文件未同步进入构建上下文 | 以 `web/package.json` 的 `packageManager` 为准；安装前复制 lockfile 和 `web/pnpm-workspace.yaml` | 在 Dockerfile 单独升级 pnpm，或删除 allowBuilds |
 | 构建时价格表意外变化 | 设置了 `UPDATE_PRICE_DATA=1` 会刷新仓库价格数据 | 默认使用已提交价格；价格任务先审查和提交差异，再构建 | 发布功能时顺带刷新价格 |
 | 代码、Web、Compose 或状态清单看似混合新旧值 | 应用源码、部署 staging 和 live 指纹是三个阶段 | 按发布与部署字段矩阵分阶段同步；staging 只声称“待切换”，切换后再写真实 inspect | 把 staging 状态说成已运行，或强行让 tag 指向部署提交 |
+| HealthFirst 各档候选顺序在连续请求间不变；或不限并发渠道被 LeastUsed/P2C 持续偏爱 | 档循环内每档各调一次 `nextRotation`，多档偏移按同一序列推进互相抵消；`MaxConcurrency<=0` 直接 return 不计数，负载恒为 0 | 每请求只取一次轮换偏移供全部档共用；不限并发只跳过上限检查，计数照常（见 `docs/octopus-channel-model-health-design.md` §10） | 只断言「顺序合法」或「不限并发能放行」——顺序冻结与零计数都满足这类断言 |
 | 新改动被误判为 `go vet` 回归 | `.9` 基线在 `internal/relay/protocol_attempt.go:187` 已有 copy-lock 告警 | 单独记录基线和新增告警；当前任务仍须通过规定的 Go tests/CI | 把既有告警说成本轮修复，或用它解释所有失败 |
 
 ## 停止条件
