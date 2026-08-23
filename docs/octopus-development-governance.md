@@ -23,28 +23,20 @@ inspect 证据为准。以下四项必须分别记录，不得相互推导：
 
 `main` 更新、Release 成功、镜像已存在和容器已切换是四个不同状态。
 
-## 当前生产台账
+## 生产真值来源
 
-`deploy/fwq57ys/production-state.json` 是当前生产运行指纹的唯一机器可读台账。本节只做索引，
-逐字数值见该文件与 `docs/octopus-production.md` 的“当前生产真值”表；两处冲突时以状态清单和
-实时 Docker inspect 为准。
+运行指纹只从两处读取，本手册和交付报告都不复制具体数值：
 
-按三阶段状态模型，当前处于 **live 已核验**：
+1. `deploy/fwq57ys/production-state.json`：唯一机器可读台账（release/tag/sourceCommit、
+   镜像与 image ID、容器 ID、StartedAt、restart count、数据挂载、回滚快照）；
+2. fwq57ys 上的实时 `docker inspect` 与 `scripts/check-governance.sh --live`。
 
-| 阶段 | 版本 | 依据 |
-| --- | --- | --- |
-| live 已核验 | `v0.10.2-mumu.26` | 容器 `octopus` / `5e9ee7e0e674`，启动于 `2026-08-23T16:43:17Z`，restart count `0`；镜像 `mumu-140/octopus-concurrency:v0.10.2-mumu.26`（`sha256:9d8a2b16`），应用源码 `d5b76ab`（含 `3e1b7e8` 健康/熔断/并发链路修复）；后台任务 `v0.10.2-mumu.26-cutover-20260823T163936Z` 状态 `COMPLETE` |
-| 回滚基线 | `v0.10.2-mumu.24` | 本机仍保留镜像 `sha256:04fc3080`（应用源码 `3d3a0b6`）与预建容器 `octopus-rollback-v0.10.2-mumu.24`（`Created`，未启动）；曾以容器 `e07192749ea6` 运行至 `2026-08-23T16:43:14Z` |
-| 已跳过 | `v0.10.2-mumu.25` | 曾为 staging 目标（应用源码 `d08d8b7`），从未切换容器；`.26` 已包含其全部源码，不再作为部署目标 |
+两者冲突时以实时 inspect 为准，先查明漂移再动手。回滚网的命名与保留规则见
+`docs/octopus-production.md`。
 
-生产界面“当前版本”自 `.26` 切换完成后显示 `.26`：`Dockerfile.build` 用 `GIT_VERSION`
-把版本烤进后端二进制和前端产物，因此界面版本等于运行镜像的构建 tag，与工作树中的版本字段
-无关。界面“最新版本”是对 GitHub Release 的更新检查结果，同为 `.26`。
-
-`v0.10.2-mumu.26` 切换的回滚安全网为
-`/opt/octopus/backups/pre-v0.10.2-mumu.26-cutover-20260823T163936Z`（`quick_check` ok），
-外加预建容器 `octopus-rollback-v0.10.2-mumu.24` 与本机 `.24` 镜像。历史回滚容器
-`.12`、`.13`、`.17`、`.19` 已清理。生产容器、生产 SQLite 均未删除。
+界面“当前版本”等于运行镜像的构建 tag：`Dockerfile.build` 用 `GIT_VERSION` 把版本烤进后端
+二进制和前端产物，与工作树中的版本字段无关；界面“最新版本”是对 GitHub Release 的更新检查
+结果。工作树版本字段落后于界面版本本身不是缺陷，见下方发布与部署字段矩阵。
 
 | 目录 | 路径 | 用途 | 禁止 |
 | --- | --- | --- | --- |
@@ -115,7 +107,7 @@ git switch -c codex/<topic> origin/main
 ### 实现
 
 1. 一个分支只处理一个目标；先写或补能暴露问题的测试。
-2. 只改“修改路由”列出的必要文件，不顺带搬运历史分支或 `.10` 实现。
+2. 只改“修改路由”列出的必要文件，不顺带搬运历史分支或旧版本实现。
 3. 数据结构变化同时处理迁移、备份/恢复和旧数据兼容。
 4. 协议变化覆盖流式、非流式、失败、重试和计量，不只测成功响应。
 5. Web 变化复用现有组件与状态模式，同时处理加载、空、错误、窄屏和键盘操作。
@@ -159,15 +151,14 @@ UI 或协议改动不能只以“编译通过”验收；统计或迁移不能�
 ## 基础镜像来源
 
 `Dockerfile.build` 的三个 `FROM`（node / golang / debian）都用 `docker.1ms.run` 镜像站加固定
-摘要。`.25` 起运行时基础层自建于 `debian@sha256:abd67ffc…`，不再 `FROM` 任何上游应用镜像。
+摘要。运行时基础层自建于固定摘要的 `debian:bookworm-slim`，不 `FROM` 任何上游应用镜像。
 
 不要把这三行改成 `docker.io/library/…`：`auth.docker.io` 与 `registry-1.docker.io` 从本地开发机、
 fwq10ys、fwq57ys 都不可达，`docker.1ms.run/v2/` 三处都可达（401 是未认证的正常应答）。换回官方源
 只有 GitHub runner 能拉，机器上就无法自建镜像。
 
-镜像站偶发缺层会让 Release 失败（`.25` 首次 run 因 golang 基础层 `could not fetch content
-descriptor … not found` 失败，`gh run rerun --failed` 即成功）。先按摘要复核 blob 可达性，确认
-是镜像站瞬时故障就重跑，不要为此改摘要或换基础镜像。
+镜像站偶发缺层会让 Release 失败（`could not fetch content descriptor … not found`）。先按摘要
+复核 blob 可达性，确认是镜像站瞬时故障就 `gh run rerun --failed`，不要为此改摘要或换基础镜像。
 
 需要在机器上留基础镜像时：先按摘要查本地是否已有（`docker images --digests` 或
 `docker image inspect <repo>@<digest>`），已有就不动；缺的直接从 `docker.1ms.run` 按同一摘要拉，
@@ -187,10 +178,6 @@ descriptor … not found` 失败，`gh run rerun --failed` 即成功）。先按
 历史日志不会随价格表自动重算。价格数据刷新和历史费用回填是两个独立任务：前者只有显式
 `UPDATE_PRICE_DATA=1` 才执行并必须先审查生成差异；后者需要生产快照、数据范围和审计，
 不得通过直接写 SQLite 顺带完成。
-
-已应用的定价变更（台账不再重复记录，以本节为准）：
-
-- `2026-07-26`：`claude-opus-5` 零价 → Anthropic 官方 $5/$25（同 Opus 4.8）；`杂` 按 `deepseek-chat` $0.28/$0.42；`codex-auto-review` 与 `sensenova-6.7` 保持零价。
 
 ## 明确禁止
 
@@ -213,13 +200,25 @@ descriptor … not found` 失败，`gh run rerun --failed` 即成功）。先按
 
 | 现象 | 已确认原因 | 正确做法 | 禁止的错误处理 |
 | --- | --- | --- | --- |
-| `.10` 候选累计总表有 30,215 请求/3,990,045,329 Token，渠道/分组新表各只有 3 请求/657 Token | `stats_dimension*` 没有完整历史迁移/回填，且遗漏独立计量写入路径 | 以 `.9` 行为基线重做 `stats_leaderboard*`；覆盖状态必须 `completed`，三维成功、失败、输入/输出 Token、费用逐项一致 | 复用 `.10` tag、表、写入路径，或只检查页面能显示 |
+| 三维统计页面能显示，但渠道/分组维度总量远小于累计总表 | 新表缺完整历史回填，且漏掉了独立计量写入路径 | 三维（模型 / 最终渠道 / 请求分组）成功、失败、输入/输出 Token、费用逐项对账；coverage 必须 `completed`，超出可回填历史必须显式提示部分覆盖 | 只检查页面能显示，或只断言新表存在 |
 | Responses 上游报 `unknown_parameter`，工具调用链中断 | 曾自动合成或重写 `function_call_output.item_reference` | 保留类型化 item ID 规范化，但 `item_reference` 仅按协议和真实输入透传，并用供应商兼容样例回归 | 为“补全”字段而发明引用值 |
 | 前端 Docker 安装阶段找不到/拒绝构建原生依赖 | pnpm 版本或原生依赖许可文件未同步进入构建上下文 | 以 `web/package.json` 的 `packageManager` 为准；安装前复制 lockfile 和 `web/pnpm-workspace.yaml` | 在 Dockerfile 单独升级 pnpm，或删除 allowBuilds |
 | 构建时价格表意外变化 | 设置了 `UPDATE_PRICE_DATA=1` 会刷新仓库价格数据 | 默认使用已提交价格；价格任务先审查和提交差异，再构建 | 发布功能时顺带刷新价格 |
 | 代码、Web、Compose 或状态清单看似混合新旧值 | 应用源码、部署 staging 和 live 指纹是三个阶段 | 按发布与部署字段矩阵分阶段同步；staging 只声称“待切换”，切换后再写真实 inspect | 把 staging 状态说成已运行，或强行让 tag 指向部署提交 |
-| HealthFirst 各档候选顺序在连续请求间不变；或不限并发渠道被 LeastUsed/P2C 持续偏爱 | 档循环内每档各调一次 `nextRotation`，多档偏移按同一序列推进互相抵消；`MaxConcurrency<=0` 直接 return 不计数，负载恒为 0 | 每请求只取一次轮换偏移供全部档共用；不限并发只跳过上限检查，计数照常（见 `docs/octopus-channel-model-health-design.md` §10） | 只断言「顺序合法」或「不限并发能放行」——顺序冻结与零计数都满足这类断言 |
-| 新改动被误判为 `go vet` 回归 | `.9` 基线在 `internal/relay/protocol_attempt.go:187` 已有 copy-lock 告警 | 单独记录基线和新增告警；当前任务仍须通过规定的 Go tests/CI | 把既有告警说成本轮修复，或用它解释所有失败 |
+| HealthFirst 各档候选顺序在连续请求间不变；或不限并发渠道被 LeastUsed/P2C 持续偏爱 | 档循环内每档各调一次 `nextRotation`，多档偏移按同一序列推进互相抵消；`MaxConcurrency<=0` 直接 return 不计数，负载恒为 0 | 每请求只取一次轮换偏移供全部档共用（档间顺序仍是 Healthy > Degraded > Bad）；不限并发只跳过上限检查，计数照常 | 只断言「顺序合法」或「不限并发能放行」——顺序冻结与零计数都满足这类断言 |
+| 健康度/熔断写进去的键读侧永远读不到 | 写侧用了客户端请求模型名，读侧按渠道映射后的上游模型名取 | 模型键唯一来源是 `ItemUpstreamModel`（`GroupItem.ModelName` 为空时退回请求模型名）；compact 路径每个候选先按自己的上游模型名改写请求体再上报。粘性会话是唯一例外，仍按请求模型名存取 | 用请求模型名做健康/熔断键，或只验证「上报没报错」 |
+| 熔断相关改动被 `go vet` 判为复制锁，或测试里状态机不迁移 | `circuitEntry` 内嵌 `sync.Mutex`，按值构造初态即复制锁；冷却推进若直接改状态会绕过状态机 | 用不含锁的 `circuitEntrySeed` 构造初态，用 `rewindCircuitFailure` 回拨 `LastFailureTime`，状态迁移交给 `IsTripped` | 为了让测试通过而按值复制 `circuitEntry` 或手写状态 |
+| 按数值假设 `FailureKind` 取值 | `circuit.go` 同一 `const` 块内 `CircuitState` 与 `FailureKind` 共用 `iota`，`FailureHard` 实际是 3 而非 0 | 只在同类型间比较，用常量名不用字面量；需要修可读性时单独拆 `const` 块 | 假设每个类型从 0 开始，或顺带改常量数值 |
+| 新改动被误判为 `go vet` 回归 | `internal/relay/protocol_attempt.go:187` 早有 copy-lock 告警（预存，非本轮引入） | 单独记录基线告警和新增告警；当前任务仍须通过规定的 Go tests/CI | 把既有告警说成本轮修复，或用它解释所有失败 |
+
+## 未解决的已知限制
+
+以下为明确记录、暂不修改的限制，改动它们属于独立任务，需要单独确认：
+
+- `relay/compact.go` 全程不调 `TryAcquireChannel` 与 `TryConsumeChannelRPM`：`/v1/responses/compact`
+  不受渠道并发上限与 RPM 约束。补上属于准入语义变更。
+- `outlierwindow` 健康数据是进程内存、不持久化：多实例部署各自持有独立健康视图，重启后冷启动。
+  当前设计不引入外部健康存储，此项是部署前提而非缺陷。
 
 ## 停止条件
 

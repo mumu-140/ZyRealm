@@ -64,43 +64,35 @@ scripts/check-governance.sh --live
 `--repo` 加“旧容器精确身份”断言；不能要求 staged 文件与旧容器相等，也不能把预期的
 `--live` 不一致当成可忽略的最终状态。
 
-## 当前生产真值
+## 当前基线与不变量
 
-以下值于 2026-08-23 通过治理守卫、Docker inspect、SQLite `quick_check`、回环与内网 HTTP 门禁
-核验。它们用于识别当前基线，不替代每次操作前的实时核验。
+运行指纹（版本、应用源码、image ID、容器 ID、StartedAt、restart count、回滚快照路径）只读
+`deploy/fwq57ys/production-state.json` 与实时 `docker inspect`，本手册不复制这些数值。以下是
+与版本无关的不变量，动其中任何一条都算生产变更：
 
-| 项目 | 值 |
+| 项目 | 不变量 |
 | --- | --- |
-| 运行版本 | `v0.10.2-mumu.26` |
-| 应用源码 | `d5b76ab2cd708ffa1c305ea2fb872ed0bad79f50` |
-| 当前运行状态记录提交 | `e58c529b69aeb8a2496525f899cd55e7caa5a718` |
-| 生产镜像 | `mumu-140/octopus-concurrency:v0.10.2-mumu.26` |
-| 镜像 ID | `sha256:9d8a2b1694777a9f46226c1d44caa16157d5fba5ba28edd99415359f6068b5f3` |
-| 容器 | `octopus` / `5e9ee7e0e674814fc0aeba380ad533960f525e458296dd34aabe06c27b2d6679` |
-| 启动时间 / restart count | `2026-08-23T16:43:17.293918622Z` / `0` |
-| 网络与监听 | `host` / `0.0.0.0:35276` |
-| 公网入口 | `https://octopus.muaiword.com`（Cloudflare Tunnel → caddy-gateway `127.0.0.1:27057` → `35276`；常态关闭，用时经 fwq57ys `~/software/cloudflared/cf-octopus on|off` 开关） |
-| 数据挂载 | `/opt/octopus/data:/app/data` |
-| Compose 副本 | `/opt/octopus/docker-compose.yml` |
-| 回滚容器 | `octopus-rollback-v0.10.2-mumu.24`（`--restart no`，状态 `Created`，切换前预建未启动） |
-| 本地回滚镜像 | `mumu-140/octopus-concurrency:v0.10.2-mumu.24`（`sha256:04fc30800e257239321aaf544ba006bab2bbf111c8487a0e357580870704f0af`） |
-| 回滚快照 | `/opt/octopus/backups/pre-v0.10.2-mumu.26-cutover-20260823T163936Z/`（`21961420800` B，`quick_check` ok，SHA-256 `961b602025ea52fea9ba6d972c9b14e1ae4a9397039d3aa2d01b756c45bf5abd`） |
-| 切换后台任务 | `v0.10.2-mumu.26-cutover-20260823T163936Z`，状态 `COMPLETE` |
+| 容器名 | `octopus`，唯一对外服务容器；候选与回滚容器不得复用此名 |
+| 网络与监听 | `host` / `0.0.0.0:35276`；不改回 bridge，不加端口映射 |
+| 数据挂载 | `/opt/octopus/data:/app/data` 读写，且只挂给生产容器 |
+| 镜像引用 | `mumu-140/octopus-concurrency:v<major>.<minor>.<patch>-mumu.<revision>`，Compose `pull_policy: never`，切换前显式拉取并核对 image ID |
+| Compose | 受管 `deploy/fwq57ys/compose.yaml` 与生产副本 `/opt/octopus/docker-compose.yml` 逐字一致 |
+| 公网入口 | `https://octopus.muaiword.com`（Cloudflare Tunnel → caddy-gateway `127.0.0.1:27057` → `35276`）；常态关闭，用时经 fwq57ys `~/software/cloudflared/cf-octopus on|off` 开关 |
+| 时区 | 镜像内 `TZ=Asia/Shanghai`，决定小时级统计分桶时区，不得删除 |
+| 回滚网 | 本机保留上一验证版本镜像 + 切换前预建 `octopus-rollback-<上一版本>`（`--restart no`，`Created` 不启动）+ 快照目录 `/opt/octopus/backups/pre-<新版本>-cutover-<UTC 时间戳>/`（含 `data.db`、`config.json`、切换前后 Compose、旧状态清单、旧容器 inspect） |
+| 部署证据 | `/opt/octopus/deployments/<run-id>/`：日志、PID、阶段状态、快照校验、前后 inspect |
 
-`.26` 切换于 2026-08-23 16:39–16:43Z 由脱离会话的后台任务完成：在线快照 → 预建回滚容器 →
-`stop -t 30` → 受管 Compose `up -d --no-build --pull never` → 双端点 200 就绪门禁 → 身份/网络/
-挂载/restart count 断言 → 日志无 panic/FATAL → live `quick_check` ok。镜像 `commit` 标签为 7 位
-`d5b76ab`，容器启动横幅为 `Version: v0.10.2-mumu.26 / Commit: d5b76ab`。中断时间约 3 秒。
+切换只走脱离会话的后台任务，固定顺序：在线快照 → 预建回滚容器 → `stop -t 30` → 受管 Compose
+`up -d --no-build --pull never` → 双端点 200 就绪门禁 → 身份/网络/挂载/restart count 断言 →
+日志无 panic/FATAL → live `quick_check`。正常中断时间为秒级；镜像 `commit` 标签是 7 位短 SHA，
+容器启动横幅同时打印 `Version` 和 `Commit`，两者是核对「跑的是不是这份源码」的第一手证据。
 
-当前回滚路径有两条，优先第一条：一是直接启动预建的 `octopus-rollback-v0.10.2-mumu.24`（本机
-仍有 `.24` 镜像，无需拉取）；二是从 GHCR 重新拉取目标版本镜像，再配合
-`pre-v0.10.2-mumu.26-cutover-20260823T163936Z/` 快照恢复数据。生产容器、生产 SQLite 均未删除。
+回滚路径有两条，优先第一条：一是直接 `docker start` 切换前预建的 `octopus-rollback-<上一版本>`
+容器（本机仍有上一版本镜像，无需拉取）；二是从 GHCR 重新拉取目标版本镜像，再配合切换前快照
+恢复数据。任何切换都不得删除生产容器和生产 SQLite。
 
-`.11` 从 `.9` 行为基线重新实现模型、最终渠道和请求分组三维小时统计；`.10` 的
-`stats_dimension*` 实现和 tag 已废弃。生产三维必须逐项对账成功、失败、输入/输出 Token
-和费用，coverage 必须为 `completed`。2026-07-26 对账为三维各 14,920 成功、2,497 失败、
-1,746,810,391 输入 Token、9,006,975 输出 Token、费用 3481.480457，`.10` 旧表不存在。
-30 天或累计查询超出可回填历史时，Web 必须明确显示部分覆盖。
+三维小时统计（模型 / 最终渠道 / 请求分组）必须逐项对账成功、失败、输入/输出 Token 和费用，
+coverage 必须为 `completed`；30 天或累计查询超出可回填历史时，Web 必须明确显示部分覆盖。
 
 ## 镜像与源码选择
 
@@ -116,9 +108,8 @@ scripts/check-governance.sh --live
 
 `Dockerfile.build` 最后一阶段自建运行时基础层：固定摘要的 `debian:bookworm-slim` 加
 `ca-certificates`/`tzdata`/`gosu`、`TZ=Asia/Shanghai` 和本仓库
-`scripts/dockerfiles/entrypoint.sh`。自 `v0.10.2-mumu.25` 起不再 `FROM` 任何上游应用镜像，
-上游删库不影响后续构建。`TZ=Asia/Shanghai` 决定小时级统计分桶时区，不得删除。该基础层不含
-应用二进制，本身不是生产镜像。
+`scripts/dockerfiles/entrypoint.sh`；不 `FROM` 任何上游应用镜像，上游删库不影响构建。该基础层
+不含应用二进制，本身不是生产镜像。
 
 GHCR 是发布分发源。包为私有时，拉取凭据必须具备 `read:packages`，凭据不得进入仓库、日志
 或聊天。遇到 `401 unauthorized` 或 `403` 时停止并修复包读取权限；不得静默改用 Docker Hub
@@ -128,8 +119,7 @@ GHCR 是发布分发源。包为私有时，拉取凭据必须具备 `read:packa
 明确禁止：
 
 - `hureru/octopus:*`、`bestruirui/octopus:*`、`latest`；
-- 临时 Dockerfile、测试镜像、未声明旧 mumu tag；
-- `v0.10.2-mumu.8`：固定 Go 基础摘要失效导致发布失败，从未部署；
+- 临时 Dockerfile、测试镜像、未声明的旧 mumu tag；
 - 从 `octopus/`、`octopus-src*` 或 build-cache 构建；
 - 仅凭 GitHub `main` 最新、Release 页面成功或镜像名相似判定可部署；
 - Docker Hub 拉取失败/成功时自动替换 GHCR 身份。
@@ -169,8 +159,8 @@ GHCR 是发布分发源。包为私有时，拉取凭据必须具备 `read:packa
 | Web | 真实数据；桌面与 320px/390px；排序、分页、tab、键盘、加载/空/错误、无横向溢出 |
 | 生产隔离 | 验收前后生产容器 ID/启动时间/restart count 不变，生产数据未被候选挂载 |
 
-涉及历史回填时不得沿用普通 HTTP 的短超时。已验证 `.11` 首次回填可能超过 120 秒；
-就绪门禁最多等待 30 分钟并持续记录进度，超时才判失败。不得因页面先返回 200 就跳过数据门禁。
+涉及历史回填时不得沿用普通 HTTP 的短超时：已验证首次回填可能远超 120 秒；就绪门禁最多等待
+30 分钟并持续记录进度，超时才判失败。不得因页面先返回 200 就跳过数据门禁。
 
 候选失败时保持生产不变，保存必要日志后按唯一名称精确删除候选容器、候选数据和临时隧道；
 不得全局 prune。失败镜像/tag 保留为审计证据，除非另有精确清理授权。
@@ -250,23 +240,16 @@ Release 成功不等于部署授权。只有明确维护窗口、候选全部通
 8. 状态清单变更已提交，主线 CI 对该运行状态提交成功；
 9. 回滚容器和快照真实存在，候选与临时资源已精确清理。
 
-回滚也属于生产生命周期操作，只能由独立后台任务执行。当前正式回滚点为 `.26` 切换快照
-（`/opt/octopus/backups/pre-v0.10.2-mumu.26-cutover-20260823T163936Z/`，含 `data.db`、
-`config.json`、切换前后 Compose 副本、旧状态清单和旧容器 inspect），配套预建回滚容器
-`octopus-rollback-v0.10.2-mumu.24` 与本机仍在的 `.24` 镜像
-（`sha256:04fc30800e257239321aaf544ba006bab2bbf111c8487a0e357580870704f0af`）：回滚可直接
-`docker start` 该容器，不必先从 GHCR 拉镜像；只有本机镜像也丢失时才回到“先拉镜像再配快照
-重建”的慢路径。不得复制旧文档中的前台 Docker 命令。vps76 的历史小型数据副本不是热备或
-受支持的回滚版本。
-
-`.24` 及更早版本的上游运行时基础层 `hureru/octopus:latest` 已于 2026-08-23 从 fwq57ys 删除
-（`.25` 起运行时基础层自建，不再引用它）。因为 `.24` 就是 `FROM` 它构建的，它没有任何 `.24`
-不共享的独有层，`docker rmi` 只摘掉 tag 和 image ID、输出里没有一行 `Deleted: sha256:<layer>`，
-没有回收磁盘，`.24` 与运行容器未受影响。`.24` 镜像本身仍在本机，是上述预建回滚容器的基础。
+回滚也属于生产生命周期操作，只能由独立后台任务执行，不得复制旧文档里的前台 Docker 命令。
+正式回滚点由状态清单的 `rollbackSnapshot` 指向的切换快照目录（含 `data.db`、`config.json`、
+切换前后 Compose 副本、旧状态清单和旧容器 inspect）加上一版本镜像共同构成，快照目录内容清单
+见 §数据备份。其他机器上的历史小型数据副本都不是热备，也不是受支持的回滚版本。
 
 Compose 用 `com.docker.compose.*` 标签识别归属，被改名“挪开”的旧容器仍带这些标签，
 `docker compose up` 会重新认领并重建它。因此“改名保活”不是有效回滚手段，真正的回滚杠杆
-只有镜像加数据快照。
+只有镜像加数据快照。清理镜像时注意：若旧镜像正是新镜像的基础来源，`docker rmi` 通常只摘
+tag、不输出 `Deleted: sha256:<layer>`、不回收磁盘；反过来，删掉仍被回滚容器引用的镜像会
+直接废掉快路径。删任何 Octopus 镜像前先确认它不是当前回滚容器的基础。
 
 ## 已知事故与处理
 
@@ -279,9 +262,9 @@ Compose 用 `com.docker.compose.*` 标签识别归属，被改名“挪开”的
 | bridge 容器 accept 连接但 HTTP 永久无响应 | fwq57ys 内核 MPTCP 与 Go 1.24+ socket 在 Docker bridge/ports 组合下复现故障 | Octopus 使用 host 网络；候选用回环独立端口 | 改回 bridge、反复重启或误判应用死锁 |
 | 前台 stop 后代理失联，后续启动/回滚无法发送 | Octopus 承载当前代理 API 调用链 | 所有中断操作放入带日志和回滚的脱离会话后台任务 | 在前台 SSH 分步 stop、再计划发送 start |
 | WAL 在线备份长时间反复重启 | 只 `BEGIN` 未实际读取，未固定 WAL 读快照，外部写入持续推进 | query_only + BEGIN + 实际 SELECT + `.backup`，然后 SHA-256/`quick_check` | 复制 db/wal/shm，或无验证就切换 |
-| `.11` 首次回填被判超时并自动回滚 | 120 秒健康窗口不足以完成大型历史回填 | 功能就绪门禁最多等待 30 分钟并记录进度 | 只看 HTTP 200，或用短超时反复切换 |
-| `.10` 页面可用但三维数据严重缺失 | 无完整历史回填且遗漏写入路径 | 拒绝候选；从 `.9` 基线重做并逐项对账 | 因 UI 正常而切生产 |
-| `.8` tag 存在但无法发布 | 固定 Go 基础镜像摘要失效 | 使用新不可变版本修复摘要并重新 CI/Release | 移动/复用 `.8` tag |
+| 首次历史回填被判超时并自动回滚 | 120 秒级健康窗口不足以完成大型历史回填 | 就绪门禁最多等待 30 分钟并持续记录进度 | 只看 HTTP 200，或用短超时反复切换 |
+| 候选页面可用但三维统计数据严重缺失 | 缺完整历史回填且遗漏独立计量写入路径 | 拒绝候选，补齐回填与写入路径后逐项对账 | 因 UI 正常而切生产 |
+| tag 已创建但 Release 失败 | 固定基础镜像摘要失效，或镜像站瞬时缺层 | 先分辨两者：瞬时故障重跑失败 job，摘要失效则用新的不可变版本修 | 移动或复用已发布 tag |
 | 私有仓库无法开启 branch protection | 当前套餐 API 返回 403 | pre-push hook、governance CI、CODEOWNERS、普通快进共同约束 | 以“无保护”为由直接推 main 或 force |
 
 ## 停止条件
