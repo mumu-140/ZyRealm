@@ -29,21 +29,21 @@ inspect 证据为准。以下四项必须分别记录，不得相互推导：
 逐字数值见该文件与 `docs/octopus-production.md` 的“当前生产真值”表；两处冲突时以状态清单和
 实时 Docker inspect 为准。
 
-按三阶段状态模型，当前处于 **staging 待切换**：
+按三阶段状态模型，当前处于 **live 已核验**：
 
 | 阶段 | 版本 | 依据 |
 | --- | --- | --- |
-| live 已核验 | `v0.10.2-mumu.24` | 容器 `octopus` / `e07192749ea6`，启动于 `2026-08-22T16:24:53Z`，restart count `0`；镜像 `mumu-140/octopus-concurrency:v0.10.2-mumu.24`（`sha256:04fc3080`），应用源码 `3d3a0b6` |
-| staging 目标 | `v0.10.2-mumu.26` | tag `v0.10.2-mumu.26` → 应用源码 `d5b76ab`（含 `3e1b7e8` 健康/熔断/并发链路修复）；GHCR 镜像 `ghcr.io/mumu-140/octopus-concurrency:v0.10.2-mumu.26`（manifest `sha256:9d8a2b16`）已推送；本提交同步默认版本字段、受管 Compose 与状态清单的目标 release/image，未切换容器 |
+| live 已核验 | `v0.10.2-mumu.26` | 容器 `octopus` / `5e9ee7e0e674`，启动于 `2026-08-23T16:43:17Z`，restart count `0`；镜像 `mumu-140/octopus-concurrency:v0.10.2-mumu.26`（`sha256:9d8a2b16`），应用源码 `d5b76ab`（含 `3e1b7e8` 健康/熔断/并发链路修复）；后台任务 `v0.10.2-mumu.26-cutover-20260823T163936Z` 状态 `COMPLETE` |
+| 回滚基线 | `v0.10.2-mumu.24` | 本机仍保留镜像 `sha256:04fc3080`（应用源码 `3d3a0b6`）与预建容器 `octopus-rollback-v0.10.2-mumu.24`（`Created`，未启动）；曾以容器 `e07192749ea6` 运行至 `2026-08-23T16:43:14Z` |
 | 已跳过 | `v0.10.2-mumu.25` | 曾为 staging 目标（应用源码 `d08d8b7`），从未切换容器；`.26` 已包含其全部源码，不再作为部署目标 |
 
-生产界面“当前版本”会一直显示 `.24` 直到切换完成：`Dockerfile.build` 用 `GIT_VERSION`
+生产界面“当前版本”自 `.26` 切换完成后显示 `.26`：`Dockerfile.build` 用 `GIT_VERSION`
 把版本烤进后端二进制和前端产物，因此界面版本等于运行镜像的构建 tag，与工作树中的版本字段
-无关。界面“最新版本”是对 GitHub Release 的更新检查结果，`.26` 发布后即显示 `.26`（`.25`
-发布期间显示 `.25`）。
+无关。界面“最新版本”是对 GitHub Release 的更新检查结果，同为 `.26`。
 
-`v0.10.2-mumu.24` 切换的回滚安全网为
-`/opt/octopus/backups/pre-v0.10.2-mumu.24-cutover-20260822T154732Z`。历史回滚容器
+`v0.10.2-mumu.26` 切换的回滚安全网为
+`/opt/octopus/backups/pre-v0.10.2-mumu.26-cutover-20260823T163936Z`（`quick_check` ok），
+外加预建容器 `octopus-rollback-v0.10.2-mumu.24` 与本机 `.24` 镜像。历史回滚容器
 `.12`、`.13`、`.17`、`.19` 已清理。生产容器、生产 SQLite 均未删除。
 
 | 目录 | 路径 | 用途 | 禁止 |

@@ -66,33 +66,35 @@ scripts/check-governance.sh --live
 
 ## 当前生产真值
 
-以下值于 2026-08-23 通过治理守卫、Docker inspect、SQLite `quick_check` 和独立公网连接核验。
-它们用于识别当前基线，不替代每次操作前的实时核验。
+以下值于 2026-08-23 通过治理守卫、Docker inspect、SQLite `quick_check`、回环与内网 HTTP 门禁
+核验。它们用于识别当前基线，不替代每次操作前的实时核验。
 
 | 项目 | 值 |
 | --- | --- |
-| 运行版本 | `v0.10.2-mumu.24` |
-| 应用源码 | `3d3a0b63ba839de612c5bddbc3fdad9e90a58685` |
-| 当前运行状态记录提交 | `135f6b06a730ff8eb3d5a31c6c03218a1e0a0530` |
-| 生产镜像 | `mumu-140/octopus-concurrency:v0.10.2-mumu.24` |
-| 镜像 ID | `sha256:04fc30800e257239321aaf544ba006bab2bbf111c8487a0e357580870704f0af` |
-| 容器 | `octopus` / `e07192749ea6533bc9459733e6bdeae32fb7dbdaf7298f25c2bbcf1d24a89137` |
-| 启动时间 / restart count | `2026-08-22T16:24:53.753649437Z` / `0` |
+| 运行版本 | `v0.10.2-mumu.26` |
+| 应用源码 | `d5b76ab2cd708ffa1c305ea2fb872ed0bad79f50` |
+| 当前运行状态记录提交 | `e58c529b69aeb8a2496525f899cd55e7caa5a718` |
+| 生产镜像 | `mumu-140/octopus-concurrency:v0.10.2-mumu.26` |
+| 镜像 ID | `sha256:9d8a2b1694777a9f46226c1d44caa16157d5fba5ba28edd99415359f6068b5f3` |
+| 容器 | `octopus` / `5e9ee7e0e674814fc0aeba380ad533960f525e458296dd34aabe06c27b2d6679` |
+| 启动时间 / restart count | `2026-08-23T16:43:17.293918622Z` / `0` |
 | 网络与监听 | `host` / `0.0.0.0:35276` |
 | 公网入口 | `https://octopus.muaiword.com`（Cloudflare Tunnel → caddy-gateway `127.0.0.1:27057` → `35276`；常态关闭，用时经 fwq57ys `~/software/cloudflared/cf-octopus on|off` 开关） |
 | 数据挂载 | `/opt/octopus/data:/app/data` |
 | Compose 副本 | `/opt/octopus/docker-compose.yml` |
-| 回滚容器 | 无 |
-| 本地回滚镜像 | 无（2026-08-23 按授权只保留 `.24`；旧 tag `.19`/`.20`/`.23` 及 GHCR 本地副本已删除） |
-| 回滚快照 | `/opt/octopus/backups/pre-v0.10.2-mumu.24-cutover-20260822T154732Z/`（唯一保留的回滚快照） |
-| 切换后台任务 | `v0.10.2-mumu.24-cutover-20260822T154732Z`，状态 `COMPLETE` |
+| 回滚容器 | `octopus-rollback-v0.10.2-mumu.24`（`--restart no`，状态 `Created`，切换前预建未启动） |
+| 本地回滚镜像 | `mumu-140/octopus-concurrency:v0.10.2-mumu.24`（`sha256:04fc30800e257239321aaf544ba006bab2bbf111c8487a0e357580870704f0af`） |
+| 回滚快照 | `/opt/octopus/backups/pre-v0.10.2-mumu.26-cutover-20260823T163936Z/`（`21961420800` B，`quick_check` ok，SHA-256 `961b602025ea52fea9ba6d972c9b14e1ae4a9397039d3aa2d01b756c45bf5abd`） |
+| 切换后台任务 | `v0.10.2-mumu.26-cutover-20260823T163936Z`，状态 `COMPLETE` |
 
-`.24` 切换已完成并在治理合规镜像（`commit` 标签为 7 位 `3d3a0b6`）上重建容器；候选容器
-`octopus-test-23`、旧数据根目录、历史回滚/测试镜像已按用户明确授权清理。
+`.26` 切换于 2026-08-23 16:39–16:43Z 由脱离会话的后台任务完成：在线快照 → 预建回滚容器 →
+`stop -t 30` → 受管 Compose `up -d --no-build --pull never` → 双端点 200 就绪门禁 → 身份/网络/
+挂载/restart count 断言 → 日志无 panic/FATAL → live `quick_check` ok。镜像 `commit` 标签为 7 位
+`d5b76ab`，容器启动横幅为 `Version: v0.10.2-mumu.26 / Commit: d5b76ab`。中断时间约 3 秒。
 
-当前回滚路径只有一条：从 GHCR 重新拉取目标版本镜像，再配合
-`pre-v0.10.2-mumu.24-cutover-20260822T154732Z/` 快照恢复数据；本地已不存在可直接启动的旧版本
-镜像，回滚耗时比保留本地旧镜像时长。生产容器、生产 SQLite 均未删除。
+当前回滚路径有两条，优先第一条：一是直接启动预建的 `octopus-rollback-v0.10.2-mumu.24`（本机
+仍有 `.24` 镜像，无需拉取）；二是从 GHCR 重新拉取目标版本镜像，再配合
+`pre-v0.10.2-mumu.26-cutover-20260823T163936Z/` 快照恢复数据。生产容器、生产 SQLite 均未删除。
 
 `.11` 从 `.9` 行为基线重新实现模型、最终渠道和请求分组三维小时统计；`.10` 的
 `stats_dimension*` 实现和 tag 已废弃。生产三维必须逐项对账成功、失败、输入/输出 Token
@@ -248,17 +250,19 @@ Release 成功不等于部署授权。只有明确维护窗口、候选全部通
 8. 状态清单变更已提交，主线 CI 对该运行状态提交成功；
 9. 回滚容器和快照真实存在，候选与临时资源已精确清理。
 
-回滚也属于生产生命周期操作，只能由独立后台任务执行。当前唯一保留的正式回滚点为 `.24`
-切换快照（`/opt/octopus/backups/pre-v0.10.2-mumu.24-cutover-20260822T154732Z/`，含
-`data.db`、`config.json`、旧 Compose 副本、旧状态清单和旧容器 inspect）。2026-08-23 按
-“只留 `.24` 一个镜像”的指令清理后，本地已无任何旧版本镜像：回滚必须先从 GHCR 拉回目标
-版本镜像，再配合该快照重建容器，没有本地即时回滚镜像。不得复制旧文档中的前台 Docker
-命令。vps76 的历史小型数据副本不是热备或受支持的回滚版本。
+回滚也属于生产生命周期操作，只能由独立后台任务执行。当前正式回滚点为 `.26` 切换快照
+（`/opt/octopus/backups/pre-v0.10.2-mumu.26-cutover-20260823T163936Z/`，含 `data.db`、
+`config.json`、切换前后 Compose 副本、旧状态清单和旧容器 inspect），配套预建回滚容器
+`octopus-rollback-v0.10.2-mumu.24` 与本机仍在的 `.24` 镜像
+（`sha256:04fc30800e257239321aaf544ba006bab2bbf111c8487a0e357580870704f0af`）：回滚可直接
+`docker start` 该容器，不必先从 GHCR 拉镜像；只有本机镜像也丢失时才回到“先拉镜像再配快照
+重建”的慢路径。不得复制旧文档中的前台 Docker 命令。vps76 的历史小型数据副本不是热备或
+受支持的回滚版本。
 
 `.24` 及更早版本的上游运行时基础层 `hureru/octopus:latest` 已于 2026-08-23 从 fwq57ys 删除
 （`.25` 起运行时基础层自建，不再引用它）。因为 `.24` 就是 `FROM` 它构建的，它没有任何 `.24`
 不共享的独有层，`docker rmi` 只摘掉 tag 和 image ID、输出里没有一行 `Deleted: sha256:<layer>`，
-没有回收磁盘，`.24` 与运行容器未受影响。回滚仍只依赖 GHCR 镜像加上述快照。
+没有回收磁盘，`.24` 与运行容器未受影响。`.24` 镜像本身仍在本机，是上述预建回滚容器的基础。
 
 Compose 用 `com.docker.compose.*` 标签识别归属，被改名“挪开”的旧容器仍带这些标签，
 `docker compose up` 会重新认领并重建它。因此“改名保活”不是有效回滚手段，真正的回滚杠杆
