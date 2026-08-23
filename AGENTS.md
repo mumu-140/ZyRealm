@@ -71,8 +71,10 @@
 - 禁止使用已删除的 `Dockerfile.concurrency`、浮动 `latest` 基础镜像或临时 Dockerfile。
 - 生产服务不得直接运行 `hureru/octopus`、`bestruirui/octopus`、已删除的历史根
   Compose、任意旧 mumu tag 或仅凭名称相似的本地镜像。
-- `Dockerfile.build` 最后一阶段的固定摘要 `hureru/octopus@sha256:...` 只是运行时
-  基础层，应用二进制会被本仓库构建产物覆盖；该基础层本身不是可部署的生产镜像。
+- `Dockerfile.build` 最后一阶段自建运行时基础层（固定摘要的 `debian:bookworm-slim`
+  加 `ca-certificates`/`tzdata`/`gosu`、`TZ=Asia/Shanghai` 和本仓库 `entrypoint.sh`），
+  自 `v0.10.2-mumu.25` 起不再 FROM 任何上游应用镜像；`TZ` 决定小时级统计分桶，
+  不得删除。基础层本身不含应用二进制，也不是可部署的生产镜像。
 - 唯一允许的生产镜像是受管 Compose 和 `production-state.json` 同时声明、且 OCI
   revision/source tree 已核验的精确版本。`v0.10.2-mumu.8` 发布失败且从未部署，禁止使用。
 - 构建必须来自干净、已提交的工作树，并写入 version、revision、source tree、

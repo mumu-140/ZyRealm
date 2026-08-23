@@ -44,7 +44,11 @@ RUN test -n "$GIT_VERSION" \
       -tags=jsoniter \
       ./
 
-FROM hureru/octopus@sha256:35c6b36831db8680099bd1e1574f520e15173c3244b354d79f94bc9b1d4354c4
+# 运行时基础层自建：复现原上游 hureru/octopus 基础层的运行契约
+# （ca-certificates/tzdata/gosu + TZ=Asia/Shanghai + CMD /entrypoint.sh），
+# 底座换成官方 debian:bookworm-slim（应用只 re-exec 自身，不依赖 full 镜像多出的包）。
+# 不再依赖任何上游应用镜像，上游删库不影响后续构建。
+FROM docker.1ms.run/library/debian@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
 
 ARG GIT_VERSION
 ARG COMMIT_ID
@@ -54,12 +58,25 @@ ARG BUILD_TIME
 ARG GIT_AUTHOR=mumu-140
 ARG SOURCE_URL=https://github.com/mumu-140/octopus-concurrency
 
+# TZ 决定小时级统计的分桶时区，必须保留 Asia/Shanghai
+ENV TZ=Asia/Shanghai
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates tzdata gosu \
+    && ln -fs /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && dpkg-reconfigure -f noninteractive tzdata \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /app
+
 RUN test -n "$SOURCE_REVISION" \
     && test -n "$SOURCE_TREE" \
     && test -n "$BUILD_TIME"
 
 COPY --from=backend-builder /build/octopus /app/octopus
-RUN chmod +x /app/octopus
+COPY scripts/dockerfiles/entrypoint.sh /entrypoint.sh
+RUN chmod +x /app/octopus /entrypoint.sh
+
+CMD ["/entrypoint.sh"]
 
 LABEL org.opencontainers.image.title="octopus" \
       org.opencontainers.image.description="Octopus 并发控制二开版本" \
@@ -69,7 +86,7 @@ LABEL org.opencontainers.image.title="octopus" \
       org.opencontainers.image.source="$SOURCE_URL" \
       org.opencontainers.image.url="$SOURCE_URL" \
       org.opencontainers.image.licenses="AGPL-3.0" \
-      org.opencontainers.image.base.name="hureru/octopus@sha256:35c6b36831db8680099bd1e1574f520e15173c3244b354d79f94bc9b1d4354c4" \
+      org.opencontainers.image.base.name="debian@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241" \
       io.mumu.octopus.source-tree="$SOURCE_TREE" \
       version="$GIT_VERSION" \
       commit="$COMMIT_ID"

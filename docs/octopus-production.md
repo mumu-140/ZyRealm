@@ -66,30 +66,33 @@ scripts/check-governance.sh --live
 
 ## 当前生产真值
 
-以下值于 2026-08-10 通过治理守卫、Docker inspect、SQLite `quick_check` 和独立公网连接核验。
+以下值于 2026-08-23 通过治理守卫、Docker inspect、SQLite `quick_check` 和独立公网连接核验。
 它们用于识别当前基线，不替代每次操作前的实时核验。
 
 | 项目 | 值 |
 | --- | --- |
-| 运行版本 | `v0.10.2-mumu.20` |
-| 应用源码 | `c57759b724dd2b8c8d1e2d0792044c75e73c4231` |
-| 当前运行状态记录提交 | `befb5d152bd30d78bffa7774201649eac6a469d1` |
-| 生产镜像 | `mumu-140/octopus-concurrency:v0.10.2-mumu.20` |
-| 镜像 ID | `sha256:90d6eabb365887ad8bc7b9a6797257dece0394f051dbb04b0e765de555db1500c` |
-| 容器 | `octopus` / `0fc848e151dd6404bd7e0b54759d33e2d0e5d6b1358978d082dcf84648d2974d` |
-| 启动时间 / restart count | `2026-08-20T20:04:54.681034098Z` / `0` |
+| 运行版本 | `v0.10.2-mumu.24` |
+| 应用源码 | `3d3a0b63ba839de612c5bddbc3fdad9e90a58685` |
+| 当前运行状态记录提交 | `135f6b06a730ff8eb3d5a31c6c03218a1e0a0530` |
+| 生产镜像 | `mumu-140/octopus-concurrency:v0.10.2-mumu.24` |
+| 镜像 ID | `sha256:04fc30800e257239321aaf544ba006bab2bbf111c8487a0e357580870704f0af` |
+| 容器 | `octopus` / `e07192749ea6533bc9459733e6bdeae32fb7dbdaf7298f25c2bbcf1d24a89137` |
+| 启动时间 / restart count | `2026-08-22T16:24:53.753649437Z` / `0` |
 | 网络与监听 | `host` / `0.0.0.0:35276` |
 | 公网入口 | `https://octopus.muaiword.com`（Cloudflare Tunnel → caddy-gateway `127.0.0.1:27057` → `35276`；常态关闭，用时经 fwq57ys `~/software/cloudflared/cf-octopus on|off` 开关） |
 | 数据挂载 | `/opt/octopus/data:/app/data` |
 | Compose 副本 | `/opt/octopus/docker-compose.yml` |
-| 回滚容器 | 无（`.19` 回滚容器已清理，`.19` 镜像 `31787cf29681` 作为本地回滚镜像待命） |
-| 回滚快照 | `/opt/octopus/backups/pre-v0.10.2-mumu.20-cutover-20260820T192318Z/`（唯一保留的回滚快照） |
-| 切换后台任务 | `v0.10.2-mumu.20-cutover-20260820T192318Z`，状态 `COMPLETE` |
+| 回滚容器 | 无 |
+| 本地回滚镜像 | 无（2026-08-23 按授权只保留 `.24`；旧 tag `.19`/`.20`/`.23` 及 GHCR 本地副本已删除） |
+| 回滚快照 | `/opt/octopus/backups/pre-v0.10.2-mumu.24-cutover-20260822T154732Z/`（唯一保留的回滚快照） |
+| 切换后台任务 | `v0.10.2-mumu.24-cutover-20260822T154732Z`，状态 `COMPLETE` |
 
-本次切换后台任务 `v0.10.2-mumu.20-cutover-20260820T192318Z` 已完成；候选容器
-`octopus-test-20`（端口 35277、空 DB）功能验证通过（HTTP 200、API 路由 401、日志无错误）。
-切回 .20 容器后旧 `.19` 镜像作为回滚安全网保留；历史回滚容器 `.12`、`.13`、`.17`
-已清理，仅保留最新的 `.20` 回滚快照。生产容器、生产 SQLite 均未删除。
+`.24` 切换已完成并在治理合规镜像（`commit` 标签为 7 位 `3d3a0b6`）上重建容器；候选容器
+`octopus-test-23`、旧数据根目录、历史回滚/测试镜像已按用户明确授权清理。
+
+当前回滚路径只有一条：从 GHCR 重新拉取目标版本镜像，再配合
+`pre-v0.10.2-mumu.24-cutover-20260822T154732Z/` 快照恢复数据；本地已不存在可直接启动的旧版本
+镜像，回滚耗时比保留本地旧镜像时长。生产容器、生产 SQLite 均未删除。
 
 `.11` 从 `.9` 行为基线重新实现模型、最终渠道和请求分组三维小时统计；`.10` 的
 `stats_dimension*` 实现和 tag 已废弃。生产三维必须逐项对账成功、失败、输入/输出 Token
@@ -109,9 +112,11 @@ scripts/check-governance.sh --live
 6. 构建来自干净的规范源码，并使用 `Dockerfile.build` 和
    `scripts/build-production-image.sh <new-version>`。
 
-`Dockerfile.build` 最后一阶段的
-`hureru/octopus@sha256:35c6b368...` 只是固定运行时基础层。本仓库会覆盖
-`/app/octopus`，所以该基础层不是生产镜像。
+`Dockerfile.build` 最后一阶段自建运行时基础层：固定摘要的 `debian:bookworm-slim` 加
+`ca-certificates`/`tzdata`/`gosu`、`TZ=Asia/Shanghai` 和本仓库
+`scripts/dockerfiles/entrypoint.sh`。自 `v0.10.2-mumu.25` 起不再 `FROM` 任何上游应用镜像，
+上游删库不影响后续构建。`TZ=Asia/Shanghai` 决定小时级统计分桶时区，不得删除。该基础层不含
+应用二进制，本身不是生产镜像。
 
 GHCR 是发布分发源。包为私有时，拉取凭据必须具备 `read:packages`，凭据不得进入仓库、日志
 或聊天。遇到 `401 unauthorized` 或 `403` 时停止并修复包读取权限；不得静默改用 Docker Hub
@@ -243,11 +248,17 @@ Release 成功不等于部署授权。只有明确维护窗口、候选全部通
 8. 状态清单变更已提交，主线 CI 对该运行状态提交成功；
 9. 回滚容器和快照真实存在，候选与临时资源已精确清理。
 
-回滚也属于生产生命周期操作，只能由独立后台任务执行。当前唯一保留的正式回滚点为
-`.20` 切换快照（`/opt/octopus/backups/pre-v0.10.2-mumu.20-cutover-20260820T192318Z/`）
-和本地 `.19` 镜像 `31787cf29681`（回滚容器已清理，可用镜像重建容器回滚）。历史回滚容器
-`.12`、`.13`、`.17` 及旧版快照已清理，不再支持回滚。不得复制旧文档中的前台 Docker 命令。
-vps76 的历史小型数据副本和已停止的 `hureru/octopus:latest` 不是热备或受支持的回滚版本。
+回滚也属于生产生命周期操作，只能由独立后台任务执行。当前唯一保留的正式回滚点为 `.24`
+切换快照（`/opt/octopus/backups/pre-v0.10.2-mumu.24-cutover-20260822T154732Z/`，含
+`data.db`、`config.json`、旧 Compose 副本、旧状态清单和旧容器 inspect）。2026-08-23 按
+“只留 `.24` 一个镜像”的指令清理后，本地已无任何旧版本镜像：回滚必须先从 GHCR 拉回目标
+版本镜像，再配合该快照重建容器，没有本地即时回滚镜像。不得复制旧文档中的前台 Docker
+命令。vps76 的历史小型数据副本和 fwq57ys 上残留的 `hureru/octopus:latest`（`.24` 及更早版本
+的上游运行时基础层，`.25` 起不再使用）都不是热备或受支持的回滚版本。
+
+Compose 用 `com.docker.compose.*` 标签识别归属，被改名“挪开”的旧容器仍带这些标签，
+`docker compose up` 会重新认领并重建它。因此“改名保活”不是有效回滚手段，真正的回滚杠杆
+只有镜像加数据快照。
 
 ## 已知事故与处理
 
