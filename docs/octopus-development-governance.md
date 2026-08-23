@@ -34,12 +34,13 @@ inspect 证据为准。以下四项必须分别记录，不得相互推导：
 | 阶段 | 版本 | 依据 |
 | --- | --- | --- |
 | live 已核验 | `v0.10.2-mumu.24` | 容器 `octopus` / `e07192749ea6`，启动于 `2026-08-22T16:24:53Z`，restart count `0`；镜像 `mumu-140/octopus-concurrency:v0.10.2-mumu.24`（`sha256:04fc3080`），应用源码 `3d3a0b6` |
-| staging 目标 | `v0.10.2-mumu.25` | tag `v0.10.2-mumu.25` → 应用源码 `d08d8b7`；`559699a` 已同步默认版本字段、受管 Compose 与状态清单的目标 release/image，但未切换容器 |
-| 未发布源码 | `main` 领先 tag `.25` | 含 `3e1b7e8`（健康/熔断/并发链路修复）等提交，任何 tag 均未包含；上线需新建 `v0.10.2-mumu.26` |
+| staging 目标 | `v0.10.2-mumu.26` | tag `v0.10.2-mumu.26` → 应用源码 `d5b76ab`（含 `3e1b7e8` 健康/熔断/并发链路修复）；GHCR 镜像 `ghcr.io/mumu-140/octopus-concurrency:v0.10.2-mumu.26`（manifest `sha256:9d8a2b16`）已推送；本提交同步默认版本字段、受管 Compose 与状态清单的目标 release/image，未切换容器 |
+| 已跳过 | `v0.10.2-mumu.25` | 曾为 staging 目标（应用源码 `d08d8b7`），从未切换容器；`.26` 已包含其全部源码，不再作为部署目标 |
 
-生产界面显示“当前版本 `.24` / 最新版本 `.25`”与上表一致：`Dockerfile.build` 用 `GIT_VERSION`
+生产界面“当前版本”会一直显示 `.24` 直到切换完成：`Dockerfile.build` 用 `GIT_VERSION`
 把版本烤进后端二进制和前端产物，因此界面版本等于运行镜像的构建 tag，与工作树中的版本字段
-无关；“最新版本”是对 GitHub Release 的更新检查结果。
+无关。界面“最新版本”是对 GitHub Release 的更新检查结果，`.26` 发布后即显示 `.26`（`.25`
+发布期间显示 `.25`）。
 
 `v0.10.2-mumu.24` 切换的回滚安全网为
 `/opt/octopus/backups/pre-v0.10.2-mumu.24-cutover-20260822T154732Z`。历史回滚容器
