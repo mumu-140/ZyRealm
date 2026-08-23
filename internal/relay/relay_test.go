@@ -18,6 +18,7 @@ import (
 	dbpkg "github.com/bestruirui/octopus/internal/db"
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
+	"github.com/bestruirui/octopus/internal/outlierwindow"
 	"github.com/bestruirui/octopus/internal/relay/balancer"
 	"github.com/bestruirui/octopus/internal/transformer/inbound"
 	transformerModel "github.com/bestruirui/octopus/internal/transformer/model"
@@ -1820,6 +1821,177 @@ func TestHandleResponsesCompactSkipsIncompatibleChannels(t *testing.T) {
 	}
 	if logs[0].Attempts[0].Status != model.AttemptSkipped {
 		t.Fatalf("expected first attempt to skip incompatible channel, got %#v", logs[0].Attempts[0])
+	}
+}
+
+// TestHandleResponsesCompactSuccessKeyedByUpstreamModel 请求模型 != 上游模型时的成功路径：
+// 发出去的请求体、健康度键、计量口径必须统一到 GroupItem.ModelName（上游模型名）。
+// 早期实现把客户端的 model 原样转发、并按请求模型名上报健康度，
+// 于是读侧（itemHealthScore 按 item.ModelName 取）永远读不到写进去的样本。
+func TestHandleResponsesCompactSuccessKeyedByUpstreamModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := setupRelayTestDB(t)
+
+	const (
+		requestModel  = "relay-compact-remap-group" // 客户端发的 model（分组名）
+		upstreamModel = "compact-upstream-model"    // GroupItem.ModelName
+	)
+
+	var gotBody atomic.Value
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotBody.Store(string(body))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_cmp_3","object":"response.compaction","created_at":1,"output":[],"usage":{"input_tokens":7,"input_tokens_details":{"cached_tokens":0},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":9}}`))
+	}))
+	defer server.Close()
+
+	channel := &model.Channel{
+		Name:     "relay-compact-remap",
+		Type:     outbound.OutboundTypeOpenAIResponse,
+		Enabled:  true,
+		BaseUrls: []model.BaseUrl{{URL: server.URL + "/v1"}},
+		Model:    upstreamModel,
+		Keys:     []model.ChannelKey{{Enabled: true, ChannelKey: "remap-key"}},
+	}
+	if err := op.ChannelCreate(channel, ctx); err != nil {
+		t.Fatalf("ChannelCreate failed: %v", err)
+	}
+	// outlierwindow 是进程级全局存储，sqlite 临时库的自增 ID 会跨用例复用
+	outlierwindow.ClearChannel(channel.ID)
+
+	group := &model.Group{Name: requestModel, Mode: model.GroupModeFailover}
+	if err := op.GroupCreate(group, ctx); err != nil {
+		t.Fatalf("GroupCreate failed: %v", err)
+	}
+	if err := op.GroupItemAdd(&model.GroupItem{GroupID: group.ID, ChannelID: channel.ID, ModelName: upstreamModel, Priority: 1, Weight: 1}, ctx); err != nil {
+		t.Fatalf("GroupItemAdd failed: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set("api_key_id", 77)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact",
+		strings.NewReader(`{"model":"`+requestModel+`","previous_response_id":"resp_456","metadata":{"trace":"keep-me"}}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	HandleResponsesCompact(c)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("compact 应成功，got status %d body %s", recorder.Code, recorder.Body.String())
+	}
+
+	sent, _ := gotBody.Load().(string)
+	if !strings.Contains(sent, `"model":"`+upstreamModel+`"`) {
+		t.Fatalf("上游收到的 model 未改写为上游模型名：%s", sent)
+	}
+	if strings.Contains(sent, requestModel) {
+		t.Fatalf("请求模型名泄露到上游请求体：%s", sent)
+	}
+	// compactBodyForModel 只改 model，其余客户端字段必须原样保留
+	if !strings.Contains(sent, `"metadata":{"trace":"keep-me"}`) || !strings.Contains(sent, `"previous_response_id":"resp_456"`) {
+		t.Fatalf("改写 model 时丢失了客户端其他字段：%s", sent)
+	}
+
+	now := time.Now()
+	if stats := outlierwindow.Evaluate(channel.ID, upstreamModel, now); stats.Samples != 1 || stats.Failures != 0 {
+		t.Fatalf("上游模型键健康样本 = %#v, want 1 成功样本（balancer 读侧按 item.ModelName 取，这里没有等于健康度对 compact 失效）", stats)
+	}
+	if stats := outlierwindow.Evaluate(channel.ID, requestModel, now); stats.Samples != 0 {
+		t.Fatalf("请求模型键不应产生健康样本，got %#v", stats)
+	}
+
+	logItems, err := op.RelayLogList(ctx, nil, nil, nil, 1, 10)
+	if err != nil {
+		t.Fatalf("RelayLogList failed: %v", err)
+	}
+	if len(logItems) == 0 {
+		t.Fatalf("expected compact request to be logged")
+	}
+	if logItems[0].ActualModelName != upstreamModel {
+		t.Fatalf("日志实际模型 = %q, want %q（计量口径应与实际发出的上游模型一致）", logItems[0].ActualModelName, upstreamModel)
+	}
+}
+
+// TestHandleResponsesCompactFailureKeyedByUpstreamModel 失败路径同键：
+// 熔断与健康度都必须写在上游模型名下，balancer 的读侧（IsTripped / PeekItemTripped）才能命中。
+func TestHandleResponsesCompactFailureKeyedByUpstreamModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := setupRelayTestDB(t)
+
+	const (
+		requestModel  = "relay-compact-fail-group"
+		upstreamModel = "compact-upstream-fail-model"
+	)
+
+	// 阈值降到 1：一次失败即熔断，不必构造 5 次上游调用
+	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerThreshold, 1); err != nil {
+		t.Fatalf("SettingSetInt failed: %v", err)
+	}
+
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"message":"upstream boom"}}`))
+	}))
+	defer server.Close()
+
+	channel := &model.Channel{
+		Name:     "relay-compact-fail",
+		Type:     outbound.OutboundTypeOpenAIResponse,
+		Enabled:  true,
+		BaseUrls: []model.BaseUrl{{URL: server.URL + "/v1"}},
+		Model:    upstreamModel,
+		Keys:     []model.ChannelKey{{Enabled: true, ChannelKey: "fail-key"}},
+	}
+	if err := op.ChannelCreate(channel, ctx); err != nil {
+		t.Fatalf("ChannelCreate failed: %v", err)
+	}
+	outlierwindow.ClearChannel(channel.ID)
+	keyID := channel.Keys[0].ID
+
+	group := &model.Group{Name: requestModel, Mode: model.GroupModeFailover}
+	if err := op.GroupCreate(group, ctx); err != nil {
+		t.Fatalf("GroupCreate failed: %v", err)
+	}
+	if err := op.GroupItemAdd(&model.GroupItem{GroupID: group.ID, ChannelID: channel.ID, ModelName: upstreamModel, Priority: 1, Weight: 1}, ctx); err != nil {
+		t.Fatalf("GroupItemAdd failed: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set("api_key_id", 78)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact",
+		strings.NewReader(`{"model":"`+requestModel+`","previous_response_id":"resp_789"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	HandleResponsesCompact(c)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("上游 500 应原样返回，got status %d body %s", recorder.Code, recorder.Body.String())
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("上游调用次数 = %d, want 1（RetryEnabled 关闭时不应重试）", hits.Load())
+	}
+
+	if stats := outlierwindow.Evaluate(channel.ID, upstreamModel, time.Now()); stats.Samples != 1 || stats.Failures != 1 {
+		t.Fatalf("上游模型键失败样本 = %#v, want 1 失败样本", stats)
+	}
+	if stats := outlierwindow.Evaluate(channel.ID, requestModel, time.Now()); stats.Samples != 0 {
+		t.Fatalf("请求模型键不应产生健康样本，got %#v", stats)
+	}
+
+	if tripped, _ := balancer.IsTripped(channel.ID, keyID, upstreamModel); !tripped {
+		t.Fatal("上游模型键未熔断：compact 的失败上报读不到，等于熔断对 compact 失效")
+	}
+	if tripped, _ := balancer.IsTripped(channel.ID, keyID, requestModel); tripped {
+		t.Fatal("请求模型键不应产生熔断条目")
+	}
+	// 排序读侧同键：PeekItemTripped 按 (channelID, item.ModelName) 取
+	if !balancer.PeekItemTripped(channel.ID, upstreamModel) {
+		t.Fatal("PeekItemTripped 读不到 compact 写入的熔断状态")
 	}
 }
 

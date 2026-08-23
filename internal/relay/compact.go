@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -71,6 +72,15 @@ func HandleResponsesCompact(c *gin.Context) {
 		}
 	}
 
+	// 上游模型名可能与请求模型名不同（渠道-模型映射写在 GroupItem.ModelName 上），
+	// 每个候选都要按自己的上游模型名重写 body 的 model 字段，
+	// 所以这里保留完整字段集合，而不是只留已知字段的 compactReq。
+	var compactPayload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &compactPayload); err != nil {
+		resp.Error(c, http.StatusBadRequest, fmt.Sprintf("failed to decode responses compact request: %v", err))
+		return
+	}
+
 	requestModel := compactReq.Model
 	apiKeyID := c.GetInt("api_key_id")
 
@@ -111,6 +121,10 @@ func HandleResponsesCompact(c *gin.Context) {
 		}
 
 		item := iter.Item()
+		// 健康度、熔断、实际请求体三者必须用同一个模型键，否则写进去的健康/熔断状态
+		// 读侧（itemHealthScore / PeekItemTripped / Iterator.SkipCircuitBreak 都按
+		// item.ModelName 取）永远读不到，等于整条链路对 compact 失效。
+		upstreamModel := balancer.ItemUpstreamModel(item, requestModel)
 		channel, err := op.ChannelGet(item.ChannelID, c.Request.Context())
 		if err != nil {
 			iter.Skip(item.ChannelID, 0, fmt.Sprintf("channel_%d", item.ChannelID), fmt.Sprintf("channel not found: %v", err))
@@ -149,6 +163,13 @@ func HandleResponsesCompact(c *gin.Context) {
 			continue
 		}
 
+		attemptBody, err := compactBodyForModel(compactPayload, upstreamModel)
+		if err != nil {
+			iter.Skip(channel.ID, usedKey.ID, channel.Name, err.Error())
+			lastErr = err
+			continue
+		}
+
 		var attemptErr error
 		var statusCode int
 		var retryAfter time.Duration
@@ -165,7 +186,7 @@ func HandleResponsesCompact(c *gin.Context) {
 				}
 			}
 
-			statusCode, retryAfter, attemptErr = forwardResponsesCompact(c, metrics, iter, channel, usedKey, body)
+			statusCode, retryAfter, attemptErr = forwardResponsesCompact(c, metrics, iter, channel, usedKey, attemptBody, upstreamModel)
 			if attemptErr == nil {
 				success = true
 				break
@@ -181,17 +202,19 @@ func HandleResponsesCompact(c *gin.Context) {
 
 		if success {
 			op.StatsChannelUpdate(channel.ID, dbmodel.StatsMetrics{RequestSuccess: 1})
-			balancer.RecordSuccess(channel.ID, usedKey.ID, requestModel)
+			balancer.RecordSuccess(channel.ID, usedKey.ID, upstreamModel)
+			// 粘性会话按请求模型存取：Iterator.GetSticky 用的是请求模型名，
+			// 换成上游模型名会导致写进去的粘性记录读不到。
 			balancer.SetSticky(apiKeyID, requestModel, channel.ID, usedKey.ID)
-			outlierwindow.Report(channel.ID, requestModel, true, statusCode, time.Now())
+			outlierwindow.Report(channel.ID, upstreamModel, true, statusCode, time.Now())
 			metrics.SaveWithChannelStats(c.Request.Context(), true, nil, iter.Attempts(), false)
 			return
 		}
 
 		op.StatsChannelUpdate(channel.ID, dbmodel.StatsMetrics{RequestFailed: 1})
 		failureKind := circuitFailureKind(group.RetryEnabled, statusCode)
-		balancer.RecordFailure(channel.ID, usedKey.ID, requestModel, failureKind)
-		reportOutlierFailure(channel.ID, requestModel, statusCode, outlierErrorText(attemptErr, ""), time.Now())
+		balancer.RecordFailure(channel.ID, usedKey.ID, upstreamModel, failureKind)
+		reportOutlierFailure(channel.ID, upstreamModel, statusCode, outlierErrorText(attemptErr, ""), time.Now())
 		lastErr = attemptErr
 		lastStatusCode = statusCode
 		lastRetryAfter = retryAfter
@@ -225,14 +248,17 @@ func supportsResponsesCompact(channelType outbound.OutboundType) bool {
 	}
 }
 
-func forwardResponsesCompact(c *gin.Context, metrics *RelayMetrics, iter *balancer.Iterator, channel *dbmodel.Channel, usedKey dbmodel.ChannelKey, requestBody []byte) (int, time.Duration, error) {
+// forwardResponsesCompact 发一次上游请求。requestBody 已按 upstreamModel 改写过 model 字段，
+// upstreamModel 同时作为计量口径：主链路（relay_request.go）也是用实际发出去的上游模型名
+// 计 token 与实际模型，compact 用请求模型名会让日志里的「实际使用模型」变成客户端模型名。
+func forwardResponsesCompact(c *gin.Context, metrics *RelayMetrics, iter *balancer.Iterator, channel *dbmodel.Channel, usedKey dbmodel.ChannelKey, requestBody []byte, upstreamModel string) (int, time.Duration, error) {
 	span := iter.StartAttempt(channel.ID, usedKey.ID, channel.Name)
 	request, err := buildResponsesCompactRequest(c.Request.Context(), channel, usedKey.ChannelKey, requestBody)
 	if err != nil {
 		span.End(dbmodel.AttemptFailed, 0, err.Error())
 		return 0, 0, fmt.Errorf("failed to create compact request: %w", err)
 	}
-	metrics.SetTransportRequestPayload(requestBody, metrics.RequestModel)
+	metrics.SetTransportRequestPayload(requestBody, upstreamModel)
 	copyProxyHeaders(c.Request.Header, channel, request.Header)
 
 	response, err := sendCompactRequest(channel, request)
@@ -264,11 +290,34 @@ func forwardResponsesCompact(c *gin.Context, metrics *RelayMetrics, iter *balanc
 
 	var compactResp responsesCompactResponse
 	if err := json.Unmarshal(body, &compactResp); err == nil {
-		metrics.SetInternalResponse(compactResponseToInternalResponse(&compactResp), metrics.RequestModel)
+		metrics.SetInternalResponse(compactResponseToInternalResponse(&compactResp), upstreamModel)
 	}
 
 	span.End(dbmodel.AttemptSuccess, response.StatusCode, "")
 	return response.StatusCode, 0, nil
+}
+
+// compactBodyForModel 把请求体的 model 字段改写为该候选的上游模型名，其余字段原样保留。
+// 走 map[string]json.RawMessage 而不是 responsesCompactRequest：后者只有三个已知字段，
+// 重新序列化会静默丢掉客户端传来的其他参数（tools、metadata、reasoning 等）。
+func compactBodyForModel(payload map[string]json.RawMessage, upstreamModel string) ([]byte, error) {
+	if payload == nil {
+		return nil, errors.New("nil compact payload")
+	}
+	encodedModel, err := json.Marshal(upstreamModel)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode upstream model: %w", err)
+	}
+	next := make(map[string]json.RawMessage, len(payload))
+	for k, v := range payload {
+		next[k] = v
+	}
+	next["model"] = encodedModel
+	body, err := json.Marshal(next)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal compact request: %w", err)
+	}
+	return body, nil
 }
 
 func buildResponsesCompactRequest(ctx context.Context, channel *dbmodel.Channel, key string, requestBody []byte) (*http.Request, error) {

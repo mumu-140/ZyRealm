@@ -218,7 +218,7 @@ func TestFailoverTrippedPushedBack(t *testing.T) {
 		outlierwindow.Report(692, "m", true, 200, now)
 	}
 	// 691 有一个 Key 处于熔断
-	globalBreaker.Store(circuitKey(691, 1, "m"), &circuitEntry{
+	seedCircuitEntry(691, 1, "m", circuitSeed{
 		State:           StateOpen,
 		LastFailureTime: time.Now(),
 		TripCount:       1,
@@ -245,7 +245,7 @@ func TestHealthFirstTrippedDemotedButKept(t *testing.T) {
 		outlierwindow.Report(701, "m", true, 200, now) // 健康但熔断
 		outlierwindow.Report(702, "m", true, 200, now) // 健康
 	}
-	globalBreaker.Store(circuitKey(701, 7, "m"), &circuitEntry{
+	seedCircuitEntry(701, 7, "m", circuitSeed{
 		State:           StateOpen,
 		LastFailureTime: time.Now(),
 		TripCount:       1,
@@ -312,8 +312,7 @@ func TestItemHealthScoreColdStartAndLowSamples(t *testing.T) {
 func TestPeekItemTrippedHasNoSideEffect(t *testing.T) {
 	Reset()
 	// 冷却已过期的 Open 条目
-	key := circuitKey(731, 3, "m")
-	globalBreaker.Store(key, &circuitEntry{
+	entry := seedCircuitEntry(731, 3, "m", circuitSeed{
 		State:           StateOpen,
 		LastFailureTime: time.Now().Add(-2 * time.Hour),
 		TripCount:       1,
@@ -322,8 +321,6 @@ func TestPeekItemTrippedHasNoSideEffect(t *testing.T) {
 	if PeekItemTripped(731, "m") {
 		t.Fatal("冷却已过期应视为未熔断")
 	}
-	v, _ := globalBreaker.Load(key)
-	entry := v.(*circuitEntry)
 	entry.mu.Lock()
 	state := entry.State
 	entry.mu.Unlock()
@@ -343,14 +340,17 @@ func TestPeekItemTrippedHasNoSideEffect(t *testing.T) {
 	}
 }
 
-// TestPeekItemTrippedMatchesChannelModelOnly 前缀/后缀匹配不得越界到
-// 相似渠道号（73 vs 731）或相似模型名（m vs m2）。
+// TestPeekItemTrippedMatchesChannelModelOnly 渠道-模型键不得越界到
+// 相似渠道号（74 vs 741）或相似模型名（m vs m2）。
+// 保留相似值用例：两级索引（§10 P1-A）之前用字符串前后缀匹配，
+// 741/74 与 m/m2 正是当时会误判的输入，改索引后这些用例继续守住同一语义。
 func TestPeekItemTrippedMatchesChannelModelOnly(t *testing.T) {
 	Reset()
-	open := func() *circuitEntry {
-		return &circuitEntry{State: StateOpen, LastFailureTime: time.Now(), TripCount: 1}
-	}
-	globalBreaker.Store(circuitKey(741, 1, "m"), open())
+	seedCircuitEntry(741, 1, "m", circuitSeed{
+		State:           StateOpen,
+		LastFailureTime: time.Now(),
+		TripCount:       1,
+	})
 
 	if !PeekItemTripped(741, "m") {
 		t.Fatal("应识别本渠道-模型的熔断")

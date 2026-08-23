@@ -70,11 +70,16 @@ func (b *HealthFirst) Candidates(items []model.GroupItem) []model.GroupItem {
 		return es[i].item.Priority < es[j].item.Priority
 	})
 
-	// 同档内轮换：给每档一个起始偏移，
-	// 使「健康档内」的通道在连续请求间轮转（不盯死最优），档间顺序仍稳定。
+	// 同档内轮换：一次请求只推进一次 rotation，得到的 offset 供全部档位共用。
+	// 每档取 offset % segLen 作为起始下标，使「同档内」的通道在连续请求间轮转
+	// （不盯死最优），档间顺序仍稳定。
+	//
+	// 必须在档循环之外只调一次 nextRotation：早期实现每档各调一次，
+	// 两个多成员档同时存在时各档偏移按同一序列连续推进、互相抵消，
+	// 候选顺序在连续请求间长期冻结（例如两档各 2 个候选时完全不变）。
 	// 计数器按候选集合指纹独立分桶，不与 RoundRobin 或其他分组共用游标。
+	offset := nextRotation("hf:" + itemSetKey(items))
 	result := make([]model.GroupItem, n)
-	bucket := "hf:" + itemSetKey(items)
 	tierStart := 0
 	for k := 0; k < n; {
 		tier := es[k].tier
@@ -84,7 +89,7 @@ func (b *HealthFirst) Candidates(items []model.GroupItem) []model.GroupItem {
 		}
 		segLen := end - k
 		if segLen > 1 {
-			off := int(nextRotation(bucket) % uint64(segLen))
+			off := int(offset % uint64(segLen))
 			for idx := 0; idx < segLen; idx++ {
 				result[tierStart+idx] = es[k+(off+idx)%segLen].item
 			}

@@ -2,7 +2,6 @@ package balancer
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -20,9 +19,13 @@ const (
 	StateClosed   CircuitState = iota // 正常通行
 	StateOpen                         // 熔断中，拒绝所有请求
 	StateHalfOpen                     // 半开，仅允许单个试探请求
+)
 
-	FailureHard FailureKind = iota
-	FailureSoftRateLimit
+// FailureKind 区分硬失败与软失败（限流）。独立 const 块，避免与
+// CircuitState 共用 iota 计数器导致 FailureHard 从 3 开始。
+const (
+	FailureHard          FailureKind = iota // 上游硬失败，计入连续失败并可触发熔断
+	FailureSoftRateLimit                    // 上游限流，按 Retry-After 冷却，不累计硬失败
 )
 
 // circuitEntry 单个熔断器条目
@@ -35,32 +38,75 @@ type circuitEntry struct {
 	mu                  sync.Mutex
 }
 
-// 全局熔断器存储
-var globalBreaker sync.Map // key: string -> value: *circuitEntry
+// circuitScope 熔断存储的一级键：渠道-模型。
+// 二级键是 channelKeyID，业务粒度仍是 channelID+keyID+model（与原字符串键一致）。
+// 分两级只为让排序阶段的「该渠道-模型是否有任一 Key 熔断」变成一次直接定位，
+// 不再需要遍历全表 + 字符串前后缀匹配。
+type circuitScope struct {
+	ChannelID int
+	Model     string
+}
 
-// circuitKey 生成熔断器键：channelID:channelKeyID:modelName
+// circuitGroup 同一渠道-模型下的各 Key 熔断条目。
+type circuitGroup struct {
+	mu      sync.RWMutex
+	entries map[int]*circuitEntry // channelKeyID -> entry
+}
+
+// 全局熔断器存储
+var globalBreaker sync.Map // key: circuitScope -> value: *circuitGroup
+
+// circuitKey 熔断器日志标签：channelID:channelKeyID:modelName
 func circuitKey(channelID, keyID int, modelName string) string {
 	return fmt.Sprintf("%d:%d:%s", channelID, keyID, modelName)
 }
 
 func resetCircuitBreakerByChannel(channelID int) {
-	prefix := fmt.Sprintf("%d:", channelID)
 	globalBreaker.Range(func(key, _ any) bool {
-		if k, ok := key.(string); ok && strings.HasPrefix(k, prefix) {
-			globalBreaker.Delete(k)
+		if scope, ok := key.(circuitScope); ok && scope.ChannelID == channelID {
+			globalBreaker.Delete(scope)
 		}
 		return true
 	})
 }
 
-// getOrCreateEntry 获取或创建熔断器条目
-func getOrCreateEntry(key string) *circuitEntry {
-	if v, ok := globalBreaker.Load(key); ok {
-		return v.(*circuitEntry)
+// loadCircuitEntry 只读定位一个熔断条目，不创建。
+func loadCircuitEntry(channelID, keyID int, modelName string) (*circuitEntry, bool) {
+	v, ok := globalBreaker.Load(circuitScope{ChannelID: channelID, Model: modelName})
+	if !ok {
+		return nil, false
 	}
-	entry := &circuitEntry{State: StateClosed}
-	actual, _ := globalBreaker.LoadOrStore(key, entry)
-	return actual.(*circuitEntry)
+	group := v.(*circuitGroup)
+	group.mu.RLock()
+	entry, ok := group.entries[keyID]
+	group.mu.RUnlock()
+	return entry, ok
+}
+
+// getOrCreateEntry 获取或创建熔断器条目
+func getOrCreateEntry(channelID, keyID int, modelName string) *circuitEntry {
+	scope := circuitScope{ChannelID: channelID, Model: modelName}
+	v, ok := globalBreaker.Load(scope)
+	if !ok {
+		v, _ = globalBreaker.LoadOrStore(scope, &circuitGroup{entries: make(map[int]*circuitEntry)})
+	}
+	group := v.(*circuitGroup)
+
+	group.mu.RLock()
+	entry, ok := group.entries[keyID]
+	group.mu.RUnlock()
+	if ok {
+		return entry
+	}
+
+	group.mu.Lock()
+	defer group.mu.Unlock()
+	if entry, ok := group.entries[keyID]; ok {
+		return entry
+	}
+	entry = &circuitEntry{State: StateClosed}
+	group.entries[keyID] = entry
+	return entry
 }
 
 // getThreshold 获取熔断阈值配置
@@ -102,12 +148,11 @@ func GetCooldown(tripCount int) time.Duration {
 // IsTripped 检查通道是否处于熔断状态
 // 返回 tripped=true 表示该通道应被跳过，remaining 为剩余冷却时间
 func IsTripped(channelID, keyID int, modelName string) (tripped bool, remaining time.Duration) {
-	key := circuitKey(channelID, keyID, modelName)
-	v, ok := globalBreaker.Load(key)
+	entry, ok := loadCircuitEntry(channelID, keyID, modelName)
 	if !ok {
 		return false, 0 // 无记录，视为 Closed
 	}
-	entry := v.(*circuitEntry)
+	key := circuitKey(channelID, keyID, modelName)
 
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
@@ -153,20 +198,22 @@ func IsTripped(channelID, keyID int, modelName string) (tripped bool, remaining 
 // 与 IsTripped 的区别：绝不做状态迁移（IsTripped 会把冷却到期的 Open 转 HalfOpen、
 // 把探测超时的 HalfOpen 转回 Open，并对 HalfOpen 返回 true 以拒绝并发探测），
 // 因此只适合排序阶段读取熔断信号，不能替代请求路径上的准入判断。
-// keyID 未知，按 "channelID:" 前缀 + ":modelName" 后缀匹配该渠道-模型的全部 Key。
+// keyID 未知：该渠道-模型下任一 Key 处于熔断即返回 true（跨 Key 折叠是排序期的既有语义，
+// 只要有 Key 在熔断就说明这个渠道-模型当前有问题，排序上应当压后）。
 func PeekItemTripped(channelID int, modelName string) bool {
-	prefix := fmt.Sprintf("%d:", channelID)
-	suffix := ":" + modelName
-	tripped := false
-	globalBreaker.Range(func(key, v any) bool {
-		k, ok := key.(string)
-		if !ok || !strings.HasPrefix(k, prefix) || !strings.HasSuffix(k, suffix) {
-			return true
-		}
-		entry, ok := v.(*circuitEntry)
-		if !ok {
-			return true
-		}
+	v, ok := globalBreaker.Load(circuitScope{ChannelID: channelID, Model: modelName})
+	if !ok {
+		return false
+	}
+	group := v.(*circuitGroup)
+
+	// 持 group 读锁期间再取 entry.mu：全局没有「先 entry.mu 再 group.mu」的路径
+	// （getOrCreateEntry 只持 group.mu，Record*/IsTripped 取 entry.mu 前已释放 group.mu），
+	// 因此不存在锁序反转，可以免掉每次调用的切片拷贝。
+	group.mu.RLock()
+	defer group.mu.RUnlock()
+
+	for _, entry := range group.entries {
 		entry.mu.Lock()
 		state := entry.State
 		lastFailure := entry.LastFailureTime
@@ -174,22 +221,19 @@ func PeekItemTripped(channelID int, modelName string) bool {
 		entry.mu.Unlock()
 
 		if state == StateOpen && time.Since(lastFailure) < GetCooldown(tripCount) {
-			tripped = true
-			return false
+			return true
 		}
-		return true
-	})
-	return tripped
+	}
+	return false
 }
 
 // RecordSuccess 记录成功，重置熔断器状态
 func RecordSuccess(channelID, keyID int, modelName string) {
-	key := circuitKey(channelID, keyID, modelName)
-	v, ok := globalBreaker.Load(key)
+	entry, ok := loadCircuitEntry(channelID, keyID, modelName)
 	if !ok {
 		return
 	}
-	entry := v.(*circuitEntry)
+	key := circuitKey(channelID, keyID, modelName)
 
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
@@ -210,7 +254,7 @@ func RecordSuccess(channelID, keyID int, modelName string) {
 // HalfOpen 状态下重新进入 Open，但不放大 TripCount。
 func RecordFailure(channelID, keyID int, modelName string, kind FailureKind) {
 	key := circuitKey(channelID, keyID, modelName)
-	entry := getOrCreateEntry(key)
+	entry := getOrCreateEntry(channelID, keyID, modelName)
 
 	entry.mu.Lock()
 	defer entry.mu.Unlock()

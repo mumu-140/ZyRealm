@@ -13,11 +13,15 @@ func channelConcurrency(channelID int) *atomic.Int64 {
 }
 
 // TryAcquireChannel reserves one in-flight slot without exceeding maxConcurrency.
+// maxConcurrency <= 0 表示不限并发：准入永远放行，但并发数照常统计。
+// 「不限并发」只关掉准入上限检查，不能关掉计数——LeastUsed / P2C 靠
+// CurrentChannelConcurrency 判负载，无限渠道若恒为 0 会被这两个策略持续偏爱。
 func TryAcquireChannel(channelID, maxConcurrency int) bool {
+	counter := channelConcurrency(channelID)
 	if maxConcurrency <= 0 {
+		counter.Add(1)
 		return true
 	}
-	counter := channelConcurrency(channelID)
 	for {
 		current := counter.Load()
 		if current >= int64(maxConcurrency) {

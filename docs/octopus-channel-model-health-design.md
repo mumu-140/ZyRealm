@@ -138,10 +138,13 @@ if 该 (channel, model) 的可用 Key 全部处于熔断打开态:
 
 ```go
 // PeekItemTripped 只读查询熔断状态，不做任何状态迁移，供排序等旁路场景使用。
-// 排序阶段没有 keyID，按 "channelID:" 前缀 + ":modelName" 后缀匹配该渠道-模型的全部 Key，
+// 排序阶段没有 keyID，直接定位该渠道-模型分组后遍历组内各 Key，
 // 任一 Key 处于熔断打开且仍在冷却窗内即视为 tripped。
 func PeekItemTripped(channelID int, modelName string) bool
 ```
+
+2026-08-23 更新：存储结构已由单层字符串键改为两级索引（见 §10 P1-A），
+`PeekItemTripped` 不再全表扫描 + 字符串前后缀匹配，跨 Key 折叠语义不变。
 
 ---
 
@@ -202,7 +205,7 @@ const (
 | `isUpstreamRateLimitError` | 161-167 | Model + Soft |
 | `isUpstreamContextLimitError` | 169-173 | Model |
 | `isBlockedInvalidRequestError` | 157-159 | Ignore（客户端触发的内容拦截） |
-| `needsConversationRestart` | 145-151 | Model |
+| `needsConversationRestart` | 146-151 | Model |
 
 需新增识别（当前完全未覆盖）：`insufficient_user_quota`（含中文「用户额度不足」）、`model_not_found`、`get_channel_failed`（「负载已经达到上限」）、`Invalid token`、Cloudflare 拦截页特征、裸 HTML 响应体。
 
@@ -228,16 +231,16 @@ if !result.Success && !result.Written && !result.Canceled && !result.ResetConver
 
 `images.go:239` 的 `if written { return }` 同样修复。
 
-### 4.4 八个上报点改造清单
+### 4.4 上报点改造清单（9 处，行号为改造后实际位置）
 
 | 文件:行 | 成/败 | model 来源 |
 |---|---|---|
-| `relay/relay_handler.go:206` | false | `plan.UpstreamModel()`（同函数 205 行已用） |
-| `relay/relay_handler.go:261` | true | `handleSuccessfulAttempt` 内，当前签名不含 plan，需加参数（调用点 213 行，plan 在作用域内） |
-| `relay/compact.go:186` | true | `requestModel`（184 行已用） |
-| `relay/compact.go:194` | false | `requestModel`（193 行已用） |
-| `relay/images.go:212` | true | `item.ModelName`（225 行已用） |
-| `relay/images.go:259` | false | `item.ModelName` |
+| `relay/relay_handler.go:209` | false | `plan.UpstreamModel()` |
+| `relay/relay_handler.go:269` | true | `plan.UpstreamModel()`；`handleSuccessfulAttempt` 签名已加 `plan *protocolroute.AttemptPlan` |
+| `relay/compact.go:209` | true | `upstreamModel`（127 行 `ItemUpstreamModel` 取得，见 §10 P0-1） |
+| `relay/compact.go:217` | false | `upstreamModel`（同上） |
+| `relay/images.go:212` | true | `item.ModelName` |
+| `relay/images.go:240` / `:260` | false | `item.ModelName`（`written` 分支 + 渠道级兜底两处） |
 | `relay/ws_client.go:586` | false | `item.ModelName`（WS relay 循环内候选项） |
 | `relay/ws_client.go:598` | true | `item.ModelName` |
 
@@ -256,7 +259,7 @@ if !result.Success && !result.Written && !result.Canceled && !result.ResetConver
 
 原则（用户明确要求）：8 种策略的 relay 路径全部写入渠道-模型健康度；只有 HealthFirst 在选路时读取它。
 
-写入发生在 relay 完成阶段（上述 8 个点），与选路策略无关 —— 所以「全部写入」天然成立，不需要按策略分支。
+写入发生在 relay 完成阶段（§4.4 的 9 个点），与选路策略无关 —— 所以「全部写入」天然成立，不需要按策略分支。
 
 | # | 模式 | 写健康度 | 选路读健康度 | 选路读熔断 | 备注 |
 |---|---|---|---|---|---|
@@ -313,6 +316,8 @@ Weighted 保持不读健康度：用户选 Weighted 就是要按配置比例分�
 | 熔断感知 | 注释声称有，代码无（P5） | `PeekItemTripped` 只读查询，熔断项 tier 压到 Bad |
 | 同档轮换计数器 | 与 RoundRobin 共用 `roundRobinCounter`（P1） | 独立的按候选集合分桶计数器 |
 | 排序键 | tier 升序 → score 降序 → Priority 升序 | 不变 |
+
+分桶计数器的推进时机在 2026-08-23 修正为「每请求一次」，见 §10 P0-2。
 
 ---
 
@@ -420,7 +425,7 @@ go test ./internal/relay/balancer/... ./internal/outlierwindow/... ./internal/ta
 | `TestHealthFirstModelLevelTiering` | good ≥ 0.6、bad < 0.3，首位为 good | P4 |
 | `TestItemHealthScoreColdStartAndLowSamples` | 冷启动 0.5；3 条全失败经低样本收缩后为 0.25 | P4 |
 | `TestPeekItemTrippedHasNoSideEffect` | Peek 前后 State 仍 Open；对照组 `IsTripped` 后变 HalfOpen（证明副作用差异） | P5 |
-| `TestPeekItemTrippedMatchesChannelModelOnly` | 前缀（74 vs 741）与后缀（m vs m2）均不越界匹配 | P5 |
+| `TestPeekItemTrippedMatchesChannelModelOnly` | 相似渠道号（74 vs 741）与相似模型名（m vs m2）均不越界命中 | P5 |
 
 `internal/relay/ws_health_test.go`（WS relay 路径端到端上报，真实 `newWSRelayRequest` + `runWSRelay` + `httptest` 上游）：
 
@@ -436,6 +441,68 @@ go test ./internal/relay/balancer/... ./internal/outlierwindow/... ./internal/ta
 
 `circuit.go:19-26` 在同一 `const` 块内先 `StateClosed CircuitState = iota`（0/1/2）后接 `FailureHard FailureKind = iota`，但 Go 的 `iota` 在同一块内继续递增，实际 `FailureHard = 3`、`FailureSoftRateLimit = 4`。因两个类型从不互相比较，行为正确，但可读性有误导。修复需拆成两个 `const` 块，属独立清理项。
 
-`PeekItemTripped` 用 `globalBreaker.Range` 全表扫描，排序时每个候选调一次，复杂度 O(候选数 × 熔断条目数)。当前熔断表规模（数百条）下可接受；若成为热点需建 `channel:model → []entry` 反向索引。
+~~`PeekItemTripped` 用 `globalBreaker.Range` 全表扫描，排序时每个候选调一次，复杂度 O(候选数 × 熔断条目数)。当前熔断表规模（数百条）下可接受；若成为热点需建 `channel:model → []entry` 反向索引。~~
+已于 2026-08-23 修复，见 §10 P1-A。
 
-`go vet ./internal/relay/` 有一条与本次改造无关的预存告警：`protocol_attempt.go:187:20: assignment copies lock value to attemptRequest`。本次未动该文件，不在本次范围内。
+`go vet ./internal/relay/` 有一条与本次改造无关的预存告警：`protocol_attempt.go:187:20: assignment copies lock value to attemptRequest`。本次未动该文件，不在本次范围内。该告警在 2026-08-23 复查时依然存在，仍非本设计范围。
+
+---
+
+## 10. 2026-08-23 链路修正（健康感知 + 熔断 + 负载 + 恢复）
+
+范围限定：不改健康分公式、不改档位边界、不改 P2C 选择逻辑、不动 8 种策略的集合。
+只修「写入的键读不到」「轮换被冻结」「无限并发不计数」「熔断查表全扫」四类实现缺陷，
+并补齐恢复路径的回归测试。
+
+| 编号 | 缺陷 | 修改 | 文件 |
+|---|---|---|---|
+| P0-1 | compact 路径把客户端模型名当上游模型名：请求体 `model` 未按渠道映射改写，健康度/熔断也按请求模型名上报，写进去的键读侧永远读不到 | 新增 `ItemUpstreamModel` 作为模型键唯一来源；compact 每个候选按自己的上游模型名改写请求体并上报 | `balancer/balancer.go`、`relay/compact.go` |
+| P0-2 | HealthFirst 在档循环内部各调一次 `nextRotation`，多档同时存在时各档偏移按同一序列连续推进、互相抵消，候选顺序长期冻结 | 档循环之外只取一次 offset，全部档共用；每请求恰好推进一次 | `balancer/health_order.go` |
+| P0-3 | `MaxConcurrency <= 0` 直接 `return true` 不计数，无限渠道恒显示 0 并发，被 LeastUsed / P2C 持续偏爱 | 不限并发只跳过上限检查，计数照常；`Unlimited: 准入放行 + 并发统计` | `balancer/concurrency.go` |
+| P1-A | 熔断存储单层字符串键，排序阶段判「该渠道-模型是否有 Key 熔断」要 `Range` 全表 + 前后缀匹配 | 改两级索引 `circuitScope{ChannelID, Model} -> map[keyID]*circuitEntry`，一次直接定位；业务粒度与状态机语义不变 | `balancer/circuit.go` |
+| P1-B | 恢复链路（Closed→Open→冷却→HalfOpen→单探测→Closed/Open）已存在但无端到端测试，「熔断后永不恢复」不会被任何断言抓到 | 不新增机制，复用既有状态机，补全周期测试 | `balancer/circuit_test.go` |
+
+### 键一致性（P0-1 的判定标准）
+
+写侧与读侧必须取同一个值，否则健康度与熔断对该路径整体失效：
+
+```text
+GroupItem.ModelName → ItemUpstreamModel(item, requestModel) → 请求体 model 字段
+                                                            → RecordSuccess/RecordFailure
+                                                            → outlierwindow.Report
+读侧：itemHealthScore / PeekItemTripped / Iterator.SkipCircuitBreak 同样按此值取
+```
+
+`GroupItem.ModelName` 为空（历史数据未配映射）时退回请求模型名。
+粘性会话是唯一例外，仍按请求模型名存取（`Iterator.GetSticky` 用的是请求模型名）。
+
+### 轮换语义（P0-2 的判定标准）
+
+档间顺序稳定（Healthy > Degraded > Bad），档内轮换；一次 `Candidates` 调用只推进一次游标。
+偏移按候选集合指纹分桶，不与 RoundRobin 或其他分组共用。
+
+测试只验证「结果合法」不足以证伪冻结——顺序完全不变也满足合法性。因此断言长期行为：
+单档 4 候选跑 40 次每个候选领先次数严格均等；两档/三档各档首位在连续请求间都必须变化；
+候选集合切换时各自游标独立推进。
+
+### 新增测试
+
+| 文件 | 测试 | 证伪对象 |
+|---|---|---|
+| `relay/relay_test.go` | `TestHandleResponsesCompactSuccessKeyedByUpstreamModel`、`...FailureKeyedByUpstreamModel` | 请求模型名 ≠ 上游模型名时，compact 写入的健康度/熔断能否被读侧读到 |
+| `balancer/health_order_test.go` | `SingleTierRotatesStrictly`、`TwoTiersBothRotate`、`ThreeTiersAllRotate`、`EmptyTierSkipped`、`SingleMemberTierNoPanic`、`BucketsIsolatedAcrossItemSets`、`LongRunNoFreeze`、`ColdStartNotStarved`、`ColdStartAheadOfBad` | 档内冻结、档边界串档、冷启动饥饿 |
+| `balancer/concurrency_test.go` | `UnlimitedChannelConcurrencyStillCounted`、`UnlimitedChannelReleaseNotNegative`、`LeastUsedSeesUnlimitedChannelLoad`、`P2CDoesNotFavorUnlimitedChannel` | 无限渠道负载对 LeastUsed / P2C 不可见 |
+| `balancer/circuit_test.go` | `CircuitFullRecoveryCycle`、`CircuitProbeFailureReopensWithBackoff`、`HalfOpenDoesNotRemainTrippedForeverWithoutResult` | 熔断后不恢复；HalfOpen 两个出口只通一条；探测无结果时永久卡死 |
+
+`circuit_test.go` 用 `circuitSeed`（不含锁的镜像结构）构造初态：`circuitEntry` 内嵌
+`sync.Mutex`，按值传参会被 `go vet` 判为复制锁。冷却推进用 `rewindCircuitFailure`
+回拨 `LastFailureTime`，只改时间戳不改状态，状态迁移仍由 `IsTripped` 自己完成。
+
+### 本次未解决（明确记录，不在五项范围内）
+
+`relay/compact.go` 全程不调 `TryAcquireChannel` 与 `TryConsumeChannelRPM`：
+`/v1/responses/compact` 不受渠道并发上限与 RPM 限制约束。补上属于准入语义变更，
+需单独确认后再改。
+
+`outlierwindow` 健康数据是进程内存、不持久化：多实例部署各自持有独立健康视图，
+重启后冷启动。本设计明确排除外部健康存储，此项仅作部署前提记录。

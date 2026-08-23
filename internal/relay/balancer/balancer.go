@@ -256,6 +256,17 @@ func (b *P2C) Candidates(items []model.GroupItem) []model.GroupItem {
 	return result
 }
 
+// ItemUpstreamModel 返回候选项的上游模型名——健康度与熔断的唯一模型键来源。
+// 写侧（成败上报、熔断上报）与读侧（itemHealthScore、PeekItemTripped、
+// Iterator.SkipCircuitBreak）必须取同一个值，否则写入的键永远读不到。
+// GroupItem.ModelName 为空时（历史数据未配置映射）退回请求模型名。
+func ItemUpstreamModel(item model.GroupItem, requestModel string) string {
+	if item.ModelName != "" {
+		return item.ModelName
+	}
+	return requestModel
+}
+
 // itemHealthScore 渠道-模型健康分（0 最差 ~ 1 最好），基于 outlierwindow 滚动成败窗口。
 // 粒度必须是渠道-模型：一个渠道通常挂很多模型，单个模型不可用（model_not_found、
 // 上下文超限、限流）不能把整渠道判成不健康。
