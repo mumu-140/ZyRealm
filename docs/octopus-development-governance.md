@@ -143,6 +143,23 @@ CI 的 SHA 晋级。发布和部署另行授权，合并 `main` 不自动触发�
 
 UI 或协议改动不能只以“编译通过”验收；统计或迁移不能只以“新表存在”验收。
 
+## 基础镜像来源
+
+`Dockerfile.build` 的三个 `FROM`（node / golang / debian）都用 `docker.1ms.run` 镜像站加固定
+摘要。`.25` 起运行时基础层自建于 `debian@sha256:abd67ffc…`，不再 `FROM` 任何上游应用镜像。
+
+不要把这三行改成 `docker.io/library/…`：`auth.docker.io` 与 `registry-1.docker.io` 从本地开发机、
+fwq10ys、fwq57ys 都不可达，`docker.1ms.run/v2/` 三处都可达（401 是未认证的正常应答）。换回官方源
+只有 GitHub runner 能拉，机器上就无法自建镜像。
+
+镜像站偶发缺层会让 Release 失败（`.25` 首次 run 因 golang 基础层 `could not fetch content
+descriptor … not found` 失败，`gh run rerun --failed` 即成功）。先按摘要复核 blob 可达性，确认
+是镜像站瞬时故障就重跑，不要为此改摘要或换基础镜像。
+
+需要在机器上留基础镜像时：先按摘要查本地是否已有（`docker images --digests` 或
+`docker image inspect <repo>@<digest>`），已有就不动；缺的直接从 `docker.1ms.run` 按同一摘要拉，
+不经开发机中转。拉完核对本地 image ID 与摘要对应。
+
 ## 价格与费用契约
 
 价格单位为美元/百万 Token，当前统一规则为：
