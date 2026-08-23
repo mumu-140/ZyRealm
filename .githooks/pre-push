@@ -11,8 +11,6 @@ fail() {
 
 is_read_only_branch() {
     case "$1" in
-        refs/heads/fix/group-update-conflict | \
-        refs/heads/codex/production-normalization | \
         refs/heads/backup/*) return 0 ;;
         *) return 1 ;;
     esac
