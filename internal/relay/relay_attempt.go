@@ -14,6 +14,13 @@ func circuitFailureKind(retryEnabled bool, statusCode int) balancer.FailureKind 
 	if retryEnabled && isPassthroughStatus(statusCode) {
 		return balancer.FailureSoftRateLimit
 	}
+	// Request, credential and capability semantics are not provider-health
+	// evidence. Their dedicated routing/runtime policy decides whether to stop,
+	// rotate a credential, or switch provider; the breaker should not learn a
+	// hard outage from generic 4xx envelopes such as misleading 401/403 errors.
+	if statusCode >= 400 && statusCode < 500 {
+		return balancer.FailureIgnore
+	}
 	return balancer.FailureHard
 }
 
