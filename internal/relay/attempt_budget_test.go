@@ -35,6 +35,12 @@ func TestRelayAttemptBudgetRejectsNewProviderButAllowsSeenProvider(t *testing.T)
 	if err := budget.tryStartWire(20); err != nil {
 		t.Fatal(err)
 	}
+	if budget.canUseProvider(30) {
+		t.Fatalf("new provider should fail preflight after unique provider budget is full")
+	}
+	if !budget.canUseProvider(10) {
+		t.Fatalf("already-seen provider should pass preflight while wire budget remains")
+	}
 	if err := budget.tryStartWire(30); !errors.Is(err, errRelayProviderAttemptsExceeded) {
 		t.Fatalf("new provider overflow error = %v, want %v", err, errRelayProviderAttemptsExceeded)
 	}
