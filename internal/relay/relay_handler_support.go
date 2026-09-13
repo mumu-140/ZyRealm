@@ -199,7 +199,8 @@ func runProtocolRetries(
 		result = attempt.attempt()
 		result.Plan = plan
 		if result.Success || result.Written || result.Canceled || result.ResetConversation ||
-			result.FirstTokenTimeout || !isRetryableStatus(result.StatusCode) {
+			result.FirstTokenTimeout || isAmbiguousTransportCancellation(ctx, result.Err) ||
+			!isRetryableStatus(result.StatusCode) {
 			break
 		}
 	}
