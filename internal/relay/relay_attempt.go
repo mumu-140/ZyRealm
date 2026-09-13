@@ -86,7 +86,7 @@ func (ra *relayAttempt) finishFailedAttempt(span *balancer.AttemptSpan, statusCo
 		Written:           written,
 		ResetConversation: statusCode == http.StatusConflict && needsConversationRestart(relayErrorMessage(fwdErr)),
 		FirstTokenTimeout: firstTokenTimeout,
-		Err:               fmt.Errorf("channel %s failed: %v", ra.channel.Name, fwdErr),
+		Err:               fmt.Errorf("channel %s failed: %w", ra.channel.Name, fwdErr),
 		StatusCode:        statusCode,
 		RetryAfter:        ra.retryAfter,
 		UpstreamErrorBody: ra.upstreamErrorBody,
