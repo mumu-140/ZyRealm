@@ -109,3 +109,63 @@ func TestHandlerModelCapacityUsesAlternativeProviderAndCooldown(t *testing.T) {
 		t.Fatalf("expected second provider to serve both requests, got %d hits", secondHits.Load())
 	}
 }
+
+func TestHandlerSingleProviderModelCapacityEntersCooldown(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := setupRelayTestDB(t)
+
+	var hits atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, `{"error":{"message":"Upstream rate limit","type":"rate_limit"}}`, http.StatusTooManyRequests)
+	}))
+	defer upstream.Close()
+
+	channel := &dbmodel.Channel{
+		Name:     "single-model-capacity",
+		Type:     outbound.OutboundTypeOpenAIChat,
+		Enabled:  true,
+		BaseUrls: []dbmodel.BaseUrl{{URL: upstream.URL + "/v1"}},
+		Model:    "capacity-model",
+		Keys:     []dbmodel.ChannelKey{{Enabled: true, ChannelKey: "single-key"}},
+	}
+	if err := op.ChannelCreate(channel, ctx); err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	group := &dbmodel.Group{Name: "single-capacity-group", Mode: dbmodel.GroupModeFailover, RetryEnabled: false}
+	if err := op.GroupCreate(group, ctx); err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	if err := op.GroupItemAdd(&dbmodel.GroupItem{GroupID: group.ID, ChannelID: channel.ID, ModelName: "capacity-model", Priority: 1, Weight: 1}, ctx); err != nil {
+		t.Fatalf("add group item: %v", err)
+	}
+
+	makeRequest := func() *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"single-capacity-group","messages":[{"role":"user","content":"test"}]}`))
+		c.Request.Header.Set("Content-Type", "application/json")
+		Handler(inbound.InboundTypeOpenAIChat, c)
+		return recorder
+	}
+
+	firstResponse := makeRequest()
+	if firstResponse.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected first request to preserve upstream 429, got %d: %s", firstResponse.Code, firstResponse.Body.String())
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("expected one upstream attempt, got %d", hits.Load())
+	}
+	if state := availability.CandidateState(channel.ID, "capacity-model", time.Now()); state != availability.StateCooldown {
+		t.Fatalf("expected single provider/model to enter cooldown, got %v", state)
+	}
+
+	secondResponse := makeRequest()
+	if secondResponse.Code == http.StatusOK {
+		t.Fatalf("expected second request to fail while only provider/model is cooling")
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("expected cooldown to block the immediate second upstream attempt, got %d total hits", hits.Load())
+	}
+}
