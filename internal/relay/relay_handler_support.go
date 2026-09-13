@@ -10,6 +10,7 @@ import (
 
 	dbmodel "github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/protocolroute"
+	"github.com/bestruirui/octopus/internal/relay/availability"
 	"github.com/bestruirui/octopus/internal/relay/balancer"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/transformer/inbound"
@@ -94,6 +95,7 @@ type channelAttemptInput struct {
 	requestModel                 string
 	request                      *model.InternalLLMRequest
 	iterator                     *balancer.Iterator
+	excludeKeyIDs                map[int]struct{}
 	policyState                  *dbmodel.ProtocolPolicyState
 	policySnapshot               protocolroute.PolicySnapshot
 	routingMode                  protocolroute.RoutingMode
@@ -104,8 +106,12 @@ type channelAttemptInput struct {
 }
 
 func selectChannelAttempt(input channelAttemptInput) (dbmodel.ChannelKey, []*protocolroute.AttemptPlan) {
+	excluded := make(map[int]struct{}, len(input.excludeKeyIDs))
+	for keyID := range input.excludeKeyIDs {
+		excluded[keyID] = struct{}{}
+	}
 	selectOpts := dbmodel.ChannelKeySelectOptions{
-		ExcludeKeyIDs:  make(map[int]struct{}),
+		ExcludeKeyIDs:  excluded,
 		PreferredKeyID: input.iterator.StickyKeyID(),
 	}
 	for {
@@ -115,6 +121,10 @@ func selectChannelAttempt(input channelAttemptInput) (dbmodel.ChannelKey, []*pro
 				input.iterator.Skip(input.channel.ID, 0, input.channel.Name, "no available key")
 			}
 			return dbmodel.ChannelKey{}, nil
+		}
+		if !availability.CredentialAvailable(input.channel.ID, usedKey.ID, time.Now()) {
+			selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
+			continue
 		}
 		if input.iterator.SkipCircuitBreak(input.channel.ID, usedKey.ID, input.channel.Name) {
 			selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
@@ -153,7 +163,7 @@ func runSameChannelAttempts(
 	for planIndex, plan := range activePlans {
 		result = runProtocolRetries(ctx, request, channel, key, plan, firstTokenTimeout, maxRetries)
 		if result.FirstTokenTimeout || isAmbiguousTransportCancellation(ctx, result.Err) ||
-			shouldFailoverProviderImmediately(result) || isRelayAttemptBudgetExceeded(result.Err) {
+			classifyRoutingFailure(result) != failureDomainUnknown || isRelayAttemptBudgetExceeded(result.Err) {
 			return result
 		}
 		if planIndex+1 >= len(plans) {
@@ -214,7 +224,7 @@ func runProtocolRetries(
 		result.Plan = plan
 		if result.Success || result.Written || result.Canceled || result.ResetConversation ||
 			result.FirstTokenTimeout || isAmbiguousTransportCancellation(ctx, result.Err) ||
-			shouldFailoverProviderImmediately(result) || !isRetryableStatus(result.StatusCode) {
+			classifyRoutingFailure(result) != failureDomainUnknown || !isRetryableStatus(result.StatusCode) {
 			break
 		}
 	}
