@@ -19,6 +19,7 @@ var providerTransientMarkers = []string{
 	"cloudflare tunnel",
 	"unable to reach it",
 	"invalid character '<' looking for beginning of value",
+	"upstream stream ended without forwarding any payload",
 }
 
 var modelOrCapacityMarkers = []string{
