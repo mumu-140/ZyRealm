@@ -60,3 +60,25 @@ func TestIsClientCancellationIgnoresFirstTokenTimeout(t *testing.T) {
 		t.Fatalf("expected first-token timeout to not be treated as client cancellation")
 	}
 }
+
+func TestIsAmbiguousTransportCancellationRequiresLiveOuterContext(t *testing.T) {
+	wrapped := fmt.Errorf("failed to send request: %w", context.Canceled)
+	if !isAmbiguousTransportCancellation(context.Background(), wrapped) {
+		t.Fatalf("expected wrapped cancellation with live outer context to be ambiguous transport cancellation")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if isAmbiguousTransportCancellation(ctx, wrapped) {
+		t.Fatalf("expected canceled outer context to take precedence over ambiguous transport cancellation")
+	}
+}
+
+func TestIsAmbiguousTransportCancellationExcludesLocalTimeoutCauses(t *testing.T) {
+	if isAmbiguousTransportCancellation(context.Background(), errFirstTokenTimeout) {
+		t.Fatalf("expected first-token timeout to stay out of ambiguous transport cancellation")
+	}
+	if isAmbiguousTransportCancellation(context.Background(), errLocalRelayBudgetExceeded) {
+		t.Fatalf("expected local relay budget timeout to stay out of ambiguous transport cancellation")
+	}
+}
