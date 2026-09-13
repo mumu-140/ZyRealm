@@ -78,7 +78,7 @@ func TestAmbiguousEvidenceOutsideWindowRemainsSuspect(t *testing.T) {
 	}
 }
 
-func TestNeutralHalfOpenReleaseFallsBackToSuspect(t *testing.T) {
+func TestNeutralHalfOpenReleaseRemainsHalfOpen(t *testing.T) {
 	Reset()
 	base := time.Date(2026, 9, 13, 8, 0, 0, 0, time.UTC)
 	RecordModelFailure(40, "model-a", "first_token_timeout", base)
@@ -87,8 +87,11 @@ func TestNeutralHalfOpenReleaseFallsBackToSuspect(t *testing.T) {
 		t.Fatalf("half-open acquire = ok:%t keys:%d, want true/1", ok, len(lease.keys))
 	}
 	ReleaseLease(lease, base.Add(16*time.Second))
-	if got := CandidateState(40, "model-a", base.Add(16*time.Second)); got != StateSuspect {
-		t.Fatalf("neutral half-open release state = %v, want suspect", got)
+	if got := CandidateState(40, "model-a", base.Add(16*time.Second)); got != StateHalfOpen {
+		t.Fatalf("neutral half-open release state = %v, want half-open", got)
+	}
+	if _, ok := AcquireCandidate(40, "model-a", base.Add(16*time.Second)); !ok {
+		t.Fatalf("released neutral half-open lease should be acquirable again")
 	}
 }
 
