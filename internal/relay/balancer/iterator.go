@@ -8,7 +8,7 @@ import (
 )
 
 // Iterator 统一的负载均衡迭代器
-// 内部编排：策略排序 + 粘性优先 + 决策追踪
+// 内部编排：运行态准入 + 策略排序 + 粘性优先 + 决策追踪
 type Iterator struct {
 	candidates       []model.GroupItem
 	index            int
@@ -23,22 +23,23 @@ type Iterator struct {
 }
 
 // NewIterator 创建负载均衡迭代器
-// 自动处理：策略排序 + 粘性通道提前
+// 自动处理：运行态准入 + 策略排序 + 粘性通道提前
 func NewIterator(group model.Group, apiKeyID int, requestModel string) *Iterator {
 	return NewIteratorWithPreference(group, apiKeyID, requestModel, nil)
 }
 
 // NewIteratorWithPreference 创建带优先通道偏好的负载均衡迭代器。
-// preferred 非空时，会优先把指定通道提前到候选列表最前面。
+// runtime eligibility 在所有 GroupMode 之前统一应用；sticky 只能在当前
+// AVAILABLE 候选中生效，不能把 SUSPECT/HALF_OPEN/COOLDOWN 通道提到首位。
 func NewIteratorWithPreference(group model.Group, apiKeyID int, requestModel string, preferred *SessionEntry) *Iterator {
-	b := GetBalancer(group.Mode)
-	candidates := b.Candidates(group.Items)
+	now := time.Now()
+	candidates := runtimeOrderedCandidates(group, requestModel, now)
 
 	stickyIdx := -1
 	stickyKeyID := 0
 	if preferred != nil && preferred.ChannelID > 0 {
 		for i, item := range candidates {
-			if item.ChannelID == preferred.ChannelID {
+			if item.ChannelID == preferred.ChannelID && runtimeStickyEligible(item, requestModel, now) {
 				if i > 0 {
 					preferredItem := candidates[i]
 					copy(candidates[1:i+1], candidates[0:i])
@@ -54,9 +55,9 @@ func NewIteratorWithPreference(group model.Group, apiKeyID int, requestModel str
 		stickyTTL := time.Duration(group.SessionKeepTime) * time.Second
 		if sticky := GetSticky(apiKeyID, requestModel, stickyTTL); sticky != nil {
 			for i, item := range candidates {
-				if item.ChannelID == sticky.ChannelID {
+				if item.ChannelID == sticky.ChannelID && runtimeStickyEligible(item, requestModel, now) {
 					if i > 0 {
-						// 将粘性通道移到最前面
+						// 将 AVAILABLE 粘性通道移到最前面。
 						stickyItem := candidates[i]
 						copy(candidates[1:i+1], candidates[0:i])
 						candidates[0] = stickyItem
@@ -123,7 +124,7 @@ func (it *Iterator) StickyKeyID() int {
 	return it.stickyKeyID
 }
 
-// Len 返回候选列表长度
+// Len 返回当前通过运行态准入的候选列表长度。
 func (it *Iterator) Len() int {
 	return len(it.candidates)
 }
