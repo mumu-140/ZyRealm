@@ -162,6 +162,11 @@ func runSameChannelAttempts(
 	var result attemptResult
 	for planIndex, plan := range activePlans {
 		result = runProtocolRetries(ctx, request, channel, key, plan, firstTokenTimeout, maxRetries)
+		if shouldFailoverModelCapacity(request, channel.ID, result) {
+			availability.RecordModelFailure(channel.ID, plan.UpstreamModel(), "model_capacity", time.Now())
+			request.iter.SkipProvider(channel.ID)
+			return result
+		}
 		if result.FirstTokenTimeout || isAmbiguousTransportCancellation(ctx, result.Err) ||
 			shouldFailoverProviderImmediately(result) || isRelayAttemptBudgetExceeded(result.Err) {
 			return result
@@ -224,7 +229,8 @@ func runProtocolRetries(
 		result.Plan = plan
 		if result.Success || result.Written || result.Canceled || result.ResetConversation ||
 			result.FirstTokenTimeout || isAmbiguousTransportCancellation(ctx, result.Err) ||
-			shouldFailoverProviderImmediately(result) || !isRetryableStatus(result.StatusCode) {
+			shouldFailoverProviderImmediately(result) || shouldFailoverModelCapacity(request, channel.ID, result) ||
+			!isRetryableStatus(result.StatusCode) {
 			break
 		}
 	}
@@ -311,7 +317,7 @@ type exhaustedRelayInput struct {
 	lastErr                 error
 	lastResult              attemptResult
 	capacitySkipped         bool
-	rateSkipped             bool
+	rateSkipped            bool
 	passthroughRequired     bool
 	passthroughCapableFound bool
 }
