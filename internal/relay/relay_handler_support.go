@@ -181,6 +181,10 @@ func runProtocolRetries(
 ) attemptResult {
 	var result attemptResult
 	for retryNum := 0; retryNum < maxRetries; retryNum++ {
+		if request != nil && request.attemptBudget != nil && request.attemptBudget.wireExhausted() {
+			request.iter.Skip(channel.ID, key.ID, channel.Name, errRelayWireAttemptsExceeded.Error())
+			return attemptResult{Err: errRelayWireAttemptsExceeded}
+		}
 		if retryNum > 0 {
 			delay := computeBackoff(retryNum, result.RetryAfter)
 			log.Infof("same-channel retry %d/%d for %s, waiting %v", retryNum, maxRetries, channel.Name, delay)
@@ -195,6 +199,12 @@ func runProtocolRetries(
 		attempt, err := newRelayAttempt(request, channel, key, plan, firstTokenTimeout)
 		if err != nil {
 			return attemptResult{Err: err, StatusCode: http.StatusInternalServerError}
+		}
+		if request != nil && request.attemptBudget != nil {
+			if err := request.attemptBudget.tryStartWire(channel.ID); err != nil {
+				request.iter.Skip(channel.ID, key.ID, channel.Name, err.Error())
+				return attemptResult{Err: err}
+			}
 		}
 		result = attempt.attempt()
 		result.Plan = plan
