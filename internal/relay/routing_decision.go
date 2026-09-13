@@ -1,0 +1,416 @@
+package relay
+
+import (
+	"context"
+	"errors"
+
+	dbmodel "github.com/bestruirui/octopus/internal/model"
+	"github.com/bestruirui/octopus/internal/relay/balancer"
+)
+
+type routingDirective string
+
+const (
+	routingDirectiveComplete            routingDirective = "complete"
+	routingDirectiveTerminal            routingDirective = "terminal"
+	routingDirectiveRetrySameCredential routingDirective = "retry_same_credential"
+	routingDirectiveRotateCredential    routingDirective = "rotate_credential"
+	routingDirectiveNextProvider        routingDirective = "next_provider"
+	routingDirectiveProtocolOrProvider  routingDirective = "protocol_or_provider"
+	routingDirectiveNextCandidate       routingDirective = "next_candidate"
+)
+
+type routingRuntimeEffect string
+
+const (
+	routingRuntimeNone               routingRuntimeEffect = "none"
+	routingRuntimeSuccessClear       routingRuntimeEffect = "success_clear"
+	routingRuntimeModelSuspect       routingRuntimeEffect = "model_suspect"
+	routingRuntimeModelCooldown      routingRuntimeEffect = "model_cooldown"
+	routingRuntimeProviderCooldown   routingRuntimeEffect = "provider_cooldown"
+	routingRuntimeCredentialCooldown routingRuntimeEffect = "credential_cooldown"
+)
+
+type routingReplaySafety string
+
+const (
+	routingReplaySafe           routingReplaySafety = "safe"
+	routingReplayNotSent        routingReplaySafety = "not_sent"
+	routingReplayUnknownOutcome routingReplaySafety = "unknown_upstream_outcome"
+	routingReplayCommitted      routingReplaySafety = "downstream_committed"
+	routingReplayClientCanceled routingReplaySafety = "client_canceled"
+)
+
+type routingFailureScope string
+
+const (
+	routingScopeNone          routingFailureScope = "none"
+	routingScopeRequest       routingFailureScope = "request"
+	routingScopeCredential    routingFailureScope = "credential"
+	routingScopeProviderModel routingFailureScope = "provider_model"
+	routingScopeProvider      routingFailureScope = "provider"
+)
+
+// RoutingDecision is the single policy result consumed by retry/failover,
+// runtime availability, outlier health, circuit state, and attempt tracing.
+// Marker/status parsing remains behind the compatibility classifiers, but one
+// wire result is converted into this object exactly once on the relay path.
+type RoutingDecision struct {
+	Valid               bool
+	Domain              routingFailureDomain
+	RuleID              string
+	FailureScope        routingFailureScope
+	Directive           routingDirective
+	RuntimeEffect       routingRuntimeEffect
+	OutlierScope        failureScope
+	CircuitKind         balancer.FailureKind
+	ApplyCircuit        bool
+	ReplaySafety        routingReplaySafety
+	SkipProvider        bool
+	RetrySameCredential bool
+	Terminal            bool
+	ContentPolicy       bool
+}
+
+func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID int, result attemptResult) RoutingDecision {
+	if result.Decision.Valid {
+		return result.Decision
+	}
+
+	status := fallbackStatus(result)
+	text := outlierErrorText(result.Err, result.UpstreamErrorBody)
+	domain := classifyRoutingFailure(result)
+	legacyScope := classifyFailureScope(status, text)
+	retryEnabled := request != nil && request.retryEnabled
+	hasAlternative := request != nil && request.iter != nil && request.iter.HasAlternativeProvider(channelID)
+
+	decision := RoutingDecision{
+		Valid:         true,
+		Domain:        domain,
+		RuleID:        routingRuleID(domain, status, text),
+		FailureScope:  routingScopeFor(domain, legacyScope),
+		Directive:     routingDirectiveNextCandidate,
+		RuntimeEffect: routingRuntimeNone,
+		OutlierScope:  legacyScope,
+		CircuitKind:   circuitFailureKind(retryEnabled, result.StatusCode),
+		ReplaySafety:  routingReplaySafetyFor(result),
+	}
+
+	if result.Success {
+		decision.Domain = failureDomainUnknown
+		decision.RuleID = "success"
+		decision.FailureScope = routingScopeNone
+		decision.Directive = routingDirectiveComplete
+		decision.RuntimeEffect = routingRuntimeSuccessClear
+		decision.OutlierScope = scopeIgnore
+		decision.ReplaySafety = routingReplaySafe
+		decision.Terminal = true
+		return decision
+	}
+	if result.Canceled {
+		decision.Domain = failureDomainUnknown
+		decision.RuleID = "client_cancel"
+		decision.FailureScope = routingScopeNone
+		decision.Directive = routingDirectiveTerminal
+		decision.OutlierScope = scopeIgnore
+		decision.ReplaySafety = routingReplayClientCanceled
+		decision.Terminal = true
+		return decision
+	}
+	if isRelayAttemptBudgetExceeded(result.Err) {
+		decision.Domain = failureDomainUnknown
+		decision.RuleID = "attempt_budget"
+		decision.FailureScope = routingScopeNone
+		decision.Directive = routingDirectiveTerminal
+		decision.OutlierScope = scopeIgnore
+		decision.Terminal = true
+		decision.SkipProvider = isProviderAttemptBudgetExceeded(result.Err)
+		return decision
+	}
+
+	ambiguous := isAmbiguousTransportCancellation(ctx, result.Err)
+	if ambiguous {
+		decision.Domain = failureDomainUnknown
+		decision.RuleID = "ambiguous_transport_cancel"
+		decision.FailureScope = routingScopeProviderModel
+		decision.RuntimeEffect = routingRuntimeModelSuspect
+		decision.OutlierScope = scopeIgnore
+		decision.ApplyCircuit = false
+		decision.SkipProvider = true
+		if result.Written || result.ResetConversation {
+			decision.Directive = routingDirectiveTerminal
+			decision.Terminal = true
+			decision.ReplaySafety = routingReplayCommitted
+		} else {
+			decision.Directive = routingDirectiveNextProvider
+			if result.DispatchState == dispatchMaybeSent {
+				decision.ReplaySafety = routingReplayUnknownOutcome
+			} else {
+				decision.ReplaySafety = routingReplayNotSent
+			}
+		}
+		return decision
+	}
+
+	if result.FirstTokenTimeout {
+		decision.Domain = failureDomainUnknown
+		decision.RuleID = "first_token_timeout"
+		decision.FailureScope = routingScopeProviderModel
+		decision.Directive = routingDirectiveNextProvider
+		decision.RuntimeEffect = routingRuntimeModelCooldown
+		decision.OutlierScope = scopeModel
+		decision.ApplyCircuit = !result.Written && !result.ResetConversation
+		decision.CircuitKind = balancer.FailureHard
+		decision.SkipProvider = true
+		if result.Written || result.ResetConversation {
+			decision.Directive = routingDirectiveTerminal
+			decision.Terminal = true
+			decision.ReplaySafety = routingReplayCommitted
+		}
+		return decision
+	}
+
+	// Once downstream delivery or a conversation reset has committed, routing
+	// must stop. Keep the raw failure scope only for slow outlier evidence, which
+	// intentionally still observes stream/reset failures.
+	if result.Written || result.ResetConversation {
+		decision.Domain = failureDomainUnknown
+		decision.RuleID = "downstream_committed"
+		if result.ResetConversation {
+			decision.RuleID = "conversation_reset"
+		}
+		decision.Directive = routingDirectiveTerminal
+		decision.RuntimeEffect = routingRuntimeNone
+		decision.ApplyCircuit = false
+		decision.ReplaySafety = routingReplayCommitted
+		decision.Terminal = true
+		return decision
+	}
+
+	switch domain {
+	case failureDomainCredential:
+		decision.FailureScope = routingScopeCredential
+		decision.Directive = routingDirectiveRotateCredential
+		decision.RuntimeEffect = routingRuntimeCredentialCooldown
+		// Credential faults are handled before provider/model health reporting.
+		decision.OutlierScope = scopeIgnore
+		decision.ApplyCircuit = false
+	case failureDomainModelCapability:
+		decision.FailureScope = routingScopeProviderModel
+		decision.Directive = routingDirectiveProtocolOrProvider
+		decision.OutlierScope = scopeIgnore
+		decision.ApplyCircuit = false
+	case failureDomainModelCapacity:
+		decision.FailureScope = routingScopeProviderModel
+		decision.RuntimeEffect = routingRuntimeModelCooldown
+		decision.ApplyCircuit = true
+		if hasAlternative {
+			decision.Directive = routingDirectiveNextProvider
+			decision.SkipProvider = true
+		} else if retryEnabled && isRetryableStatus(result.StatusCode) {
+			decision.Directive = routingDirectiveRetrySameCredential
+			decision.RetrySameCredential = true
+		}
+	case failureDomainProviderTransient:
+		decision.FailureScope = routingScopeProvider
+		decision.Directive = routingDirectiveNextProvider
+		decision.RuntimeEffect = routingRuntimeProviderCooldown
+		decision.ApplyCircuit = true
+		decision.SkipProvider = true
+	case failureDomainRequest:
+		decision.FailureScope = routingScopeRequest
+		decision.ContentPolicy = isExplicitContentPolicyFailure(result)
+		decision.ApplyCircuit = !decision.ContentPolicy
+		if decision.ContentPolicy {
+			decision.Directive = routingDirectiveTerminal
+			decision.OutlierScope = scopeIgnore
+			decision.Terminal = true
+		}
+	default:
+		if retryEnabled && isRetryableStatus(result.StatusCode) {
+			decision.Directive = routingDirectiveRetrySameCredential
+			decision.RetrySameCredential = true
+		}
+		decision.ApplyCircuit = true
+	}
+
+	return decision
+}
+
+func routingRuleID(domain routingFailureDomain, status int, text string) string {
+	switch domain {
+	case failureDomainRequest:
+		if containsAny(text, contentPolicyMarkers) {
+			return "content_policy"
+		}
+		if isBlockedInvalidRequestError(text) || containsAny(text, clientErrorMarkers) {
+			return "request_invalid"
+		}
+		return "status_4xx_request"
+	case failureDomainCredential:
+		if containsAny(text, credentialConcurrencyMarkers) {
+			return "credential_concurrency"
+		}
+		return "credential_auth_quota"
+	case failureDomainModelCapability:
+		return "model_capability"
+	case failureDomainModelCapacity:
+		return "model_capacity"
+	case failureDomainProviderTransient:
+		if isInterceptPageResponse(text) {
+			return "provider_intercept"
+		}
+		if containsAny(text, providerTransientMarkers) {
+			return "provider_transport"
+		}
+		return "provider_status"
+	default:
+		if errors.Is(contextErrorFromText(text), context.Canceled) {
+			return "context_cancellation"
+		}
+		if status >= 500 {
+			return "unknown_5xx"
+		}
+		if status == 0 {
+			return "transport_unknown"
+		}
+		return "unknown"
+	}
+}
+
+func contextErrorFromText(text string) error {
+	if containsAny(text, []string{"context canceled"}) {
+		return context.Canceled
+	}
+	if containsAny(text, []string{"context deadline exceeded"}) {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+func routingScopeFor(domain routingFailureDomain, legacy failureScope) routingFailureScope {
+	switch domain {
+	case failureDomainRequest:
+		return routingScopeRequest
+	case failureDomainCredential:
+		return routingScopeCredential
+	case failureDomainModelCapacity, failureDomainModelCapability:
+		return routingScopeProviderModel
+	case failureDomainProviderTransient:
+		return routingScopeProvider
+	}
+	switch legacy {
+	case scopeChannel:
+		return routingScopeProvider
+	case scopeModel:
+		return routingScopeProviderModel
+	default:
+		return routingScopeNone
+	}
+}
+
+func routingReplaySafetyFor(result attemptResult) routingReplaySafety {
+	if result.Canceled {
+		return routingReplayClientCanceled
+	}
+	if result.Written || result.ResetConversation {
+		return routingReplayCommitted
+	}
+	if result.DispatchState == dispatchNotSent {
+		return routingReplayNotSent
+	}
+	return routingReplaySafe
+}
+
+func routingDomainString(domain routingFailureDomain) string {
+	switch domain {
+	case failureDomainRequest:
+		return "request"
+	case failureDomainCredential:
+		return "credential"
+	case failureDomainModelCapacity:
+		return "model_capacity"
+	case failureDomainModelCapability:
+		return "model_capability"
+	case failureDomainProviderTransient:
+		return "provider_transient"
+	default:
+		return "unknown"
+	}
+}
+
+func dispatchStateString(state dispatchState) string {
+	if state == dispatchMaybeSent {
+		return "maybe_sent"
+	}
+	return "not_sent"
+}
+
+func outerContextState(ctx context.Context) string {
+	if ctx == nil {
+		return "unknown"
+	}
+	if ctx.Err() == nil {
+		return "active"
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return "canceled"
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "deadline_exceeded"
+	}
+	return "done"
+}
+
+func outboundContextCause(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "context_canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	default:
+		return ""
+	}
+}
+
+func routingAttemptTrace(ctx context.Context, result attemptResult, decision RoutingDecision, credentialRevision, providerAttempt, wireAttempt int) dbmodel.AttemptRoutingTrace {
+	return dbmodel.AttemptRoutingTrace{
+		CredentialRevision: credentialRevision,
+		FailureDomain:      routingDomainString(decision.Domain),
+		FailureScope:       string(decision.FailureScope),
+		RuleID:             decision.RuleID,
+		RetryDirective:     string(decision.Directive),
+		RuntimeEffect:      "none",
+		CircuitEffect:      "none",
+		OutlierEffect:      "none",
+		ReplaySafety:       string(decision.ReplaySafety),
+		DispatchState:      dispatchStateString(result.DispatchState),
+		DownstreamCommitted: result.Written || result.ResetConversation,
+		OuterContextState:  outerContextState(ctx),
+		OutboundContextCause: outboundContextCause(result.Err),
+		ProviderAttempt:    providerAttempt,
+		WireAttempt:        wireAttempt,
+	}
+}
+
+func circuitEffectString(kind balancer.FailureKind) string {
+	switch kind {
+	case balancer.FailureSoftRateLimit:
+		return "soft_rate_limit"
+	case balancer.FailureIgnore:
+		return "ignore"
+	default:
+		return "hard_failure"
+	}
+}
+
+func outlierEffectString(scope failureScope) string {
+	switch scope {
+	case scopeChannel:
+		return "provider_failure"
+	case scopeModel:
+		return "model_failure"
+	default:
+		return "none"
+	}
+}
