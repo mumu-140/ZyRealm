@@ -67,6 +67,11 @@ func TestIsAmbiguousTransportCancellationRequiresLiveOuterContext(t *testing.T) 
 		t.Fatalf("expected wrapped cancellation with live outer context to be ambiguous transport cancellation")
 	}
 
+	doubleWrapped := fmt.Errorf("channel relay-a failed: %w", wrapped)
+	if !isAmbiguousTransportCancellation(context.Background(), doubleWrapped) {
+		t.Fatalf("expected cancellation identity to survive the channel-level failure wrapper")
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if isAmbiguousTransportCancellation(ctx, wrapped) {
