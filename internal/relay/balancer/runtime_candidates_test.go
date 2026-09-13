@@ -1,6 +1,7 @@
 package balancer
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -21,7 +22,7 @@ func TestRuntimeEligibilitySharedAcrossAllBalancerModes(t *testing.T) {
 	}
 
 	for _, mode := range modes {
-		t.Run(mode.String(), func(t *testing.T) {
+		t.Run(fmt.Sprintf("mode_%d", mode), func(t *testing.T) {
 			availability.Reset()
 			availability.RecordModelFailure(10, "upstream-a", "first_token_timeout", time.Now())
 			group := model.Group{
