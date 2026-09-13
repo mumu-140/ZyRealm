@@ -96,7 +96,15 @@ func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, error) {
 	}
 
 	req = ra.attachFirstTokenBudget(req)
+	if err := req.Context().Err(); err != nil {
+		ra.closeFirstTokenBudget()
+		return nil, err
+	}
 
+	// Once Do is entered, the transport may have written request bytes even if
+	// no response is ever observed. From here on the execution outcome is
+	// conservatively MAYBE_SENT for replay-safety decisions.
+	ra.dispatchState = dispatchMaybeSent
 	response, err := httpClient.Do(req)
 	if err != nil {
 		if timeoutErr := ra.firstTokenTimeoutIfNeeded(req.Context(), err); timeoutErr != nil {
