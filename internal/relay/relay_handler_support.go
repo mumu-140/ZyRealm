@@ -298,7 +298,7 @@ func saveHTTPReplayState(input httpReplaySaveInput) {
 
 	ttl := wsConversationStateTTL(input.groupTTL)
 	storeResponsesReplayState(input.apiKeyID, input.groupID, input.requestModel, state, ttl)
-	log.Debugf("saved HTTP replay state (apikey=%d, group=%d, model=%s, previous_response_id=%s, channel=%d, key=%d, ttl=%v, is_replay=%t)",
+	log.Debugf("saved HTTP replay state (apikey=%d, group=%d, model=%s, response_id=%s, channel=%d, key=%d, ttl=%v, is_replay=%t)",
 		input.apiKeyID, input.groupID, input.requestModel, state.LastResponseID,
 		input.channelID, input.channelKeyID, ttl, input.request.IsOpenAIExactReplayRequest())
 }
