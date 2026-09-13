@@ -55,6 +55,19 @@ func TestRelayAttemptBudgetRejectsNewProviderButAllowsSeenProvider(t *testing.T)
 	}
 }
 
+func TestRelayAttemptBudgetLimitsUnknownCrossProviderReplay(t *testing.T) {
+	budget := newRelayAttemptBudget()
+	if !budget.tryUnknownCrossProviderReplay() {
+		t.Fatalf("first unknown cross-provider replay should be allowed")
+	}
+	if budget.tryUnknownCrossProviderReplay() {
+		t.Fatalf("second unknown cross-provider replay should be rejected")
+	}
+	if budget.unknownReplayCount != 1 {
+		t.Fatalf("unknownReplayCount = %d, want 1", budget.unknownReplayCount)
+	}
+}
+
 func TestRelayAttemptBudgetUsesProductionDefaults(t *testing.T) {
 	budget := newRelayAttemptBudget()
 	if budget.maxProviders != 4 {
@@ -62,5 +75,8 @@ func TestRelayAttemptBudgetUsesProductionDefaults(t *testing.T) {
 	}
 	if budget.maxWires != 8 {
 		t.Fatalf("maxWires = %d, want 8", budget.maxWires)
+	}
+	if budget.maxUnknownReplays != 1 {
+		t.Fatalf("maxUnknownReplays = %d, want 1", budget.maxUnknownReplays)
 	}
 }
