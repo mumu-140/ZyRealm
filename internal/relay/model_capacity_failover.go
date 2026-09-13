@@ -5,6 +5,9 @@ package relay
 // request still has another provider candidate to try. With no alternative,
 // the existing bounded same-provider retry behavior is preserved.
 func shouldFailoverModelCapacity(request *relayRequest, channelID int, result attemptResult) bool {
+	if result.Decision.Valid {
+		return result.Decision.Domain == failureDomainModelCapacity && result.Decision.SkipProvider
+	}
 	if classifyRoutingFailure(result) != failureDomainModelCapacity {
 		return false
 	}

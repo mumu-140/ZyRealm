@@ -2,8 +2,19 @@ package relay
 
 import (
 	"math/rand/v2"
+	"net/http"
 	"strconv"
+	"strings"
 	"time"
+)
+
+const (
+	// Runtime recovery hints may outlive one request. Keep a conservative cap so
+	// a malformed/malicious upstream cannot exile a candidate indefinitely.
+	maxRuntimeRetryAfter = time.Hour
+	// Same-request retries must stay short even when the upstream advertises a
+	// long recovery window. Long hints belong in shared runtime availability.
+	maxSameChannelRetryAfter = 60 * time.Second
 )
 
 // isRetryableStatus 判断 HTTP 状态码是否可重试
@@ -19,20 +30,38 @@ func isPassthroughStatus(code int) bool {
 	return code == 429 || code == 503
 }
 
-// parseRetryAfter 解析 Retry-After 响应头（仅支持秒数格式），上限 60s
+// parseRetryAfter parses both RFC 9110 Retry-After forms: delta-seconds and
+// HTTP-date. The returned duration is suitable as a cross-request recovery hint
+// and is capped independently from the much shorter same-request retry delay.
 func parseRetryAfter(header string) time.Duration {
-	if header == "" {
+	return parseRetryAfterAt(header, time.Now())
+}
+
+func parseRetryAfterAt(header string, now time.Time) time.Duration {
+	raw := strings.TrimSpace(header)
+	if raw == "" {
 		return 0
 	}
-	secs, err := strconv.Atoi(header)
-	if err != nil || secs <= 0 {
+
+	if secs, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		maxSecs := int64(maxRuntimeRetryAfter / time.Second)
+		if secs > maxSecs {
+			secs = maxSecs
+		}
+		return time.Duration(secs) * time.Second
+	}
+
+	deadline, err := http.ParseTime(raw)
+	if err != nil || !deadline.After(now) {
 		return 0
 	}
-	d := time.Duration(secs) * time.Second
-	if d > 60*time.Second {
-		d = 60 * time.Second
+	if deadline.After(now.Add(maxRuntimeRetryAfter)) {
+		return maxRuntimeRetryAfter
 	}
-	return d
+	return deadline.Sub(now)
 }
 
 // computeBackoff 计算退避时间
@@ -40,6 +69,9 @@ func parseRetryAfter(header string) time.Duration {
 // retryNum 从 1 开始（第1次重试）
 func computeBackoff(retryNum int, retryAfter time.Duration) time.Duration {
 	if retryAfter > 0 {
+		if retryAfter > maxSameChannelRetryAfter {
+			return maxSameChannelRetryAfter
+		}
 		return retryAfter
 	}
 
@@ -51,8 +83,8 @@ func computeBackoff(retryNum int, retryAfter time.Duration) time.Duration {
 	}
 	delay := base << shift
 
-	if delay > 60*time.Second {
-		delay = 60 * time.Second
+	if delay > maxSameChannelRetryAfter {
+		delay = maxSameChannelRetryAfter
 	}
 
 	// 添加 10%-50% 的 jitter 防止惊群

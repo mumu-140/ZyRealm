@@ -64,6 +64,9 @@ func newRelayHandler(inboundType inbound.InboundType, c *gin.Context) (*relayHan
 	request, replayState := prepareHTTPReplay(inboundType, c.GetInt("api_key_id"), group.ID, request.Model, request)
 	iterator := newRelayIterator(group, c.GetInt("api_key_id"), request.Model, replayState)
 	if iterator.Len() == 0 {
+		if writeRuntimeCooldownUnavailable(c, group.Items, request.Model) {
+			return nil, false
+		}
 		resp.ErrorWithCode(c, http.StatusServiceUnavailable, CodeRelayNoAvailableChannel, "no available channel")
 		return nil, false
 	}
@@ -199,7 +202,7 @@ func (h *relayHandler) processCandidate() bool {
 		}
 
 		if classifyRoutingFailure(result) == failureDomainCredential {
-			recordCredentialRoutingFailure(channel.ID, key.ID, result, time.Now())
+			recordCredentialRoutingFailureRevision(channel.ID, key.ID, key.CredentialRevision, result, time.Now())
 			excludedKeyIDs[key.ID] = struct{}{}
 			h.lastErr = result.Err
 			h.lastResult = result
@@ -248,18 +251,23 @@ func (h *relayHandler) acquireCandidate(channel *dbmodel.Channel, key dbmodel.Ch
 
 func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel.ChannelKey, plan *protocolroute.AttemptPlan, result attemptResult) bool {
 	now := time.Now()
+	result = withRoutingDecision(h.c.Request.Context(), h.request, channel.ID, result)
 	recordRuntimeAvailabilityEvidence(h.c.Request.Context(), channel.ID, plan.UpstreamModel(), result, now)
 
-	ambiguousCancellation := isAmbiguousTransportCancellation(h.c.Request.Context(), result.Err)
-	hardProviderFailure := shouldFailoverProviderImmediately(result)
+	decision := result.Decision
+	ambiguousCancellation := decision.RuleID == "ambiguous_transport_cancel"
 	budgetExceeded := isRelayAttemptBudgetExceeded(result.Err)
-	failureDomain := classifyRoutingFailure(result)
-	explicitContentPolicy := isExplicitContentPolicyFailure(result)
+	failureDomain := decision.Domain
+	explicitContentPolicy := decision.ContentPolicy
 
-	// Only a MAYBE_SENT ambiguous cancellation spends the single balanced
-	// unknown-outcome replay allowance. NOT_SENT can move to another provider
-	// without risking duplicate upstream execution.
-	if ambiguousCancellation && result.DispatchState == dispatchMaybeSent && !result.Written && !result.ResetConversation && h.request.attemptBudget != nil {
+	// Any MAYBE_SENT failure whose upstream outcome is unknown spends the single
+	// balanced cross-provider replay allowance before another provider is tried.
+	// This includes ambiguous transport cancellation and first-token timeout: in
+	// both cases the upstream may already be executing the request. NOT_SENT
+	// failures remain free to fail over because duplicate execution is impossible.
+	if decision.ReplaySafety == routingReplayUnknownOutcome && decision.SkipProvider &&
+		h.iterator.HasAlternativeProvider(channel.ID) && !result.Written && !result.ResetConversation &&
+		h.request.attemptBudget != nil {
 		if !h.request.attemptBudget.tryUnknownCrossProviderReplay() {
 			// Balanced replay policy: once an unknown upstream outcome has already
 			// been replayed across providers, terminate rather than risk another
@@ -270,11 +278,9 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 		}
 	}
 
-	if ambiguousCancellation || result.FirstTokenTimeout || hardProviderFailure || isProviderAttemptBudgetExceeded(result.Err) {
-		// These conditions should leave this provider for the remainder of the
-		// current request. Ambiguous cancellation is deliberately request-local:
-		// it is not enough evidence by itself to globally degrade provider health.
-		// Hard provider failures continue through the shared health/circuit path.
+	if decision.SkipProvider || isProviderAttemptBudgetExceeded(result.Err) {
+		// Request-local provider skipping is part of the unified decision. Shared
+		// runtime health remains separately scoped by RuntimeEffect.
 		h.iterator.SkipProvider(channel.ID)
 	}
 
@@ -358,7 +364,7 @@ func classifyAttemptResult(result attemptResult) attemptAction {
 
 func (h *relayHandler) handleSuccessfulAttempt(channel *dbmodel.Channel, key dbmodel.ChannelKey, plan *protocolroute.AttemptPlan, result attemptResult) bool {
 	now := time.Now()
-	availability.RecordCredentialSuccess(channel.ID, key.ID, now)
+	availability.RecordCredentialSuccessRevision(channel.ID, key.ID, key.CredentialRevision, now)
 	outlierwindow.Report(channel.ID, plan.UpstreamModel(), true, result.StatusCode, now)
 	saveHTTPReplayState(httpReplaySaveInput{
 		ctx: h.c.Request.Context(), inboundType: h.inboundType, request: h.request.internalRequest,

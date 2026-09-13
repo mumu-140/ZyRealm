@@ -21,12 +21,13 @@ var (
 // do not consume it; a budget slot is charged only when a real relay attempt is
 // about to start.
 type relayAttemptBudget struct {
-	maxProviders         int
-	maxWires             int
-	maxUnknownReplays    int
-	providers            map[int]struct{}
-	wires                int
-	unknownReplayCount   int
+	maxProviders       int
+	maxWires           int
+	maxUnknownReplays  int
+	providers          map[int]struct{}
+	providerAttemptNum map[int]int
+	wires              int
+	unknownReplayCount int
 }
 
 func newRelayAttemptBudget() *relayAttemptBudget {
@@ -41,10 +42,11 @@ func newRelayAttemptBudgetWithLimits(maxProviders, maxWires int) *relayAttemptBu
 		maxWires = defaultMaxWireAttempts
 	}
 	return &relayAttemptBudget{
-		maxProviders:      maxProviders,
-		maxWires:          maxWires,
-		maxUnknownReplays: defaultMaxUnknownCrossProviderReplay,
-		providers:         make(map[int]struct{}),
+		maxProviders:       maxProviders,
+		maxWires:           maxWires,
+		maxUnknownReplays:  defaultMaxUnknownCrossProviderReplay,
+		providers:          make(map[int]struct{}),
+		providerAttemptNum: make(map[int]int),
 	}
 }
 
@@ -76,6 +78,7 @@ func (b *relayAttemptBudget) tryStartWire(channelID int) error {
 			return errRelayProviderAttemptsExceeded
 		}
 		b.providers[channelID] = struct{}{}
+		b.providerAttemptNum[channelID] = len(b.providers)
 	}
 	b.wires++
 	return nil
@@ -98,6 +101,20 @@ func (b *relayAttemptBudget) tryUnknownCrossProviderReplay() bool {
 
 func (b *relayAttemptBudget) wireExhausted() bool {
 	return b != nil && b.wires >= b.maxWires
+}
+
+func (b *relayAttemptBudget) wireAttemptIndex() int {
+	if b == nil {
+		return 0
+	}
+	return b.wires
+}
+
+func (b *relayAttemptBudget) providerAttemptIndex(channelID int) int {
+	if b == nil {
+		return 0
+	}
+	return b.providerAttemptNum[channelID]
 }
 
 func isRelayAttemptBudgetExceeded(err error) bool {

@@ -232,6 +232,46 @@ func (s *AttemptSpan) SetProtocolDecision(mode, ingress, selected, kind, fallbac
 	s.attempt.FallbackReason = fallbackReason
 }
 
+// SetRoutingTrace attaches the immutable classification/directive snapshot.
+// It is normally called before End, but updateAttempt also supports a late call.
+func (s *AttemptSpan) SetRoutingTrace(trace model.AttemptRoutingTrace) {
+	if s == nil {
+		return
+	}
+	s.updateAttempt(func(attempt *model.ChannelAttempt) {
+		attempt.AttemptRoutingTrace = trace
+	})
+}
+
+// SetRoutingRuntime records the concrete shared-runtime state after the handler
+// applies the decision. This deliberately happens after End for failed attempts.
+func (s *AttemptSpan) SetRoutingRuntime(effect, state string, cooldownUntil int64) {
+	if s == nil {
+		return
+	}
+	s.updateAttempt(func(attempt *model.ChannelAttempt) {
+		attempt.RuntimeEffect = effect
+		attempt.RuntimeState = state
+		attempt.CooldownUntil = cooldownUntil
+	})
+}
+
+func (s *AttemptSpan) updateAttempt(update func(*model.ChannelAttempt)) {
+	if s == nil || update == nil {
+		return
+	}
+	update(&s.attempt)
+	if !s.ended || s.iter == nil {
+		return
+	}
+	for i := len(s.iter.attempts) - 1; i >= 0; i-- {
+		if s.iter.attempts[i].AttemptNum == s.attempt.AttemptNum {
+			update(&s.iter.attempts[i])
+			return
+		}
+	}
+}
+
 // End 结束尝试：设置状态，自动计算耗时，追加到 Iterator
 func (s *AttemptSpan) End(status model.AttemptStatus, statusCode int, msg string) {
 	if s.ended {

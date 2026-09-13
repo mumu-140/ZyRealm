@@ -14,7 +14,9 @@ octopus.db
 *.db-wal
 
 # 构建产物
-build/
+build/*
+!build/docker/
+!build/docker/**
 dist/
 out/
 static/out/
