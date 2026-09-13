@@ -163,7 +163,7 @@ func runSameChannelAttempts(
 	for planIndex, plan := range activePlans {
 		result = runProtocolRetries(ctx, request, channel, key, plan, firstTokenTimeout, maxRetries)
 		if result.FirstTokenTimeout || isAmbiguousTransportCancellation(ctx, result.Err) ||
-			classifyRoutingFailure(result) != failureDomainUnknown || isRelayAttemptBudgetExceeded(result.Err) {
+			shouldFailoverProviderImmediately(result) || isRelayAttemptBudgetExceeded(result.Err) {
 			return result
 		}
 		if planIndex+1 >= len(plans) {
@@ -224,7 +224,7 @@ func runProtocolRetries(
 		result.Plan = plan
 		if result.Success || result.Written || result.Canceled || result.ResetConversation ||
 			result.FirstTokenTimeout || isAmbiguousTransportCancellation(ctx, result.Err) ||
-			classifyRoutingFailure(result) != failureDomainUnknown || !isRetryableStatus(result.StatusCode) {
+			shouldFailoverProviderImmediately(result) || !isRetryableStatus(result.StatusCode) {
 			break
 		}
 	}
@@ -298,7 +298,7 @@ func saveHTTPReplayState(input httpReplaySaveInput) {
 
 	ttl := wsConversationStateTTL(input.groupTTL)
 	storeResponsesReplayState(input.apiKeyID, input.groupID, input.requestModel, state, ttl)
-	log.Debugf("saved HTTP replay state (apikey=%d, group=%d, model=%s, response_id=%s, channel=%d, key=%d, ttl=%v, is_replay=%t)",
+	log.Debugf("saved HTTP replay state (apikey=%d, group=%d, model=%s, previous_response_id=%s, channel=%d, key=%d, ttl=%v, is_replay=%t)",
 		input.apiKeyID, input.groupID, input.requestModel, state.LastResponseID,
 		input.channelID, input.channelKeyID, ttl, input.request.IsOpenAIExactReplayRequest())
 }
