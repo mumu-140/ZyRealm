@@ -244,11 +244,11 @@ func (b *P2C) Candidates(items []model.GroupItem) []model.GroupItem {
 		rest = append(rest, it)
 	}
 	sort.SliceStable(rest, func(a, bb int) bool {
-		ca, cb := CurrentChannelConcurrency(rest[a].ChannelID), CurrentChannelConcurrency(rest[b].ChannelID)
+		ca, cb := CurrentChannelConcurrency(rest[a].ChannelID), CurrentChannelConcurrency(rest[bb].ChannelID)
 		if ca != cb {
 			return ca < cb
 		}
-		return rest[a].Priority < rest[b].Priority
+		return rest[a].Priority < rest[bb].Priority
 	})
 
 	result := make([]model.GroupItem, 0, n)
