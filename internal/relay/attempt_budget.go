@@ -3,11 +3,15 @@ package relay
 import (
 	"errors"
 	"fmt"
+
+	dbmodel "github.com/bestruirui/octopus/internal/model"
+	"github.com/bestruirui/octopus/internal/op"
 )
 
 const (
 	defaultMaxProviderAttempts           = 4
-	defaultMaxWireAttempts               = 8
+	defaultMaxWireAttempts               = 20
+	hardMaxWireAttempts                  = 20
 	defaultMaxUnknownCrossProviderReplay = 1
 )
 
@@ -31,7 +35,18 @@ type relayAttemptBudget struct {
 }
 
 func newRelayAttemptBudget() *relayAttemptBudget {
-	return newRelayAttemptBudgetWithLimits(defaultMaxProviderAttempts, defaultMaxWireAttempts)
+	return newRelayAttemptBudgetWithLimits(defaultMaxProviderAttempts, configuredMaxWireAttempts())
+}
+
+func configuredMaxWireAttempts() int {
+	maxWires, err := op.SettingGetInt(dbmodel.SettingKeyRelayMaxWireAttempts)
+	if err != nil || maxWires <= 0 {
+		return defaultMaxWireAttempts
+	}
+	if maxWires > hardMaxWireAttempts {
+		return hardMaxWireAttempts
+	}
+	return maxWires
 }
 
 func newRelayAttemptBudgetWithLimits(maxProviders, maxWires int) *relayAttemptBudget {
@@ -40,6 +55,9 @@ func newRelayAttemptBudgetWithLimits(maxProviders, maxWires int) *relayAttemptBu
 	}
 	if maxWires <= 0 {
 		maxWires = defaultMaxWireAttempts
+	}
+	if maxWires > hardMaxWireAttempts {
+		maxWires = hardMaxWireAttempts
 	}
 	return &relayAttemptBudget{
 		maxProviders:       maxProviders,

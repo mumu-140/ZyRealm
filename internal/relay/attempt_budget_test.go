@@ -56,7 +56,7 @@ func TestRelayAttemptBudgetRejectsNewProviderButAllowsSeenProvider(t *testing.T)
 }
 
 func TestRelayAttemptBudgetLimitsUnknownCrossProviderReplay(t *testing.T) {
-	budget := newRelayAttemptBudget()
+	budget := newRelayAttemptBudgetWithLimits(defaultMaxProviderAttempts, defaultMaxWireAttempts)
 	if !budget.tryUnknownCrossProviderReplay() {
 		t.Fatalf("first unknown cross-provider replay should be allowed")
 	}
@@ -69,14 +69,21 @@ func TestRelayAttemptBudgetLimitsUnknownCrossProviderReplay(t *testing.T) {
 }
 
 func TestRelayAttemptBudgetUsesProductionDefaults(t *testing.T) {
-	budget := newRelayAttemptBudget()
+	budget := newRelayAttemptBudgetWithLimits(defaultMaxProviderAttempts, defaultMaxWireAttempts)
 	if budget.maxProviders != 4 {
 		t.Fatalf("maxProviders = %d, want 4", budget.maxProviders)
 	}
-	if budget.maxWires != 8 {
-		t.Fatalf("maxWires = %d, want 8", budget.maxWires)
+	if budget.maxWires != 20 {
+		t.Fatalf("maxWires = %d, want 20", budget.maxWires)
 	}
 	if budget.maxUnknownReplays != 1 {
 		t.Fatalf("maxUnknownReplays = %d, want 1", budget.maxUnknownReplays)
+	}
+}
+
+func TestRelayAttemptBudgetHardCapsWiresAtTwenty(t *testing.T) {
+	budget := newRelayAttemptBudgetWithLimits(4, 100)
+	if budget.maxWires != hardMaxWireAttempts {
+		t.Fatalf("maxWires = %d, want hard cap %d", budget.maxWires, hardMaxWireAttempts)
 	}
 }

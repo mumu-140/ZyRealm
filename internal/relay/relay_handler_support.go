@@ -242,6 +242,13 @@ func runProtocolRetries(
 }
 
 func fallbackStatus(result attemptResult) int {
+	// Preserve the raw upstream status for tracing, but do not let a misleading
+	// HTTP 2xx override a semantic failure detected after reading the body. This
+	// is required for gateways that return an error envelope with HTTP 200.
+	if !result.Success && result.StatusCode >= 400 &&
+		result.UpstreamStatus >= 200 && result.UpstreamStatus < 300 {
+		return result.StatusCode
+	}
 	if result.UpstreamStatus != 0 {
 		return result.UpstreamStatus
 	}
