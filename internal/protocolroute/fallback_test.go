@@ -2,6 +2,8 @@ package protocolroute
 
 import "testing"
 
+const observedAnthropicPayloadSchemaError = `{"error":{"message":"Invalid JSON data: Failed to deserialize the JSON body into the target type: messages[6]: data did not match any variant of untagged enum MessageContent at line 1 column 41225","type":"invalid_request_error","param":"","code":"json_parse_error"}}`
+
 func TestClassifyProtocolFallbackAllowsOnlyExplicitPreExecutionMismatch(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -28,6 +30,14 @@ func TestClassifyProtocolFallbackAllowsOnlyExplicitPreExecutionMismatch(t *testi
 				ErrorBody:  `{"error":{"type":"unsupported_protocol","message":"Anthropic protocol is not supported"}}`,
 			},
 			reason: FallbackReasonProtocolUnsupported,
+		},
+		{
+			name: "anthropic message content schema mismatch",
+			input: FallbackInput{
+				StatusCode: 400,
+				ErrorBody:  observedAnthropicPayloadSchemaError,
+			},
+			reason: FallbackReasonPayloadSchema,
 		},
 	}
 
@@ -60,6 +70,18 @@ func TestClassifyProtocolFallbackRejectsUnsafeFailures(t *testing.T) {
 		{
 			name:  "parameter error",
 			input: FallbackInput{StatusCode: 400, ErrorBody: `{"error":{"code":"invalid_request_error","message":"temperature is invalid"}}`},
+		},
+		{
+			name:  "generic json parse error remains request failure",
+			input: FallbackInput{StatusCode: 400, ErrorBody: `{"error":{"code":"json_parse_error","message":"invalid JSON near temperature"}}`},
+		},
+		{
+			name: "schema mismatch after upstream execution started",
+			input: FallbackInput{
+				StatusCode:      400,
+				ErrorBody:       observedAnthropicPayloadSchemaError,
+				UpstreamStarted: true,
+			},
 		},
 		{
 			name: "upstream execution started",

@@ -10,6 +10,7 @@ const (
 	FallbackReasonEndpointNotFound    = "endpoint_not_found"
 	FallbackReasonMethodNotAllowed    = "method_not_allowed"
 	FallbackReasonProtocolUnsupported = "protocol_unsupported"
+	FallbackReasonPayloadSchema       = "payload_schema_incompatible"
 )
 
 // FallbackInput describes the observable result of one protocol attempt.
@@ -53,6 +54,9 @@ func ClassifyProtocolFallback(in FallbackInput) FallbackDecision {
 	if modelFailure(code, message, in.ErrorBody) {
 		return FallbackDecision{}
 	}
+	if in.StatusCode == http.StatusBadRequest && payloadSchemaMismatch(code, message, in.ErrorBody) {
+		return FallbackDecision{Allowed: true, Reason: FallbackReasonPayloadSchema}
+	}
 	if in.StatusCode == http.StatusMethodNotAllowed {
 		return FallbackDecision{Allowed: true, Reason: FallbackReasonMethodNotAllowed}
 	}
@@ -93,6 +97,24 @@ func modelFailure(values ...string) bool {
 	return strings.Contains(joined, "model_not_found") ||
 		strings.Contains(joined, "model not found") ||
 		strings.Contains(joined, "model does not exist")
+}
+
+// payloadSchemaMismatch is intentionally narrow: it matches the concrete
+// pre-execution failure emitted by Anthropic-compatible gateways that cannot
+// deserialize a newer Claude MessageContent variant. A generic malformed JSON
+// or invalid parameter error remains a normal request failure.
+func payloadSchemaMismatch(values ...string) bool {
+	joined := strings.ToLower(strings.Join(values, " "))
+	if !strings.Contains(joined, "messages[") {
+		return false
+	}
+	if !strings.Contains(joined, "json_parse_error") &&
+		!strings.Contains(joined, "failed to deserialize the json body") {
+		return false
+	}
+	return strings.Contains(joined, "messagecontent") ||
+		strings.Contains(joined, "untagged enum") ||
+		strings.Contains(joined, "did not match any variant")
 }
 
 func fallbackDecisionFromMessage(value string) FallbackDecision {

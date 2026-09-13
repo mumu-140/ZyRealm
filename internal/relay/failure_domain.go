@@ -74,6 +74,25 @@ var credentialConcurrencyMarkers = []string{
 	"account concurrency limit",
 }
 
+// isAnthropicPayloadSchemaMismatch recognizes a narrow class of pre-execution
+// 400s returned by Anthropic-compatible gateways that cannot deserialize a
+// Claude/Anthropic MessageContent variant. These are upstream protocol/schema
+// capability failures rather than proof that the client request is invalid for
+// every provider, so the relay may safely try another protocol/provider.
+func isAnthropicPayloadSchemaMismatch(text string) bool {
+	text = strings.ToLower(text)
+	if !strings.Contains(text, "messages[") {
+		return false
+	}
+	if !strings.Contains(text, "json_parse_error") &&
+		!strings.Contains(text, "failed to deserialize the json body") {
+		return false
+	}
+	return strings.Contains(text, "messagecontent") ||
+		strings.Contains(text, "untagged enum") ||
+		strings.Contains(text, "did not match any variant")
+}
+
 func classifyRoutingFailure(result attemptResult) routingFailureDomain {
 	if result.Decision.Valid {
 		return result.Decision.Domain
@@ -89,6 +108,13 @@ func classifyRoutingFailure(result attemptResult) routingFailureDomain {
 	// Explicit blocked/content semantics terminate before provider/key health.
 	if isBlockedInvalidRequestError(text) || containsAny(text, contentPolicyMarkers) {
 		return failureDomainRequest
+	}
+
+	// A gateway that cannot deserialize a valid Anthropic MessageContent variant
+	// is a Provider×Model protocol capability mismatch. Keep this ahead of generic
+	// 400/request handling so another protocol/provider can recover the request.
+	if isAnthropicPayloadSchemaMismatch(text) {
+		return failureDomainModelCapability
 	}
 
 	// Capability markers deliberately precede generic client-error markers.

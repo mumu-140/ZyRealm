@@ -1,11 +1,13 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { Hash, HeartPulse, ShieldCheck, Timer, TimerOff, type LucideIcon } from 'lucide-react';
+import { Gauge, Hash, HeartPulse, ShieldCheck, Timer, TimerOff, type LucideIcon } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { SettingKey } from '@/api/endpoints/setting';
 import { SettingCard, SettingRow, SettingSection, useSettingField, useSettingToggle } from './shared';
+
+const RELAY_MAX_WIRE_ATTEMPTS_KEY = 'relay_max_wire_attempts';
 
 // min/max 与后端 model.Setting.Validate() 的边界保持一致，前端先行约束整数范围。
 const OUTLIER_FIELDS: { key: string; labelKey: string; min: number; max?: number }[] = [
@@ -54,6 +56,21 @@ export function SettingReliability() {
 
     return (
         <SettingCard icon={ShieldCheck} title={t('reliability.title')}>
+            {/* 请求级路由预算 */}
+            <SettingSection
+                title="请求级路由预算"
+                tooltip="限制单个请求真正发往上游的总尝试次数，包括同渠道重试、凭据轮换和协议/Provider failover。Provider 数量上限仍为 4；未知上游结果的跨 Provider 重放仍最多 1 次。"
+            />
+            <NumberFieldRow
+                settingKey={RELAY_MAX_WIRE_ATTEMPTS_KEY}
+                label="最大上游尝试次数"
+                placeholder="20"
+                tooltip="允许范围 1–20，默认 20。达到预算后不再发起新的上游调用；服务端始终硬限制为最多 20。"
+                icon={Gauge}
+                min={1}
+                max={20}
+            />
+
             {/* 分组健康检查 */}
             <SettingRow icon={HeartPulse} label={t('groupHealth.label')} tooltip={t('groupHealth.description')}>
                 <Switch checked={groupHealth.enabled} onCheckedChange={groupHealth.toggle} />

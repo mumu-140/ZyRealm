@@ -81,6 +81,12 @@ func classifyFailureScope(statusCode int, text string) failureScope {
 	if isBlockedInvalidRequestError(text) || containsAny(text, clientErrorMarkers) || containsAny(text, contentPolicyMarkers) {
 		return scopeIgnore
 	}
+	// Anthropic-compatible gateways can reject a newer MessageContent variant
+	// before model execution. This is compatibility evidence, not provider-health
+	// evidence, so keep outlier/circuit accounting neutral while routing retries.
+	if isAnthropicPayloadSchemaMismatch(text) {
+		return scopeIgnore
+	}
 	// Some relays wrap a model/effort capability error in an auth-shaped 401
 	// envelope (for example code=invalid_api_key). The semantic capability
 	// marker must win so a healthy credential/provider is not poisoned.
