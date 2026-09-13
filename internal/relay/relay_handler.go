@@ -200,16 +200,25 @@ func (h *relayHandler) acquireCandidate(channel *dbmodel.Channel, key dbmodel.Ch
 }
 
 func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel.ChannelKey, plan *protocolroute.AttemptPlan, result attemptResult) bool {
+	ambiguousCancellation := isAmbiguousTransportCancellation(h.c.Request.Context(), result.Err)
+	if ambiguousCancellation || result.FirstTokenTimeout {
+		// Both conditions should leave this provider for the remainder of the
+		// current request. Ambiguous cancellation is deliberately request-local:
+		// it is not enough evidence by itself to globally degrade provider health.
+		h.iterator.SkipProvider(channel.ID)
+	}
+
 	// 健康度上报与熔断上报的口径不同：
 	//   - 熔断只处理「可继续 failover」的失败（Written/ResetConversation 已终止本次请求）；
 	//   - 健康度必须覆盖 Written 与 ResetConversation：上游流中断、要求重建会话都是上游故障证据，
 	//     漏掉它们会让持续吐流失败的渠道-模型永远显示健康。
 	//   - Canceled 是客户端主动断开，与上游健康无关，继续排除。
-	if !result.Success && !result.Canceled {
+	//   - 单次 ambiguous transport cancellation 只做请求内绕开，暂不污染共享健康/熔断。
+	if !result.Success && !result.Canceled && !ambiguousCancellation {
 		reportOutlierFailure(channel.ID, plan.UpstreamModel(), result.StatusCode,
 			outlierErrorText(result.Err, result.UpstreamErrorBody), time.Now())
 	}
-	if !result.Success && !result.Written && !result.Canceled && !result.ResetConversation {
+	if !result.Success && !result.Written && !result.Canceled && !ambiguousCancellation && !result.ResetConversation {
 		failureKind := circuitFailureKind(h.group.RetryEnabled, result.StatusCode)
 		balancer.RecordFailure(channel.ID, key.ID, plan.UpstreamModel(), failureKind)
 		if failureKind == balancer.FailureHard {
