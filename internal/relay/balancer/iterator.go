@@ -8,13 +8,14 @@ import (
 )
 
 // Iterator 统一的负载均衡迭代器
-// 内部编排：策略排序 + 粘性优先 + 决策追踪
+// 内部编排：运行态准入 + 策略排序 + 粘性优先 + 决策追踪
 type Iterator struct {
-	candidates  []model.GroupItem
-	index       int
-	stickyIdx   int // 粘性通道在 candidates 中的位置，-1 表示无
-	stickyKeyID int
-	modelName   string // 请求模型名（用于熔断检查）
+	candidates       []model.GroupItem
+	index            int
+	stickyIdx        int // 粘性通道在 candidates 中的位置，-1 表示无
+	stickyKeyID      int
+	modelName        string // 请求模型名（用于熔断检查）
+	skippedProviders map[int]struct{}
 
 	// 内嵌追踪
 	attempts []model.ChannelAttempt
@@ -22,22 +23,23 @@ type Iterator struct {
 }
 
 // NewIterator 创建负载均衡迭代器
-// 自动处理：策略排序 + 粘性通道提前
+// 自动处理：运行态准入 + 策略排序 + 粘性通道提前
 func NewIterator(group model.Group, apiKeyID int, requestModel string) *Iterator {
 	return NewIteratorWithPreference(group, apiKeyID, requestModel, nil)
 }
 
 // NewIteratorWithPreference 创建带优先通道偏好的负载均衡迭代器。
-// preferred 非空时，会优先把指定通道提前到候选列表最前面。
+// runtime eligibility 在所有 GroupMode 之前统一应用；sticky 只能在当前
+// AVAILABLE 候选中生效，不能把 SUSPECT/HALF_OPEN/COOLDOWN 通道提到首位。
 func NewIteratorWithPreference(group model.Group, apiKeyID int, requestModel string, preferred *SessionEntry) *Iterator {
-	b := GetBalancer(group.Mode)
-	candidates := b.Candidates(group.Items)
+	now := time.Now()
+	candidates := runtimeOrderedCandidates(group, requestModel, now)
 
 	stickyIdx := -1
 	stickyKeyID := 0
 	if preferred != nil && preferred.ChannelID > 0 {
 		for i, item := range candidates {
-			if item.ChannelID == preferred.ChannelID {
+			if item.ChannelID == preferred.ChannelID && runtimeStickyEligible(item, requestModel, now) {
 				if i > 0 {
 					preferredItem := candidates[i]
 					copy(candidates[1:i+1], candidates[0:i])
@@ -53,9 +55,9 @@ func NewIteratorWithPreference(group model.Group, apiKeyID int, requestModel str
 		stickyTTL := time.Duration(group.SessionKeepTime) * time.Second
 		if sticky := GetSticky(apiKeyID, requestModel, stickyTTL); sticky != nil {
 			for i, item := range candidates {
-				if item.ChannelID == sticky.ChannelID {
+				if item.ChannelID == sticky.ChannelID && runtimeStickyEligible(item, requestModel, now) {
 					if i > 0 {
-						// 将粘性通道移到最前面
+						// 将 AVAILABLE 粘性通道移到最前面。
 						stickyItem := candidates[i]
 						copy(candidates[1:i+1], candidates[0:i])
 						candidates[0] = stickyItem
@@ -69,18 +71,40 @@ func NewIteratorWithPreference(group model.Group, apiKeyID int, requestModel str
 	}
 
 	return &Iterator{
-		candidates:  candidates,
-		index:       -1,
-		stickyIdx:   stickyIdx,
-		stickyKeyID: stickyKeyID,
-		modelName:   requestModel,
+		candidates:       candidates,
+		index:            -1,
+		stickyIdx:        stickyIdx,
+		stickyKeyID:      stickyKeyID,
+		modelName:        requestModel,
+		skippedProviders: make(map[int]struct{}),
 	}
 }
 
-// Next 移动到下一个候选，返回 false 表示遍历完成
+// Next 移动到下一个未被当前请求跳过的候选，返回 false 表示遍历完成。
 func (it *Iterator) Next() bool {
-	it.index++
-	return it.index < len(it.candidates)
+	for {
+		it.index++
+		if it.index >= len(it.candidates) {
+			return false
+		}
+		if _, skipped := it.skippedProviders[it.candidates[it.index].ChannelID]; skipped {
+			continue
+		}
+		return true
+	}
+}
+
+// SkipProvider marks a provider/channel unavailable for the remainder of the
+// current request. This is request-local state only; it does not mutate shared
+// health, circuit, or persistent channel configuration.
+func (it *Iterator) SkipProvider(channelID int) {
+	if it == nil || channelID <= 0 {
+		return
+	}
+	if it.skippedProviders == nil {
+		it.skippedProviders = make(map[int]struct{})
+	}
+	it.skippedProviders[channelID] = struct{}{}
 }
 
 // Item 返回当前候选的 GroupItem
@@ -100,7 +124,7 @@ func (it *Iterator) StickyKeyID() int {
 	return it.stickyKeyID
 }
 
-// Len 返回候选列表长度
+// Len 返回当前通过运行态准入的候选列表长度。
 func (it *Iterator) Len() int {
 	return len(it.candidates)
 }

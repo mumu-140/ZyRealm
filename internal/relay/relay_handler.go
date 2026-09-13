@@ -11,6 +11,7 @@ import (
 	"github.com/bestruirui/octopus/internal/outlierwindow"
 	"github.com/bestruirui/octopus/internal/protocol"
 	"github.com/bestruirui/octopus/internal/protocolroute"
+	"github.com/bestruirui/octopus/internal/relay/availability"
 	"github.com/bestruirui/octopus/internal/relay/balancer"
 	"github.com/bestruirui/octopus/internal/relay/compress"
 	"github.com/bestruirui/octopus/internal/server/resp"
@@ -103,6 +104,7 @@ func buildRelayHandler(
 		c: c, inAdapter: inAdapter, internalRequest: request, metrics: metrics,
 		apiKeyID: apiKeyID, requestModel: request.Model, groupID: group.ID,
 		groupSessionTTL: group.SessionKeepTime, iter: iterator, rawBody: rawBody, heartbeat: heartbeat,
+		attemptBudget: newRelayAttemptBudget(),
 	}
 	return &relayHandler{
 		inboundType: inboundType, c: c, group: group,
@@ -115,6 +117,10 @@ func buildRelayHandler(
 
 func (h *relayHandler) run() {
 	for h.iterator.Next() {
+		if h.request.attemptBudget != nil && h.request.attemptBudget.wireExhausted() {
+			h.lastErr = errRelayWireAttemptsExceeded
+			break
+		}
 		if h.c.Request.Context().Err() != nil {
 			log.Debugf("request context canceled, stopping retry")
 			h.metrics.SaveWithChannelStats(h.c.Request.Context(), false, context.Canceled, h.iterator.Attempts(), false)
@@ -145,38 +151,79 @@ func (h *relayHandler) processCandidate() bool {
 		h.iterator.Skip(channel.ID, 0, channel.Name, "channel disabled")
 		return false
 	}
+	if h.request.attemptBudget != nil && !h.request.attemptBudget.canUseProvider(channel.ID) {
+		h.iterator.Skip(channel.ID, 0, channel.Name, errRelayProviderAttemptsExceeded.Error())
+		h.iterator.SkipProvider(channel.ID)
+		h.lastErr = errRelayProviderAttemptsExceeded
+		return false
+	}
+
+	upstreamModel := balancer.ItemUpstreamModel(item, h.request.requestModel)
 	legacyEligible, reason := legacyChannelEligibility(channel, h.request.internalRequest, h.passthroughRequired)
-	key, plans := h.selectCandidateAttempt(channel, item.ModelName, legacyEligible)
-	if key.ChannelKey == "" || len(plans) == 0 {
-		if key.ChannelKey != "" {
-			h.iterator.Skip(channel.ID, key.ID, channel.Name, reason)
-		}
+
+	runtimeLease, runtimeEligible := availability.AcquireCandidate(channel.ID, upstreamModel, time.Now())
+	if !runtimeEligible {
+		h.iterator.Skip(channel.ID, 0, channel.Name, "runtime cooldown or half-open lease busy")
 		return false
 	}
-	for _, plan := range plans {
-		if plan.UpstreamProtocol() == protocol.OpenAIResponse {
-			h.passthroughCapable = true
+	defer func() {
+		availability.ReleaseLease(runtimeLease, time.Now())
+	}()
+
+	excludedKeyIDs := make(map[int]struct{}, defaultMaxCredentialsPerProvider)
+	for credentialAttempt := 0; credentialAttempt < defaultMaxCredentialsPerProvider; credentialAttempt++ {
+		key, plans := h.selectCandidateAttempt(channel, upstreamModel, legacyEligible, excludedKeyIDs)
+		if key.ChannelKey == "" || len(plans) == 0 {
+			if key.ChannelKey != "" {
+				h.iterator.Skip(channel.ID, key.ID, channel.Name, reason)
+			}
+			if len(excludedKeyIDs) > 0 {
+				h.iterator.SkipProvider(channel.ID)
+			}
+			return false
 		}
+		for _, plan := range plans {
+			if plan.UpstreamProtocol() == protocol.OpenAIResponse {
+				h.passthroughCapable = true
+			}
+		}
+
+		if !h.acquireCandidate(channel, key) {
+			return false
+		}
+		result := runSameChannelAttempts(h.c.Request.Context(), h.request, channel, key, plans,
+			h.group.FirstTokenTimeOut, h.maxRetries)
+		usedPlan := plans[0]
+		if result.Plan != nil {
+			usedPlan = result.Plan
+		}
+
+		if classifyRoutingFailure(result) == failureDomainCredential {
+			recordCredentialRoutingFailure(channel.ID, key.ID, result, time.Now())
+			excludedKeyIDs[key.ID] = struct{}{}
+			h.lastErr = result.Err
+			h.lastResult = result
+			if credentialAttempt+1 >= defaultMaxCredentialsPerProvider {
+				h.iterator.SkipProvider(channel.ID)
+				return false
+			}
+			continue
+		}
+
+		return h.handleAttemptResult(channel, key, usedPlan, result)
 	}
-	if !h.acquireCandidate(channel, key) {
-		return false
-	}
-	result := runSameChannelAttempts(h.c.Request.Context(), h.request, channel, key, plans,
-		h.group.FirstTokenTimeOut, h.maxRetries)
-	usedPlan := plans[0]
-	if result.Plan != nil {
-		usedPlan = result.Plan
-	}
-	return h.handleAttemptResult(channel, key, usedPlan, result)
+
+	h.iterator.SkipProvider(channel.ID)
+	return false
 }
 
-func (h *relayHandler) selectCandidateAttempt(channel *dbmodel.Channel, upstreamModel string, legacyEligible bool) (dbmodel.ChannelKey, []*protocolroute.AttemptPlan) {
+func (h *relayHandler) selectCandidateAttempt(channel *dbmodel.Channel, upstreamModel string, legacyEligible bool, excludeKeyIDs map[int]struct{}) (dbmodel.ChannelKey, []*protocolroute.AttemptPlan) {
 	log.Debugf("request model %s, mode: %d, forwarding to channel: %s model: %s (attempt %d/%d, sticky=%t)",
 		h.request.requestModel, h.group.Mode, channel.Name, upstreamModel,
 		h.iterator.Index()+1, h.iterator.Len(), h.iterator.IsSticky())
 	return selectChannelAttempt(channelAttemptInput{
 		channel: channel, upstreamModel: upstreamModel, requestModel: h.request.requestModel,
-		request: h.request.internalRequest, iterator: h.iterator, group: h.group,
+		request: h.request.internalRequest, iterator: h.iterator, excludeKeyIDs: excludeKeyIDs, group: h.group,
 		protocolRoutingEnabled: h.protocolRoutingEnabled, legacyEligible: legacyEligible,
 		responsesPassthroughRequired: h.passthroughRequired,
 	})
@@ -200,16 +247,51 @@ func (h *relayHandler) acquireCandidate(channel *dbmodel.Channel, key dbmodel.Ch
 }
 
 func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel.ChannelKey, plan *protocolroute.AttemptPlan, result attemptResult) bool {
+	now := time.Now()
+	recordRuntimeAvailabilityEvidence(h.c.Request.Context(), channel.ID, plan.UpstreamModel(), result, now)
+
+	ambiguousCancellation := isAmbiguousTransportCancellation(h.c.Request.Context(), result.Err)
+	hardProviderFailure := shouldFailoverProviderImmediately(result)
+	budgetExceeded := isRelayAttemptBudgetExceeded(result.Err)
+	failureDomain := classifyRoutingFailure(result)
+	explicitContentPolicy := isExplicitContentPolicyFailure(result)
+
+	// Only a MAYBE_SENT ambiguous cancellation spends the single balanced
+	// unknown-outcome replay allowance. NOT_SENT can move to another provider
+	// without risking duplicate upstream execution.
+	if ambiguousCancellation && result.DispatchState == dispatchMaybeSent && !result.Written && !result.ResetConversation && h.request.attemptBudget != nil {
+		if !h.request.attemptBudget.tryUnknownCrossProviderReplay() {
+			// Balanced replay policy: once an unknown upstream outcome has already
+			// been replayed across providers, terminate rather than risk another
+			// duplicate execution/billing event.
+			h.metrics.SaveWithChannelStats(h.c.Request.Context(), false, result.Err, h.iterator.Attempts(), false)
+			h.heartbeat.FlushOrError(h.c, http.StatusBadGateway, "channel failed")
+			return true
+		}
+	}
+
+	if ambiguousCancellation || result.FirstTokenTimeout || hardProviderFailure || isProviderAttemptBudgetExceeded(result.Err) {
+		// These conditions should leave this provider for the remainder of the
+		// current request. Ambiguous cancellation is deliberately request-local:
+		// it is not enough evidence by itself to globally degrade provider health.
+		// Hard provider failures continue through the shared health/circuit path.
+		h.iterator.SkipProvider(channel.ID)
+	}
+
 	// 健康度上报与熔断上报的口径不同：
 	//   - 熔断只处理「可继续 failover」的失败（Written/ResetConversation 已终止本次请求）；
 	//   - 健康度必须覆盖 Written 与 ResetConversation：上游流中断、要求重建会话都是上游故障证据，
 	//     漏掉它们会让持续吐流失败的渠道-模型永远显示健康。
 	//   - Canceled 是客户端主动断开，与上游健康无关，继续排除。
-	if !result.Success && !result.Canceled {
+	//   - 单次 ambiguous transport cancellation 只做请求内绕开，暂不污染慢速 outlier/circuit；
+	//     它由共享 runtime availability 记录为 SUSPECT 并在短期重复时升级。
+	//   - request-local attempt budget exhaustion is not upstream health evidence.
+	if !result.Success && !result.Canceled && !ambiguousCancellation && !budgetExceeded {
 		reportOutlierFailure(channel.ID, plan.UpstreamModel(), result.StatusCode,
-			outlierErrorText(result.Err, result.UpstreamErrorBody), time.Now())
+			outlierErrorText(result.Err, result.UpstreamErrorBody), now)
 	}
-	if !result.Success && !result.Written && !result.Canceled && !result.ResetConversation {
+	if !result.Success && !result.Written && !result.Canceled && !ambiguousCancellation && !budgetExceeded &&
+		!result.ResetConversation && failureDomain != failureDomainModelCapability && !explicitContentPolicy {
 		failureKind := circuitFailureKind(h.group.RetryEnabled, result.StatusCode)
 		balancer.RecordFailure(channel.ID, key.ID, plan.UpstreamModel(), failureKind)
 		if failureKind == balancer.FailureHard {
@@ -232,6 +314,15 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 		return true
 	case attemptActionWritten:
 		h.metrics.SaveWithChannelStats(h.c.Request.Context(), false, result.Err, h.iterator.Attempts(), false)
+		return true
+	}
+	if explicitContentPolicy {
+		h.metrics.SaveWithChannelStats(h.c.Request.Context(), false, result.Err, h.iterator.Attempts(), false)
+		statusCode := result.StatusCode
+		if statusCode <= 0 {
+			statusCode = http.StatusBadRequest
+		}
+		h.heartbeat.FlushOrError(h.c, statusCode, "channel failed")
 		return true
 	}
 	h.lastErr = result.Err
@@ -266,7 +357,9 @@ func classifyAttemptResult(result attemptResult) attemptAction {
 }
 
 func (h *relayHandler) handleSuccessfulAttempt(channel *dbmodel.Channel, key dbmodel.ChannelKey, plan *protocolroute.AttemptPlan, result attemptResult) bool {
-	outlierwindow.Report(channel.ID, plan.UpstreamModel(), true, result.StatusCode, time.Now())
+	now := time.Now()
+	availability.RecordCredentialSuccess(channel.ID, key.ID, now)
+	outlierwindow.Report(channel.ID, plan.UpstreamModel(), true, result.StatusCode, now)
 	saveHTTPReplayState(httpReplaySaveInput{
 		ctx: h.c.Request.Context(), inboundType: h.inboundType, request: h.request.internalRequest,
 		inAdapter: h.request.inAdapter, metrics: h.metrics, previousState: h.replayState,

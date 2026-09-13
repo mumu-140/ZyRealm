@@ -10,6 +10,7 @@ import (
 
 	dbmodel "github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/protocolroute"
+	"github.com/bestruirui/octopus/internal/relay/availability"
 	"github.com/bestruirui/octopus/internal/relay/balancer"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/transformer/inbound"
@@ -94,6 +95,7 @@ type channelAttemptInput struct {
 	requestModel                 string
 	request                      *model.InternalLLMRequest
 	iterator                     *balancer.Iterator
+	excludeKeyIDs                map[int]struct{}
 	policyState                  *dbmodel.ProtocolPolicyState
 	policySnapshot               protocolroute.PolicySnapshot
 	routingMode                  protocolroute.RoutingMode
@@ -104,8 +106,12 @@ type channelAttemptInput struct {
 }
 
 func selectChannelAttempt(input channelAttemptInput) (dbmodel.ChannelKey, []*protocolroute.AttemptPlan) {
+	excluded := make(map[int]struct{}, len(input.excludeKeyIDs))
+	for keyID := range input.excludeKeyIDs {
+		excluded[keyID] = struct{}{}
+	}
 	selectOpts := dbmodel.ChannelKeySelectOptions{
-		ExcludeKeyIDs:  make(map[int]struct{}),
+		ExcludeKeyIDs:  excluded,
 		PreferredKeyID: input.iterator.StickyKeyID(),
 	}
 	for {
@@ -115,6 +121,10 @@ func selectChannelAttempt(input channelAttemptInput) (dbmodel.ChannelKey, []*pro
 				input.iterator.Skip(input.channel.ID, 0, input.channel.Name, "no available key")
 			}
 			return dbmodel.ChannelKey{}, nil
+		}
+		if !availability.CredentialAvailable(input.channel.ID, usedKey.ID, time.Now()) {
+			selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
+			continue
 		}
 		if input.iterator.SkipCircuitBreak(input.channel.ID, usedKey.ID, input.channel.Name) {
 			selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
@@ -152,6 +162,15 @@ func runSameChannelAttempts(
 	var result attemptResult
 	for planIndex, plan := range activePlans {
 		result = runProtocolRetries(ctx, request, channel, key, plan, firstTokenTimeout, maxRetries)
+		if shouldFailoverModelCapacity(request, channel.ID, result) {
+			availability.RecordModelFailure(channel.ID, plan.UpstreamModel(), "model_capacity", time.Now())
+			request.iter.SkipProvider(channel.ID)
+			return result
+		}
+		if result.FirstTokenTimeout || isAmbiguousTransportCancellation(ctx, result.Err) ||
+			shouldFailoverProviderImmediately(result) || isRelayAttemptBudgetExceeded(result.Err) {
+			return result
+		}
 		if planIndex+1 >= len(plans) {
 			return result
 		}
@@ -181,6 +200,10 @@ func runProtocolRetries(
 ) attemptResult {
 	var result attemptResult
 	for retryNum := 0; retryNum < maxRetries; retryNum++ {
+		if request != nil && request.attemptBudget != nil && request.attemptBudget.wireExhausted() {
+			request.iter.Skip(channel.ID, key.ID, channel.Name, errRelayWireAttemptsExceeded.Error())
+			return attemptResult{Err: errRelayWireAttemptsExceeded}
+		}
 		if retryNum > 0 {
 			delay := computeBackoff(retryNum, result.RetryAfter)
 			log.Infof("same-channel retry %d/%d for %s, waiting %v", retryNum, maxRetries, channel.Name, delay)
@@ -196,10 +219,18 @@ func runProtocolRetries(
 		if err != nil {
 			return attemptResult{Err: err, StatusCode: http.StatusInternalServerError}
 		}
+		if request != nil && request.attemptBudget != nil {
+			if err := request.attemptBudget.tryStartWire(channel.ID); err != nil {
+				request.iter.Skip(channel.ID, key.ID, channel.Name, err.Error())
+				return attemptResult{Err: err}
+			}
+		}
 		result = attempt.attempt()
 		result.Plan = plan
 		if result.Success || result.Written || result.Canceled || result.ResetConversation ||
-			result.FirstTokenTimeout || !isRetryableStatus(result.StatusCode) {
+			result.FirstTokenTimeout || isAmbiguousTransportCancellation(ctx, result.Err) ||
+			shouldFailoverProviderImmediately(result) || shouldFailoverModelCapacity(request, channel.ID, result) ||
+			!isRetryableStatus(result.StatusCode) {
 			break
 		}
 	}

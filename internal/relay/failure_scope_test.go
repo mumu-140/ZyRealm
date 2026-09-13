@@ -38,6 +38,7 @@ func TestClassifyFailureScope(t *testing.T) {
 		{"渠道-连接层无状态码", 0, `context deadline exceeded (Client.Timeout exceeded while awaiting headers)`, scopeChannel},
 
 		// 模型级：同渠道其它模型可能完全正常。
+		{"模型-首字超时", 0, `channel x failed: failed to send request: first token timeout (30s)`, scopeModel},
 		{"模型-不存在", 503, `{"error":{"code":"model_not_found","message":"model not found"}}`, scopeModel},
 		{"模型-无访问权限", 404, `The model 'gpt-5.6' does not exist or you do not have access to it`, scopeModel},
 		{"模型-上游负载达上限", 500, `{"error":{"code":"get_channel_failed","message":"当前分组下模型负载已经达到上限"}}`, scopeModel},

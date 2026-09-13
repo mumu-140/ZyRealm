@@ -66,14 +66,25 @@ var modelErrorMarkers = []string{
 
 // classifyFailureScope 判定失败作用域。text 为「错误信息 + 上游错误体」的拼接，
 // statusCode==0 表示连接层失败（未拿到 HTTP 响应）。
-// 判定顺序即优先级：连接层 → 客户端 → 渠道凭据/额度 → 拦截页 → 模型 → 状态码兜底。
+// 判定顺序即优先级：已知模型级本地超时 → 连接层 → 客户端/内容策略 → 模型能力不匹配 → 渠道凭据/额度 → 拦截页 → 模型 → 状态码兜底。
 func classifyFailureScope(statusCode int, text string) failureScope {
 	text = strings.ToLower(text)
 
+	// first-token timeout 是当前 channel×model 的服务质量证据。虽然它通常
+	// 没有 HTTP status（statusCode==0），也不能因此铺成整渠道失败。
+	if strings.Contains(text, "first token timeout") {
+		return scopeModel
+	}
 	if statusCode == 0 || containsAny(text, connectionErrorMarkers) {
 		return scopeChannel
 	}
-	if isBlockedInvalidRequestError(text) || containsAny(text, clientErrorMarkers) {
+	if isBlockedInvalidRequestError(text) || containsAny(text, clientErrorMarkers) || containsAny(text, contentPolicyMarkers) {
+		return scopeIgnore
+	}
+	// Some relays wrap a model/effort capability error in an auth-shaped 401
+	// envelope (for example code=invalid_api_key). The semantic capability
+	// marker must win so a healthy credential/provider is not poisoned.
+	if containsAny(text, modelCapabilityMarkers) {
 		return scopeIgnore
 	}
 	if isUpstreamQuotaError(text) || isNoAvailableAccountError(text) || containsAny(text, channelErrorMarkers) {

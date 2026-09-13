@@ -14,6 +14,13 @@ func circuitFailureKind(retryEnabled bool, statusCode int) balancer.FailureKind 
 	if retryEnabled && isPassthroughStatus(statusCode) {
 		return balancer.FailureSoftRateLimit
 	}
+	// Request, credential and capability semantics are not provider-health
+	// evidence. Their dedicated routing/runtime policy decides whether to stop,
+	// rotate a credential, or switch provider; the breaker should not learn a
+	// hard outage from generic 4xx envelopes such as misleading 401/403 errors.
+	if statusCode >= 400 && statusCode < 500 {
+		return balancer.FailureIgnore
+	}
 	return balancer.FailureHard
 }
 
@@ -52,7 +59,7 @@ func (ra *relayAttempt) finishSuccessfulAttempt(span *balancer.AttemptSpan, stat
 	})
 	balancer.RecordSuccess(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
 	balancer.SetSticky(ra.apiKeyID, ra.requestModel, ra.channel.ID, ra.usedKey.ID)
-	return attemptResult{Success: true}
+	return attemptResult{Success: true, DispatchState: ra.dispatchState}
 }
 
 func (ra *relayAttempt) finishCanceledAttempt(span *balancer.AttemptSpan, statusCode int, fwdErr error) attemptResult {
@@ -65,7 +72,7 @@ func (ra *relayAttempt) finishCanceledAttempt(span *balancer.AttemptSpan, status
 	return attemptResult{
 		Written: written, Canceled: true, Err: fwdErr, StatusCode: statusCode,
 		UpstreamErrorBody: ra.upstreamErrorBody, UpstreamStatus: ra.upstreamStatusCode,
-		UpstreamStarted: ra.upstreamStarted,
+		UpstreamStarted: ra.upstreamStarted, DispatchState: ra.dispatchState,
 	}
 }
 
@@ -86,12 +93,13 @@ func (ra *relayAttempt) finishFailedAttempt(span *balancer.AttemptSpan, statusCo
 		Written:           written,
 		ResetConversation: statusCode == http.StatusConflict && needsConversationRestart(relayErrorMessage(fwdErr)),
 		FirstTokenTimeout: firstTokenTimeout,
-		Err:               fmt.Errorf("channel %s failed: %v", ra.channel.Name, fwdErr),
+		Err:               fmt.Errorf("channel %s failed: %w", ra.channel.Name, fwdErr),
 		StatusCode:        statusCode,
 		RetryAfter:        ra.retryAfter,
 		UpstreamErrorBody: ra.upstreamErrorBody,
 		UpstreamStatus:    ra.upstreamStatusCode,
 		UpstreamStarted:   ra.upstreamStarted,
+		DispatchState:     ra.dispatchState,
 	}
 }
 

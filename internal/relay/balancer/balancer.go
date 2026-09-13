@@ -10,6 +10,7 @@ import (
 
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/outlierwindow"
+	"github.com/bestruirui/octopus/internal/relay/availability"
 )
 
 // rotationCounters 轮换计数器，按「用途 + 候选集合指纹」分桶。
@@ -301,11 +302,12 @@ func itemHealthScore(channelID int, modelName string, now time.Time) float64 {
 
 const minHealthSamples = 8 // 与 outlierwindow defaultConfig.MinSamples 对齐
 
-// Reset clears in-memory balancer state for tests.
+// Reset clears in-memory balancer and shared runtime state for tests.
 func Reset() {
 	rotationCounters = sync.Map{}
 	globalBreaker = sync.Map{}
 	globalSession = sync.Map{}
 	globalConcurrency = sync.Map{}
 	globalChannelRate = sync.Map{}
+	availability.Reset()
 }

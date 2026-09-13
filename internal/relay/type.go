@@ -96,6 +96,7 @@ type relayRequest struct {
 	groupID         int
 	groupSessionTTL int
 	iter            *balancer.Iterator
+	attemptBudget   *relayAttemptBudget
 
 	// rawBody 保存客户端原始请求 body，用于同格式（如 Anthropic→Anthropic）直通转发时
 	// 绕过内部模型来回转换，以保证 beta 字段、内容块顺序、thinking 签名等完全透传。
@@ -119,6 +120,13 @@ func (r *relayRequest) requestContext() context.Context {
 	return r.ctx
 }
 
+type dispatchState uint8
+
+const (
+	dispatchNotSent dispatchState = iota
+	dispatchMaybeSent
+)
+
 // relayAttempt 尝试级上下文
 type relayAttempt struct {
 	*relayRequest // 嵌入请求级上下文
@@ -134,6 +142,7 @@ type relayAttempt struct {
 	upstreamErrorBody    string
 	upstreamStatusCode   int
 	upstreamStarted      bool
+	dispatchState        dispatchState
 }
 
 // attemptResult 封装单次尝试的结果
@@ -149,5 +158,6 @@ type attemptResult struct {
 	UpstreamErrorBody string        // 原始上游错误体，仅用于封闭的协议 mismatch 分类
 	UpstreamStatus    int           // 未归一化的上游 HTTP 状态码
 	UpstreamStarted   bool          // 上游已返回成功状态，可能已开始模型执行
+	DispatchState     dispatchState // 是否已经进入可能把请求发给上游的 transport 调用
 	Plan              *protocolroute.AttemptPlan
 }

@@ -176,6 +176,9 @@ func newRelayAttempt(request *relayRequest, channel *dbmodel.Channel, key dbmode
 	if plan == nil {
 		return nil, fmt.Errorf("protocol attempt plan is nil")
 	}
+	if request == nil || request.internalRequest == nil {
+		return nil, fmt.Errorf("relay request is nil")
+	}
 	outboundType, ok := plan.UpstreamProtocol().ToOutboundType()
 	if !ok {
 		return nil, fmt.Errorf("unsupported upstream protocol: %s", plan.UpstreamProtocol())
@@ -184,11 +187,11 @@ func newRelayAttempt(request *relayRequest, channel *dbmodel.Channel, key dbmode
 	if adapter == nil {
 		return nil, fmt.Errorf("no adapter registered for upstream protocol: %s", plan.UpstreamProtocol())
 	}
-	attemptRequest := *request
+	attemptRequest := cloneRelayRequestForAttempt(request)
 	attemptRequest.internalRequest = request.internalRequest.Clone()
 	attemptRequest.internalRequest.Model = plan.UpstreamModel()
 	return &relayAttempt{
-		relayRequest:         &attemptRequest,
+		relayRequest:         attemptRequest,
 		outAdapter:           adapter,
 		channel:              channel,
 		usedKey:              key,

@@ -38,6 +38,11 @@ func (ra *relayAttempt) forwardViaWS(ctx context.Context) (int, error) {
 		return -1, nil
 	}
 	ra.metrics.SetTransportRequestPayload(reqBody, ra.internalRequest.Model)
+	if err := ctx.Err(); err != nil {
+		wsUpstreamPool.Put(pc)
+		return 0, err
+	}
+	ra.dispatchState = dispatchMaybeSent
 	if err := wsUpstreamPool.SendResponseCreate(ctx, pc, reqBody); err != nil {
 		return ra.handleWSSendFailure(ctx, pc, reqBody, continuation, err)
 	}
@@ -118,6 +123,11 @@ func (ra *relayAttempt) retryViaFreshUpstreamWS(ctx context.Context, reqBody []b
 		return 0, nil, false
 	}
 
+	if err := ctx.Err(); err != nil {
+		wsUpstreamPool.Put(redialed)
+		return 0, err, true
+	}
+	ra.dispatchState = dispatchMaybeSent
 	retryErr := wsUpstreamPool.SendResponseCreate(ctx, redialed, reqBody)
 	if retryErr != nil {
 		log.Warnf("upstream WS redial send failed for channel %s: %v", ra.channel.Name, retryErr)

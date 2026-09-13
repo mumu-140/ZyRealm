@@ -72,6 +72,11 @@ func (ra *relayAttempt) forwardViaWSPassthrough(ctx context.Context) (int, error
 		return -1, nil
 	}
 	ra.metrics.SetTransportRequestPayload(payload, ra.internalRequest.Model)
+	if err := ctx.Err(); err != nil {
+		wsUpstreamPool.Put(pc)
+		return 0, err
+	}
+	ra.dispatchState = dispatchMaybeSent
 	if err := wsUpstreamPool.SendRaw(ctx, pc, payload); err != nil {
 		log.Warnf("upstream WS passthrough send failed for channel %s: %v", ra.channel.Name, err)
 		wsUpstreamPool.RemoveConn(pc)
@@ -123,6 +128,11 @@ func (ra *relayAttempt) retryViaFreshUpstreamWSPassthrough(ctx context.Context, 
 	if redialed == nil {
 		return 0, nil, false
 	}
+	if err := ctx.Err(); err != nil {
+		wsUpstreamPool.Put(redialed)
+		return 0, err, true
+	}
+	ra.dispatchState = dispatchMaybeSent
 	if err := wsUpstreamPool.SendRaw(ctx, redialed, payload); err != nil {
 		wsUpstreamPool.RemoveConn(redialed)
 		wsUpstreamPool.RecordWSFailure(ra.channel.ID)
