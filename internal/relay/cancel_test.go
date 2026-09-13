@@ -6,23 +6,33 @@ import (
 	"testing"
 )
 
-func TestIsClientCancellationMatchesWrappedRequestErrors(t *testing.T) {
+func TestIsClientCancellationDoesNotTrustWrappedTransportCancellation(t *testing.T) {
 	ctx := context.Background()
 
-	if !isClientCancellation(ctx, fmt.Errorf("failed to send request: %w", context.Canceled)) {
-		t.Fatalf("expected wrapped context.Canceled to be treated as client cancellation")
+	if isClientCancellation(ctx, fmt.Errorf("failed to send request: %w", context.Canceled)) {
+		t.Fatalf("expected wrapped context.Canceled with a live outer context to remain failover-eligible")
 	}
-	if !isClientCancellation(ctx, fmt.Errorf("failed to send request: %w", context.DeadlineExceeded)) {
-		t.Fatalf("expected wrapped context.DeadlineExceeded to be treated as client cancellation")
+	if isClientCancellation(ctx, fmt.Errorf("failed to send request: %w", context.DeadlineExceeded)) {
+		t.Fatalf("expected wrapped context.DeadlineExceeded with a live outer context to remain failover-eligible")
 	}
 }
 
-func TestIsClientCancellationFallsBackToContextState(t *testing.T) {
+func TestIsClientCancellationUsesOuterContextState(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	if !isClientCancellation(ctx, fmt.Errorf("upstream request aborted")) {
-		t.Fatalf("expected canceled request context to be treated as client cancellation")
+		t.Fatalf("expected canceled outer request context to be treated as client cancellation")
+	}
+}
+
+func TestIsClientCancellationUsesOuterDeadlineState(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 0)
+	defer cancel()
+
+	<-ctx.Done()
+	if !isClientCancellation(ctx, fmt.Errorf("upstream request aborted")) {
+		t.Fatalf("expected expired outer request context to be treated as client cancellation")
 	}
 }
 
@@ -39,5 +49,14 @@ func TestIsClientCancellationIgnoresLocalRelayBudgetTimeout(t *testing.T) {
 	<-ctx.Done()
 	if isClientCancellation(ctx, contextError(ctx)) {
 		t.Fatalf("expected local relay budget timeout to not be treated as client cancellation")
+	}
+}
+
+func TestIsClientCancellationIgnoresFirstTokenTimeout(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(errFirstTokenTimeout)
+
+	if isClientCancellation(ctx, contextError(ctx)) {
+		t.Fatalf("expected first-token timeout to not be treated as client cancellation")
 	}
 }
