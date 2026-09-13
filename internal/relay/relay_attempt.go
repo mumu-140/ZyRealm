@@ -59,7 +59,7 @@ func (ra *relayAttempt) finishSuccessfulAttempt(span *balancer.AttemptSpan, stat
 	})
 	balancer.RecordSuccess(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
 	balancer.SetSticky(ra.apiKeyID, ra.requestModel, ra.channel.ID, ra.usedKey.ID)
-	return attemptResult{Success: true}
+	return attemptResult{Success: true, DispatchState: ra.dispatchState}
 }
 
 func (ra *relayAttempt) finishCanceledAttempt(span *balancer.AttemptSpan, statusCode int, fwdErr error) attemptResult {
@@ -72,7 +72,7 @@ func (ra *relayAttempt) finishCanceledAttempt(span *balancer.AttemptSpan, status
 	return attemptResult{
 		Written: written, Canceled: true, Err: fwdErr, StatusCode: statusCode,
 		UpstreamErrorBody: ra.upstreamErrorBody, UpstreamStatus: ra.upstreamStatusCode,
-		UpstreamStarted: ra.upstreamStarted,
+		UpstreamStarted: ra.upstreamStarted, DispatchState: ra.dispatchState,
 	}
 }
 
@@ -99,6 +99,7 @@ func (ra *relayAttempt) finishFailedAttempt(span *balancer.AttemptSpan, statusCo
 		UpstreamErrorBody: ra.upstreamErrorBody,
 		UpstreamStatus:    ra.upstreamStatusCode,
 		UpstreamStarted:   ra.upstreamStarted,
+		DispatchState:     ra.dispatchState,
 	}
 }
 
