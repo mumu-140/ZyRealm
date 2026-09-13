@@ -11,6 +11,7 @@ import (
 	"github.com/bestruirui/octopus/internal/outlierwindow"
 	"github.com/bestruirui/octopus/internal/protocol"
 	"github.com/bestruirui/octopus/internal/protocolroute"
+	"github.com/bestruirui/octopus/internal/relay/availability"
 	"github.com/bestruirui/octopus/internal/relay/balancer"
 	"github.com/bestruirui/octopus/internal/relay/compress"
 	"github.com/bestruirui/octopus/internal/server/resp"
@@ -156,8 +157,10 @@ func (h *relayHandler) processCandidate() bool {
 		h.lastErr = errRelayProviderAttemptsExceeded
 		return false
 	}
+
+	upstreamModel := balancer.ItemUpstreamModel(item, h.request.requestModel)
 	legacyEligible, reason := legacyChannelEligibility(channel, h.request.internalRequest, h.passthroughRequired)
-	key, plans := h.selectCandidateAttempt(channel, item.ModelName, legacyEligible)
+	key, plans := h.selectCandidateAttempt(channel, upstreamModel, legacyEligible)
 	if key.ChannelKey == "" || len(plans) == 0 {
 		if key.ChannelKey != "" {
 			h.iterator.Skip(channel.ID, key.ID, channel.Name, reason)
@@ -169,6 +172,14 @@ func (h *relayHandler) processCandidate() bool {
 			h.passthroughCapable = true
 		}
 	}
+
+	runtimeLease, runtimeEligible := availability.AcquireCandidate(channel.ID, upstreamModel, time.Now())
+	if !runtimeEligible {
+		h.iterator.Skip(channel.ID, key.ID, channel.Name, "runtime cooldown or half-open lease busy")
+		return false
+	}
+	defer availability.ReleaseLease(runtimeLease, time.Now())
+
 	if !h.acquireCandidate(channel, key) {
 		return false
 	}
@@ -211,6 +222,9 @@ func (h *relayHandler) acquireCandidate(channel *dbmodel.Channel, key dbmodel.Ch
 }
 
 func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel.ChannelKey, plan *protocolroute.AttemptPlan, result attemptResult) bool {
+	now := time.Now()
+	recordRuntimeAvailabilityEvidence(h.c.Request.Context(), channel.ID, plan.UpstreamModel(), result, now)
+
 	ambiguousCancellation := isAmbiguousTransportCancellation(h.c.Request.Context(), result.Err)
 	hardProviderFailure := shouldFailoverProviderImmediately(result)
 	budgetExceeded := isRelayAttemptBudgetExceeded(result.Err)
@@ -239,11 +253,12 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 	//   - 健康度必须覆盖 Written 与 ResetConversation：上游流中断、要求重建会话都是上游故障证据，
 	//     漏掉它们会让持续吐流失败的渠道-模型永远显示健康。
 	//   - Canceled 是客户端主动断开，与上游健康无关，继续排除。
-	//   - 单次 ambiguous transport cancellation 只做请求内绕开，暂不污染共享健康/熔断。
+	//   - 单次 ambiguous transport cancellation 只做请求内绕开，暂不污染慢速 outlier/circuit；
+	//     它由共享 runtime availability 记录为 SUSPECT 并在短期重复时升级。
 	//   - request-local attempt budget exhaustion is not upstream health evidence.
 	if !result.Success && !result.Canceled && !ambiguousCancellation && !budgetExceeded {
 		reportOutlierFailure(channel.ID, plan.UpstreamModel(), result.StatusCode,
-			outlierErrorText(result.Err, result.UpstreamErrorBody), time.Now())
+			outlierErrorText(result.Err, result.UpstreamErrorBody), now)
 	}
 	if !result.Success && !result.Written && !result.Canceled && !ambiguousCancellation && !budgetExceeded && !result.ResetConversation {
 		failureKind := circuitFailureKind(h.group.RetryEnabled, result.StatusCode)
