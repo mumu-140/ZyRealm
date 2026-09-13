@@ -10,11 +10,12 @@ import (
 // Iterator 统一的负载均衡迭代器
 // 内部编排：策略排序 + 粘性优先 + 决策追踪
 type Iterator struct {
-	candidates  []model.GroupItem
-	index       int
-	stickyIdx   int // 粘性通道在 candidates 中的位置，-1 表示无
-	stickyKeyID int
-	modelName   string // 请求模型名（用于熔断检查）
+	candidates       []model.GroupItem
+	index            int
+	stickyIdx        int // 粘性通道在 candidates 中的位置，-1 表示无
+	stickyKeyID      int
+	modelName        string // 请求模型名（用于熔断检查）
+	skippedProviders map[int]struct{}
 
 	// 内嵌追踪
 	attempts []model.ChannelAttempt
@@ -69,18 +70,40 @@ func NewIteratorWithPreference(group model.Group, apiKeyID int, requestModel str
 	}
 
 	return &Iterator{
-		candidates:  candidates,
-		index:       -1,
-		stickyIdx:   stickyIdx,
-		stickyKeyID: stickyKeyID,
-		modelName:   requestModel,
+		candidates:       candidates,
+		index:            -1,
+		stickyIdx:        stickyIdx,
+		stickyKeyID:      stickyKeyID,
+		modelName:        requestModel,
+		skippedProviders: make(map[int]struct{}),
 	}
 }
 
-// Next 移动到下一个候选，返回 false 表示遍历完成
+// Next 移动到下一个未被当前请求跳过的候选，返回 false 表示遍历完成。
 func (it *Iterator) Next() bool {
-	it.index++
-	return it.index < len(it.candidates)
+	for {
+		it.index++
+		if it.index >= len(it.candidates) {
+			return false
+		}
+		if _, skipped := it.skippedProviders[it.candidates[it.index].ChannelID]; skipped {
+			continue
+		}
+		return true
+	}
+}
+
+// SkipProvider marks a provider/channel unavailable for the remainder of the
+// current request. This is request-local state only; it does not mutate shared
+// health, circuit, or persistent channel configuration.
+func (it *Iterator) SkipProvider(channelID int) {
+	if it == nil || channelID <= 0 {
+		return
+	}
+	if it.skippedProviders == nil {
+		it.skippedProviders = make(map[int]struct{})
+	}
+	it.skippedProviders[channelID] = struct{}{}
 }
 
 // Item 返回当前候选的 GroupItem
