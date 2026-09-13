@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -23,6 +24,35 @@ func TestRecordRuntimeAvailabilityEvidenceScopesFailures(t *testing.T) {
 		}
 		if got := availability.CandidateState(10, "model-b", base); got != availability.StateAvailable {
 			t.Fatalf("model-b state = %v, want available", got)
+		}
+	})
+
+	t.Run("model capacity is model scoped even without an alternative provider", func(t *testing.T) {
+		availability.Reset()
+		recordRuntimeAvailabilityEvidence(context.Background(), 15, "model-a", attemptResult{
+			StatusCode:        http.StatusTooManyRequests,
+			UpstreamStatus:    http.StatusTooManyRequests,
+			UpstreamErrorBody: `{"error":{"message":"Upstream rate limit","type":"rate_limit"}}`,
+		}, base)
+		if got := availability.CandidateState(15, "model-a", base); got != availability.StateCooldown {
+			t.Fatalf("model-a state = %v, want model cooldown", got)
+		}
+		if got := availability.CandidateState(15, "model-b", base); got != availability.StateAvailable {
+			t.Fatalf("model-b state = %v, want available", got)
+		}
+	})
+
+	t.Run("model capacity fast failover evidence is not double charged", func(t *testing.T) {
+		availability.Reset()
+		wantUntil := availability.RecordModelFailure(16, "model-a", "model_capacity", base)
+		recordRuntimeAvailabilityEvidence(context.Background(), 16, "model-a", attemptResult{
+			StatusCode:        http.StatusTooManyRequests,
+			UpstreamStatus:    http.StatusTooManyRequests,
+			UpstreamErrorBody: `{"error":{"message":"Upstream rate limit","type":"rate_limit"}}`,
+		}, base.Add(time.Millisecond))
+		info := availability.CandidateInfo(16, "model-a", base.Add(time.Millisecond))
+		if !info.CooldownUntil.Equal(wantUntil) {
+			t.Fatalf("cooldown until = %v, want unchanged first-stage deadline %v", info.CooldownUntil, wantUntil)
 		}
 	})
 
