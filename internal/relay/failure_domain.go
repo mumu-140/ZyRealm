@@ -86,17 +86,20 @@ func classifyRoutingFailure(result attemptResult) routingFailureDomain {
 	text := outlierErrorText(result.Err, result.UpstreamErrorBody)
 	status := fallbackStatus(result)
 
-	// Request/content semantics terminate before any provider/key punishment.
-	if isBlockedInvalidRequestError(text) || containsAny(text, clientErrorMarkers) ||
-		containsAny(text, contentPolicyMarkers) {
+	// Explicit blocked/content semantics terminate before provider/key health.
+	if isBlockedInvalidRequestError(text) || containsAny(text, contentPolicyMarkers) {
 		return failureDomainRequest
 	}
 
-	// Capability markers deliberately precede credential markers. Some real
-	// relays return HTTP 401 + invalid_api_key while the human-readable message
-	// says the requested model/effort is unsupported.
+	// Capability markers deliberately precede generic client-error markers.
+	// Some real relays wrap a capability error in an auth/request-shaped HTTP
+	// envelope, and strings such as "unsupported parameter" overlap both sets.
 	if containsAny(text, modelCapabilityMarkers) {
 		return failureDomainModelCapability
+	}
+
+	if containsAny(text, clientErrorMarkers) {
+		return failureDomainRequest
 	}
 
 	// Account-specific concurrency can often be recovered by another key in the
