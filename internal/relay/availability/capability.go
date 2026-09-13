@@ -9,6 +9,11 @@ import (
 const (
 	capabilityNegativeTTL = 30 * time.Minute
 	capabilityGCThreshold = 1024
+	// Capability signatures are request-shaped and can be high-cardinality.
+	// Keep the cache bounded even when every active entry is still inside TTL.
+	// Eviction is safe: losing negative evidence can only cause another real
+	// capability attempt; it cannot incorrectly exclude a healthy candidate.
+	capabilityMaxEntries = 4096
 )
 
 type capabilityKey struct {
@@ -68,6 +73,32 @@ func CapabilityInfo(channelID int, model, signature, configFingerprint string, n
 	return CapabilitySnapshot{Blocked: true, Reason: entry.reason, ExpiresAt: entry.expiresAt}
 }
 
+func trimCapabilityEntriesLocked(now time.Time) {
+	if len(capabilityShared.entries) >= capabilityGCThreshold {
+		for key, entry := range capabilityShared.entries {
+			if !entry.expiresAt.After(now) {
+				delete(capabilityShared.entries, key)
+			}
+		}
+	}
+	for len(capabilityShared.entries) >= capabilityMaxEntries {
+		var oldestKey capabilityKey
+		var oldestExpiry time.Time
+		found := false
+		for key, entry := range capabilityShared.entries {
+			if !found || entry.expiresAt.Before(oldestExpiry) {
+				oldestKey = key
+				oldestExpiry = entry.expiresAt
+				found = true
+			}
+		}
+		if !found {
+			break
+		}
+		delete(capabilityShared.entries, oldestKey)
+	}
+}
+
 // RecordCapabilityNegative temporarily excludes only the exact capability
 // shape. This is eligibility memory, not provider health, so it has no streak,
 // half-open state, or circuit effect.
@@ -76,16 +107,13 @@ func RecordCapabilityNegative(channelID int, model, signature, configFingerprint
 		return time.Time{}
 	}
 	expiresAt := now.Add(capabilityNegativeTTL)
+	key := capabilityCacheKey(channelID, model, signature, configFingerprint)
 	capabilityShared.mu.Lock()
 	defer capabilityShared.mu.Unlock()
-	if len(capabilityShared.entries) >= capabilityGCThreshold {
-		for key, entry := range capabilityShared.entries {
-			if !entry.expiresAt.After(now) {
-				delete(capabilityShared.entries, key)
-			}
-		}
+	if _, exists := capabilityShared.entries[key]; !exists {
+		trimCapabilityEntriesLocked(now)
 	}
-	capabilityShared.entries[capabilityCacheKey(channelID, model, signature, configFingerprint)] = capabilityEntry{
+	capabilityShared.entries[key] = capabilityEntry{
 		reason:    reason,
 		expiresAt: expiresAt,
 	}

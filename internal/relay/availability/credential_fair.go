@@ -16,6 +16,7 @@ type credentialFairMember struct {
 }
 
 type credentialFairLedger struct {
+	mu          sync.Mutex
 	members     map[int]*credentialFairMember
 	watermark   uint64
 	sequence    uint64
@@ -27,6 +28,17 @@ var credentialFairRuntime = struct {
 	mu      sync.Mutex
 	ledgers map[int]*credentialFairLedger
 }{ledgers: make(map[int]*credentialFairLedger)}
+
+func credentialFairLedgerFor(channelID int) *credentialFairLedger {
+	credentialFairRuntime.mu.Lock()
+	defer credentialFairRuntime.mu.Unlock()
+	ledger := credentialFairRuntime.ledgers[channelID]
+	if ledger == nil {
+		ledger = &credentialFairLedger{members: make(map[int]*credentialFairMember)}
+		credentialFairRuntime.ledgers[channelID] = ledger
+	}
+	return ledger
+}
 
 func credentialFairLess(ledger *credentialFairLedger, leftID, rightID int) bool {
 	left := ledger.members[leftID]
@@ -50,14 +62,12 @@ func SelectCredentialFair(channelID int, candidates []dbmodel.ChannelKey, prefer
 		return dbmodel.ChannelKey{}
 	}
 
-	credentialFairRuntime.mu.Lock()
-	defer credentialFairRuntime.mu.Unlock()
-
-	ledger := credentialFairRuntime.ledgers[channelID]
-	if ledger == nil {
-		ledger = &credentialFairLedger{members: make(map[int]*credentialFairMember)}
-		credentialFairRuntime.ledgers[channelID] = ledger
-	}
+	// The registry lock only protects ledger lookup/creation. Fairness mutations
+	// are serialized by the selected Provider's own lock, so unrelated Providers
+	// never contend on one global scheduling mutex.
+	ledger := credentialFairLedgerFor(channelID)
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
 
 	byID := make(map[int]dbmodel.ChannelKey, len(candidates))
 	activeIDs := make(map[int]struct{}, len(candidates))

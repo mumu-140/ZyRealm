@@ -173,6 +173,13 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 			decision.Terminal = true
 			decision.ReplaySafety = routingReplayCommitted
 			decision.CircuitEffect = "none"
+		} else if result.DispatchState == dispatchMaybeSent {
+			// The request may already be executing upstream even though no first
+			// token arrived. Treat cross-provider failover as an unknown-outcome
+			// replay so the request-level replay budget bounds duplicate execution.
+			decision.ReplaySafety = routingReplayUnknownOutcome
+		} else {
+			decision.ReplaySafety = routingReplayNotSent
 		}
 		return decision
 	}
