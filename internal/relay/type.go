@@ -160,4 +160,6 @@ type attemptResult struct {
 	UpstreamStarted   bool          // 上游已返回成功状态，可能已开始模型执行
 	DispatchState     dispatchState // 是否已经进入可能把请求发给上游的 transport 调用
 	Plan              *protocolroute.AttemptPlan
+	Decision          RoutingDecision
+	traceSpan         *balancer.AttemptSpan
 }

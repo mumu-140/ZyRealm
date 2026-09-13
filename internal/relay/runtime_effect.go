@@ -7,9 +7,9 @@ import (
 	"github.com/bestruirui/octopus/internal/relay/availability"
 )
 
-// recordRuntimeAvailabilityEvidence updates the shared fast-path runtime facts
-// from one real upstream attempt. It is independent of GroupMode so changing
-// routing strategies does not reset or fork provider/model availability state.
+// recordRuntimeAvailabilityEvidence applies the runtime effect already chosen by
+// the unified routing decision. Legacy/unit-test callers that construct a raw
+// attemptResult still get one decision synthesized here.
 func recordRuntimeAvailabilityEvidence(
 	ctx context.Context,
 	channelID int,
@@ -17,26 +17,34 @@ func recordRuntimeAvailabilityEvidence(
 	result attemptResult,
 	now time.Time,
 ) {
-	if result.Success {
+	decision := result.Decision
+	if !decision.Valid {
+		decision = decideRoutingAttempt(ctx, nil, channelID, result)
+	}
+
+	switch decision.RuntimeEffect {
+	case routingRuntimeSuccessClear:
 		availability.RecordSuccess(channelID, upstreamModel, now)
-		return
-	}
-	if result.Canceled || isRelayAttemptBudgetExceeded(result.Err) {
-		return
-	}
-	if isAmbiguousTransportCancellation(ctx, result.Err) {
+	case routingRuntimeModelSuspect:
 		availability.RecordModelSuspect(channelID, upstreamModel, "ambiguous_transport_cancel", now)
-		return
-	}
-	if result.FirstTokenTimeout {
-		availability.RecordModelFailure(channelID, upstreamModel, "first_token_timeout", now)
-		return
-	}
-	if classifyRoutingFailure(result) == failureDomainModelCapacity {
-		availability.EnsureModelFailureWithRetryAfter(channelID, upstreamModel, "model_capacity", now, result.RetryAfter)
-		return
-	}
-	if shouldFailoverProviderImmediately(result) {
+	case routingRuntimeModelCooldown:
+		if result.FirstTokenTimeout {
+			availability.RecordModelFailure(channelID, upstreamModel, "first_token_timeout", now)
+		} else {
+			availability.EnsureModelFailureWithRetryAfter(channelID, upstreamModel, "model_capacity", now, result.RetryAfter)
+		}
+	case routingRuntimeProviderCooldown:
 		availability.RecordProviderFailureWithRetryAfter(channelID, "provider_transient", now, result.RetryAfter)
+	default:
+		return
+	}
+
+	if result.traceSpan != nil {
+		info := availability.CandidateInfo(channelID, upstreamModel, now)
+		result.traceSpan.SetRoutingRuntime(
+			string(decision.RuntimeEffect),
+			runtimeStateString(int(info.State)),
+			unixMillisOrZero(info.CooldownUntil),
+		)
 	}
 }

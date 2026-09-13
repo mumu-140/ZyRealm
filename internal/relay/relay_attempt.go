@@ -49,17 +49,33 @@ func (ra *relayAttempt) attempt() attemptResult {
 	return ra.finishFailedAttempt(span, statusCode, fwdErr)
 }
 
+func (ra *relayAttempt) attachRoutingDecision(span *balancer.AttemptSpan, result attemptResult) attemptResult {
+	result = withRoutingDecision(ra.requestContext(), ra.relayRequest, ra.channel.ID, result)
+	result.traceSpan = span
+	providerAttempt, wireAttempt := 0, 0
+	if ra.attemptBudget != nil {
+		providerAttempt = ra.attemptBudget.providerAttemptIndex(ra.channel.ID)
+		wireAttempt = ra.attemptBudget.wireAttemptIndex()
+	}
+	span.SetRoutingTrace(routingAttemptTrace(
+		ra.requestContext(), result, result.Decision, ra.usedKey.CredentialRevision,
+		providerAttempt, wireAttempt,
+	))
+	return result
+}
+
 func (ra *relayAttempt) finishSuccessfulAttempt(span *balancer.AttemptSpan, statusCode int) attemptResult {
 	ra.collectResponse()
 	ra.usedKey.TotalCost += ra.metrics.Stats.InputCost + ra.metrics.Stats.OutputCost
 	op.ChannelKeyUpdate(ra.usedKey)
+	result := ra.attachRoutingDecision(span, attemptResult{Success: true, StatusCode: statusCode, DispatchState: ra.dispatchState})
 	span.End(dbmodel.AttemptSuccess, statusCode, "")
 	op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
 		WaitTime: span.Duration().Milliseconds(), RequestSuccess: 1,
 	})
 	balancer.RecordSuccess(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
 	balancer.SetSticky(ra.apiKeyID, ra.requestModel, ra.channel.ID, ra.usedKey.ID)
-	return attemptResult{Success: true, DispatchState: ra.dispatchState}
+	return result
 }
 
 func (ra *relayAttempt) finishCanceledAttempt(span *balancer.AttemptSpan, statusCode int, fwdErr error) attemptResult {
@@ -68,27 +84,23 @@ func (ra *relayAttempt) finishCanceledAttempt(span *balancer.AttemptSpan, status
 		ra.collectResponse()
 	}
 	op.ChannelKeyUpdate(ra.usedKey)
-	span.End(dbmodel.AttemptFailed, statusCode, fwdErr.Error())
-	return attemptResult{
+	result := ra.attachRoutingDecision(span, attemptResult{
 		Written: written, Canceled: true, Err: fwdErr, StatusCode: statusCode,
 		UpstreamErrorBody: ra.upstreamErrorBody, UpstreamStatus: ra.upstreamStatusCode,
 		UpstreamStarted: ra.upstreamStarted, DispatchState: ra.dispatchState,
-	}
+	})
+	span.End(dbmodel.AttemptFailed, statusCode, fwdErr.Error())
+	return result
 }
 
 func (ra *relayAttempt) finishFailedAttempt(span *balancer.AttemptSpan, statusCode int, fwdErr error) attemptResult {
 	op.ChannelKeyUpdate(ra.usedKey)
-	span.End(dbmodel.AttemptFailed, statusCode, fwdErr.Error())
-	op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
-		WaitTime:      span.Duration().Milliseconds(),
-		RequestFailed: 1,
-	})
 	written := ra.deliveryStarted()
 	if written {
 		ra.collectResponse()
 	}
 	firstTokenTimeout := isFirstTokenTimeout(nil, fwdErr)
-	return attemptResult{
+	result := ra.attachRoutingDecision(span, attemptResult{
 		Success:           false,
 		Written:           written,
 		ResetConversation: statusCode == http.StatusConflict && needsConversationRestart(relayErrorMessage(fwdErr)),
@@ -100,7 +112,13 @@ func (ra *relayAttempt) finishFailedAttempt(span *balancer.AttemptSpan, statusCo
 		UpstreamStatus:    ra.upstreamStatusCode,
 		UpstreamStarted:   ra.upstreamStarted,
 		DispatchState:     ra.dispatchState,
-	}
+	})
+	span.End(dbmodel.AttemptFailed, statusCode, fwdErr.Error())
+	op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
+		WaitTime:      span.Duration().Milliseconds(),
+		RequestFailed: 1,
+	})
+	return result
 }
 
 func (ra *relayAttempt) deliveryStarted() bool {

@@ -28,6 +28,7 @@ type ChannelAttempt struct {
 	SelectedProtocol string        `json:"selected_protocol,omitempty"`
 	AttemptKind      string        `json:"attempt_kind,omitempty"`
 	FallbackReason   string        `json:"fallback_reason,omitempty"`
+	AttemptRoutingTrace
 }
 
 // RelayLogWSMode 表示本次上游 WebSocket 的会话/恢复模式。

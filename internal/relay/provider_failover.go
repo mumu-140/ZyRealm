@@ -57,6 +57,9 @@ var contentPolicyMarkers = []string{
 // status so a misleading 401/500/503 envelope cannot turn a capability or
 // account-pool problem into a provider-wide failover decision.
 func shouldFailoverProviderImmediately(result attemptResult) bool {
+	if result.Decision.Valid {
+		return result.Decision.Domain == failureDomainProviderTransient && result.Decision.SkipProvider
+	}
 	if result.Success || result.Canceled || result.Written || result.ResetConversation ||
 		result.FirstTokenTimeout || isRelayAttemptBudgetExceeded(result.Err) {
 		return false

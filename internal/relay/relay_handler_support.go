@@ -154,25 +154,27 @@ func runSameChannelAttempts(
 ) attemptResult {
 	defer balancer.ReleaseChannel(channel.ID)
 	if len(plans) == 0 {
-		return attemptResult{Err: fmt.Errorf("protocol attempt plans are empty"), StatusCode: http.StatusInternalServerError}
+		return withRoutingDecision(ctx, request, channel.ID, attemptResult{
+			Err: fmt.Errorf("protocol attempt plans are empty"), StatusCode: http.StatusInternalServerError,
+		})
 	}
 
 	activePlans := append([]*protocolroute.AttemptPlan(nil), plans...)
 	var result attemptResult
 	for planIndex, plan := range activePlans {
 		result = runProtocolRetries(ctx, request, channel, key, plan, firstTokenTimeout, maxRetries)
+		result = withRoutingDecision(ctx, request, channel.ID, result)
 		if result.Success {
 			clearCapabilityNegative(channel, request.internalRequest, plan)
-		} else if classifyRoutingFailure(result) == failureDomainModelCapability {
+		} else if result.Decision.Domain == failureDomainModelCapability {
 			recordCapabilityNegative(channel, request.internalRequest, plan, result, time.Now())
 		}
-		if shouldFailoverModelCapacity(request, channel.ID, result) {
+		if result.Decision.Domain == failureDomainModelCapacity && result.Decision.SkipProvider {
 			availability.RecordModelFailure(channel.ID, plan.UpstreamModel(), "model_capacity", time.Now())
 			request.iter.SkipProvider(channel.ID)
 			return result
 		}
-		if result.FirstTokenTimeout || isAmbiguousTransportCancellation(ctx, result.Err) ||
-			shouldFailoverProviderImmediately(result) || isRelayAttemptBudgetExceeded(result.Err) {
+		if result.Decision.Terminal || result.Decision.SkipProvider {
 			return result
 		}
 		if planIndex+1 >= len(plans) {
@@ -206,7 +208,7 @@ func runProtocolRetries(
 	for retryNum := 0; retryNum < maxRetries; retryNum++ {
 		if request != nil && request.attemptBudget != nil && request.attemptBudget.wireExhausted() {
 			request.iter.Skip(channel.ID, key.ID, channel.Name, errRelayWireAttemptsExceeded.Error())
-			return attemptResult{Err: errRelayWireAttemptsExceeded}
+			return withRoutingDecision(ctx, request, channel.ID, attemptResult{Err: errRelayWireAttemptsExceeded})
 		}
 		if retryNum > 0 {
 			delay := computeBackoff(retryNum, result.RetryAfter)
@@ -214,28 +216,25 @@ func runProtocolRetries(
 			select {
 			case <-ctx.Done():
 				log.Debugf("request context canceled during retry backoff")
-				return attemptResult{Canceled: true, Err: context.Canceled}
+				return withRoutingDecision(ctx, request, channel.ID, attemptResult{Canceled: true, Err: context.Canceled})
 			case <-time.After(delay):
 			}
 		}
 
 		attempt, err := newRelayAttempt(request, channel, key, plan, firstTokenTimeout)
 		if err != nil {
-			return attemptResult{Err: err, StatusCode: http.StatusInternalServerError}
+			return withRoutingDecision(ctx, request, channel.ID, attemptResult{Err: err, StatusCode: http.StatusInternalServerError})
 		}
 		if request != nil && request.attemptBudget != nil {
 			if err := request.attemptBudget.tryStartWire(channel.ID); err != nil {
 				request.iter.Skip(channel.ID, key.ID, channel.Name, err.Error())
-				return attemptResult{Err: err}
+				return withRoutingDecision(ctx, request, channel.ID, attemptResult{Err: err})
 			}
 		}
 		result = attempt.attempt()
 		result.Plan = plan
-		failureDomain := classifyRoutingFailure(result)
-		if result.Success || result.Written || result.Canceled || result.ResetConversation ||
-			result.FirstTokenTimeout || isAmbiguousTransportCancellation(ctx, result.Err) ||
-			failureDomain == failureDomainModelCapability || shouldFailoverProviderImmediately(result) ||
-			shouldFailoverModelCapacity(request, channel.ID, result) || !isRetryableStatus(result.StatusCode) {
+		result = withRoutingDecision(ctx, request, channel.ID, result)
+		if !result.Decision.RetrySameCredential {
 			break
 		}
 	}
@@ -322,7 +321,7 @@ type exhaustedRelayInput struct {
 	lastErr                 error
 	lastResult              attemptResult
 	capacitySkipped         bool
-	rateSkipped             bool
+	rateSkipped            bool
 	passthroughRequired     bool
 	passthroughCapableFound bool
 }

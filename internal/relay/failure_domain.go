@@ -75,6 +75,9 @@ var credentialConcurrencyMarkers = []string{
 }
 
 func classifyRoutingFailure(result attemptResult) routingFailureDomain {
+	if result.Decision.Valid {
+		return result.Decision.Domain
+	}
 	if result.Success || result.Canceled || result.Written || result.ResetConversation ||
 		isRelayAttemptBudgetExceeded(result.Err) {
 		return failureDomainUnknown
@@ -84,7 +87,8 @@ func classifyRoutingFailure(result attemptResult) routingFailureDomain {
 	status := fallbackStatus(result)
 
 	// Request/content semantics terminate before any provider/key punishment.
-	if isBlockedInvalidRequestError(text) || containsAny(text, contentPolicyMarkers) {
+	if isBlockedInvalidRequestError(text) || containsAny(text, clientErrorMarkers) ||
+		containsAny(text, contentPolicyMarkers) {
 		return failureDomainRequest
 	}
 

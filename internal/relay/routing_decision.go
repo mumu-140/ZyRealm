@@ -3,9 +3,9 @@ package relay
 import (
 	"context"
 	"errors"
+	"time"
 
 	dbmodel "github.com/bestruirui/octopus/internal/model"
-	"github.com/bestruirui/octopus/internal/relay/balancer"
 )
 
 type routingDirective string
@@ -52,7 +52,7 @@ const (
 )
 
 // RoutingDecision is the single policy result consumed by retry/failover,
-// runtime availability, outlier health, circuit state, and attempt tracing.
+// runtime availability, outlier health, circuit gating, and attempt tracing.
 // Marker/status parsing remains behind the compatibility classifiers, but one
 // wire result is converted into this object exactly once on the relay path.
 type RoutingDecision struct {
@@ -63,13 +63,19 @@ type RoutingDecision struct {
 	Directive           routingDirective
 	RuntimeEffect       routingRuntimeEffect
 	OutlierScope        failureScope
-	CircuitKind         balancer.FailureKind
-	ApplyCircuit        bool
+	CircuitEffect       string
 	ReplaySafety        routingReplaySafety
 	SkipProvider        bool
 	RetrySameCredential bool
 	Terminal            bool
 	ContentPolicy       bool
+}
+
+func withRoutingDecision(ctx context.Context, request *relayRequest, channelID int, result attemptResult) attemptResult {
+	if !result.Decision.Valid {
+		result.Decision = decideRoutingAttempt(ctx, request, channelID, result)
+	}
+	return result
 }
 
 func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID int, result attemptResult) RoutingDecision {
@@ -81,7 +87,6 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 	text := outlierErrorText(result.Err, result.UpstreamErrorBody)
 	domain := classifyRoutingFailure(result)
 	legacyScope := classifyFailureScope(status, text)
-	retryEnabled := request != nil && request.retryEnabled
 	hasAlternative := request != nil && request.iter != nil && request.iter.HasAlternativeProvider(channelID)
 
 	decision := RoutingDecision{
@@ -92,7 +97,7 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		Directive:     routingDirectiveNextCandidate,
 		RuntimeEffect: routingRuntimeNone,
 		OutlierScope:  legacyScope,
-		CircuitKind:   circuitFailureKind(retryEnabled, result.StatusCode),
+		CircuitEffect: "record_failure",
 		ReplaySafety:  routingReplaySafetyFor(result),
 	}
 
@@ -103,6 +108,7 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		decision.Directive = routingDirectiveComplete
 		decision.RuntimeEffect = routingRuntimeSuccessClear
 		decision.OutlierScope = scopeIgnore
+		decision.CircuitEffect = "success"
 		decision.ReplaySafety = routingReplaySafe
 		decision.Terminal = true
 		return decision
@@ -113,6 +119,7 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		decision.FailureScope = routingScopeNone
 		decision.Directive = routingDirectiveTerminal
 		decision.OutlierScope = scopeIgnore
+		decision.CircuitEffect = "none"
 		decision.ReplaySafety = routingReplayClientCanceled
 		decision.Terminal = true
 		return decision
@@ -123,19 +130,19 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		decision.FailureScope = routingScopeNone
 		decision.Directive = routingDirectiveTerminal
 		decision.OutlierScope = scopeIgnore
+		decision.CircuitEffect = "none"
 		decision.Terminal = true
 		decision.SkipProvider = isProviderAttemptBudgetExceeded(result.Err)
 		return decision
 	}
 
-	ambiguous := isAmbiguousTransportCancellation(ctx, result.Err)
-	if ambiguous {
+	if isAmbiguousTransportCancellation(ctx, result.Err) {
 		decision.Domain = failureDomainUnknown
 		decision.RuleID = "ambiguous_transport_cancel"
 		decision.FailureScope = routingScopeProviderModel
 		decision.RuntimeEffect = routingRuntimeModelSuspect
 		decision.OutlierScope = scopeIgnore
-		decision.ApplyCircuit = false
+		decision.CircuitEffect = "none"
 		decision.SkipProvider = true
 		if result.Written || result.ResetConversation {
 			decision.Directive = routingDirectiveTerminal
@@ -159,13 +166,13 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		decision.Directive = routingDirectiveNextProvider
 		decision.RuntimeEffect = routingRuntimeModelCooldown
 		decision.OutlierScope = scopeModel
-		decision.ApplyCircuit = !result.Written && !result.ResetConversation
-		decision.CircuitKind = balancer.FailureHard
+		decision.CircuitEffect = "record_failure"
 		decision.SkipProvider = true
 		if result.Written || result.ResetConversation {
 			decision.Directive = routingDirectiveTerminal
 			decision.Terminal = true
 			decision.ReplaySafety = routingReplayCommitted
+			decision.CircuitEffect = "none"
 		}
 		return decision
 	}
@@ -181,7 +188,7 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		}
 		decision.Directive = routingDirectiveTerminal
 		decision.RuntimeEffect = routingRuntimeNone
-		decision.ApplyCircuit = false
+		decision.CircuitEffect = "none"
 		decision.ReplaySafety = routingReplayCommitted
 		decision.Terminal = true
 		return decision
@@ -192,22 +199,21 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		decision.FailureScope = routingScopeCredential
 		decision.Directive = routingDirectiveRotateCredential
 		decision.RuntimeEffect = routingRuntimeCredentialCooldown
-		// Credential faults are handled before provider/model health reporting.
 		decision.OutlierScope = scopeIgnore
-		decision.ApplyCircuit = false
+		decision.CircuitEffect = "none"
 	case failureDomainModelCapability:
 		decision.FailureScope = routingScopeProviderModel
 		decision.Directive = routingDirectiveProtocolOrProvider
 		decision.OutlierScope = scopeIgnore
-		decision.ApplyCircuit = false
+		decision.CircuitEffect = "none"
 	case failureDomainModelCapacity:
 		decision.FailureScope = routingScopeProviderModel
 		decision.RuntimeEffect = routingRuntimeModelCooldown
-		decision.ApplyCircuit = true
+		decision.CircuitEffect = "rate_limit_policy"
 		if hasAlternative {
 			decision.Directive = routingDirectiveNextProvider
 			decision.SkipProvider = true
-		} else if retryEnabled && isRetryableStatus(result.StatusCode) {
+		} else if isRetryableStatus(result.StatusCode) {
 			decision.Directive = routingDirectiveRetrySameCredential
 			decision.RetrySameCredential = true
 		}
@@ -215,23 +221,24 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		decision.FailureScope = routingScopeProvider
 		decision.Directive = routingDirectiveNextProvider
 		decision.RuntimeEffect = routingRuntimeProviderCooldown
-		decision.ApplyCircuit = true
+		decision.CircuitEffect = "record_failure"
 		decision.SkipProvider = true
 	case failureDomainRequest:
 		decision.FailureScope = routingScopeRequest
 		decision.ContentPolicy = isExplicitContentPolicyFailure(result)
-		decision.ApplyCircuit = !decision.ContentPolicy
 		if decision.ContentPolicy {
 			decision.Directive = routingDirectiveTerminal
 			decision.OutlierScope = scopeIgnore
+			decision.CircuitEffect = "none"
 			decision.Terminal = true
+		} else if status >= 400 && status < 500 {
+			decision.CircuitEffect = "none"
 		}
 	default:
-		if retryEnabled && isRetryableStatus(result.StatusCode) {
+		if isRetryableStatus(result.StatusCode) {
 			decision.Directive = routingDirectiveRetrySameCredential
 			decision.RetrySameCredential = true
 		}
-		decision.ApplyCircuit = true
 	}
 
 	return decision
@@ -267,6 +274,9 @@ func routingRuleID(domain routingFailureDomain, status int, text string) string 
 	default:
 		if errors.Is(contextErrorFromText(text), context.Canceled) {
 			return "context_cancellation"
+		}
+		if errors.Is(contextErrorFromText(text), context.DeadlineExceeded) {
+			return "context_deadline"
 		}
 		if status >= 500 {
 			return "unknown_5xx"
@@ -375,32 +385,21 @@ func outboundContextCause(err error) string {
 
 func routingAttemptTrace(ctx context.Context, result attemptResult, decision RoutingDecision, credentialRevision, providerAttempt, wireAttempt int) dbmodel.AttemptRoutingTrace {
 	return dbmodel.AttemptRoutingTrace{
-		CredentialRevision: credentialRevision,
-		FailureDomain:      routingDomainString(decision.Domain),
-		FailureScope:       string(decision.FailureScope),
-		RuleID:             decision.RuleID,
-		RetryDirective:     string(decision.Directive),
-		RuntimeEffect:      "none",
-		CircuitEffect:      "none",
-		OutlierEffect:      "none",
-		ReplaySafety:       string(decision.ReplaySafety),
-		DispatchState:      dispatchStateString(result.DispatchState),
-		DownstreamCommitted: result.Written || result.ResetConversation,
-		OuterContextState:  outerContextState(ctx),
+		CredentialRevision:   credentialRevision,
+		FailureDomain:        routingDomainString(decision.Domain),
+		FailureScope:         string(decision.FailureScope),
+		RuleID:               decision.RuleID,
+		RetryDirective:       string(decision.Directive),
+		RuntimeEffect:        string(decision.RuntimeEffect),
+		CircuitEffect:        decision.CircuitEffect,
+		OutlierEffect:        outlierEffectString(decision.OutlierScope),
+		ReplaySafety:         string(decision.ReplaySafety),
+		DispatchState:        dispatchStateString(result.DispatchState),
+		DownstreamCommitted:  result.Written || result.ResetConversation,
+		OuterContextState:    outerContextState(ctx),
 		OutboundContextCause: outboundContextCause(result.Err),
-		ProviderAttempt:    providerAttempt,
-		WireAttempt:        wireAttempt,
-	}
-}
-
-func circuitEffectString(kind balancer.FailureKind) string {
-	switch kind {
-	case balancer.FailureSoftRateLimit:
-		return "soft_rate_limit"
-	case balancer.FailureIgnore:
-		return "ignore"
-	default:
-		return "hard_failure"
+		ProviderAttempt:      providerAttempt,
+		WireAttempt:          wireAttempt,
 	}
 }
 
@@ -413,4 +412,24 @@ func outlierEffectString(scope failureScope) string {
 	default:
 		return "none"
 	}
+}
+
+func runtimeStateString(state int) string {
+	switch state {
+	case 1:
+		return "suspect"
+	case 2:
+		return "cooldown"
+	case 3:
+		return "half_open"
+	default:
+		return "available"
+	}
+}
+
+func unixMillisOrZero(value time.Time) int64 {
+	if value.IsZero() {
+		return 0
+	}
+	return value.UnixMilli()
 }
