@@ -138,7 +138,14 @@ func selectChannelAttempt(input channelAttemptInput) (dbmodel.ChannelKey, []*pro
 			Request: input.request, LegacyEligible: input.legacyEligible,
 		})
 		if len(plans) > 0 {
-			return usedKey, plans
+			filtered, nearest, blocked := filterCapabilityNegativePlans(input.channel, input.request, plans, time.Now())
+			if len(filtered) > 0 {
+				return usedKey, filtered
+			}
+			if blocked {
+				input.iterator.Skip(input.channel.ID, usedKey.ID, input.channel.Name, capabilityNegativeCacheSkipReason(nearest))
+				return dbmodel.ChannelKey{}, nil
+			}
 		}
 		return usedKey, nil
 	}
@@ -162,6 +169,11 @@ func runSameChannelAttempts(
 	var result attemptResult
 	for planIndex, plan := range activePlans {
 		result = runProtocolRetries(ctx, request, channel, key, plan, firstTokenTimeout, maxRetries)
+		if result.Success {
+			clearCapabilityNegative(channel, request.internalRequest, plan)
+		} else if classifyRoutingFailure(result) == failureDomainModelCapability {
+			recordCapabilityNegative(channel, request.internalRequest, plan, result, time.Now())
+		}
 		if shouldFailoverModelCapacity(request, channel.ID, result) {
 			availability.RecordModelFailure(channel.ID, plan.UpstreamModel(), "model_capacity", time.Now())
 			request.iter.SkipProvider(channel.ID)
@@ -227,10 +239,11 @@ func runProtocolRetries(
 		}
 		result = attempt.attempt()
 		result.Plan = plan
+		failureDomain := classifyRoutingFailure(result)
 		if result.Success || result.Written || result.Canceled || result.ResetConversation ||
 			result.FirstTokenTimeout || isAmbiguousTransportCancellation(ctx, result.Err) ||
-			shouldFailoverProviderImmediately(result) || shouldFailoverModelCapacity(request, channel.ID, result) ||
-			!isRetryableStatus(result.StatusCode) {
+			failureDomain == failureDomainModelCapability || shouldFailoverProviderImmediately(result) ||
+			shouldFailoverModelCapacity(request, channel.ID, result) || !isRetryableStatus(result.StatusCode) {
 			break
 		}
 	}
@@ -338,6 +351,10 @@ func writeExhaustedRelayError(input exhaustedRelayInput) {
 	if input.lastErr == nil && input.capacitySkipped {
 		input.c.Header("Retry-After", "1")
 		input.heartbeat.FlushOrError(input.c, http.StatusServiceUnavailable, "all eligible channels are at max concurrency")
+		return
+	}
+	if input.lastErr == nil && hasCapabilityNegativeCacheSkip(input.attempts) {
+		input.heartbeat.FlushOrError(input.c, http.StatusServiceUnavailable, "no available channel: capability negative cache")
 		return
 	}
 	if isPassthroughStatus(input.lastResult.StatusCode) {

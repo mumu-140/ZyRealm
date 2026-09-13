@@ -107,4 +107,5 @@ func resetCredentialRuntime() {
 	credentialRuntime.mu.Lock()
 	credentialRuntime.entries = make(map[credentialKey]*credentialEntry)
 	credentialRuntime.mu.Unlock()
+	resetCapabilityRuntime()
 }
