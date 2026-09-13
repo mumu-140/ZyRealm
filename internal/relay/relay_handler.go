@@ -214,6 +214,18 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 	ambiguousCancellation := isAmbiguousTransportCancellation(h.c.Request.Context(), result.Err)
 	hardProviderFailure := shouldFailoverProviderImmediately(result)
 	budgetExceeded := isRelayAttemptBudgetExceeded(result.Err)
+
+	if ambiguousCancellation && !result.Written && !result.ResetConversation && h.request.attemptBudget != nil {
+		if !h.request.attemptBudget.tryUnknownCrossProviderReplay() {
+			// Balanced replay policy: once an unknown upstream outcome has already
+			// been replayed across providers, terminate rather than risk another
+			// duplicate execution/billing event.
+			h.metrics.SaveWithChannelStats(h.c.Request.Context(), false, result.Err, h.iterator.Attempts(), false)
+			h.heartbeat.FlushOrError(h.c, http.StatusBadGateway, "channel failed")
+			return true
+		}
+	}
+
 	if ambiguousCancellation || result.FirstTokenTimeout || hardProviderFailure || isProviderAttemptBudgetExceeded(result.Err) {
 		// These conditions should leave this provider for the remainder of the
 		// current request. Ambiguous cancellation is deliberately request-local:
