@@ -66,10 +66,15 @@ var modelErrorMarkers = []string{
 
 // classifyFailureScope 判定失败作用域。text 为「错误信息 + 上游错误体」的拼接，
 // statusCode==0 表示连接层失败（未拿到 HTTP 响应）。
-// 判定顺序即优先级：连接层 → 客户端 → 渠道凭据/额度 → 拦截页 → 模型 → 状态码兜底。
+// 判定顺序即优先级：已知模型级本地超时 → 连接层 → 客户端 → 渠道凭据/额度 → 拦截页 → 模型 → 状态码兜底。
 func classifyFailureScope(statusCode int, text string) failureScope {
 	text = strings.ToLower(text)
 
+	// first-token timeout 是当前 channel×model 的服务质量证据。虽然它通常
+	// 没有 HTTP status（statusCode==0），也不能因此铺成整渠道失败。
+	if strings.Contains(text, "first token timeout") {
+		return scopeModel
+	}
 	if statusCode == 0 || containsAny(text, connectionErrorMarkers) {
 		return scopeChannel
 	}
