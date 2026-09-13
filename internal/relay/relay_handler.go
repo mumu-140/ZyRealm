@@ -160,45 +160,70 @@ func (h *relayHandler) processCandidate() bool {
 
 	upstreamModel := balancer.ItemUpstreamModel(item, h.request.requestModel)
 	legacyEligible, reason := legacyChannelEligibility(channel, h.request.internalRequest, h.passthroughRequired)
-	key, plans := h.selectCandidateAttempt(channel, upstreamModel, legacyEligible)
-	if key.ChannelKey == "" || len(plans) == 0 {
-		if key.ChannelKey != "" {
-			h.iterator.Skip(channel.ID, key.ID, channel.Name, reason)
-		}
-		return false
-	}
-	for _, plan := range plans {
-		if plan.UpstreamProtocol() == protocol.OpenAIResponse {
-			h.passthroughCapable = true
-		}
-	}
 
 	runtimeLease, runtimeEligible := availability.AcquireCandidate(channel.ID, upstreamModel, time.Now())
 	if !runtimeEligible {
-		h.iterator.Skip(channel.ID, key.ID, channel.Name, "runtime cooldown or half-open lease busy")
+		h.iterator.Skip(channel.ID, 0, channel.Name, "runtime cooldown or half-open lease busy")
 		return false
 	}
-	defer availability.ReleaseLease(runtimeLease, time.Now())
+	defer func() {
+		availability.ReleaseLease(runtimeLease, time.Now())
+	}()
 
-	if !h.acquireCandidate(channel, key) {
-		return false
+	excludedKeyIDs := make(map[int]struct{}, defaultMaxCredentialsPerProvider)
+	for credentialAttempt := 0; credentialAttempt < defaultMaxCredentialsPerProvider; credentialAttempt++ {
+		key, plans := h.selectCandidateAttempt(channel, upstreamModel, legacyEligible, excludedKeyIDs)
+		if key.ChannelKey == "" || len(plans) == 0 {
+			if key.ChannelKey != "" {
+				h.iterator.Skip(channel.ID, key.ID, channel.Name, reason)
+			}
+			if len(excludedKeyIDs) > 0 {
+				h.iterator.SkipProvider(channel.ID)
+			}
+			return false
+		}
+		for _, plan := range plans {
+			if plan.UpstreamProtocol() == protocol.OpenAIResponse {
+				h.passthroughCapable = true
+			}
+		}
+
+		if !h.acquireCandidate(channel, key) {
+			return false
+		}
+		result := runSameChannelAttempts(h.c.Request.Context(), h.request, channel, key, plans,
+			h.group.FirstTokenTimeOut, h.maxRetries)
+		usedPlan := plans[0]
+		if result.Plan != nil {
+			usedPlan = result.Plan
+		}
+
+		if classifyRoutingFailure(result) == failureDomainCredential {
+			recordCredentialRoutingFailure(channel.ID, key.ID, result, time.Now())
+			excludedKeyIDs[key.ID] = struct{}{}
+			h.lastErr = result.Err
+			h.lastResult = result
+			if credentialAttempt+1 >= defaultMaxCredentialsPerProvider {
+				h.iterator.SkipProvider(channel.ID)
+				return false
+			}
+			continue
+		}
+
+		return h.handleAttemptResult(channel, key, usedPlan, result)
 	}
-	result := runSameChannelAttempts(h.c.Request.Context(), h.request, channel, key, plans,
-		h.group.FirstTokenTimeOut, h.maxRetries)
-	usedPlan := plans[0]
-	if result.Plan != nil {
-		usedPlan = result.Plan
-	}
-	return h.handleAttemptResult(channel, key, usedPlan, result)
+
+	h.iterator.SkipProvider(channel.ID)
+	return false
 }
 
-func (h *relayHandler) selectCandidateAttempt(channel *dbmodel.Channel, upstreamModel string, legacyEligible bool) (dbmodel.ChannelKey, []*protocolroute.AttemptPlan) {
+func (h *relayHandler) selectCandidateAttempt(channel *dbmodel.Channel, upstreamModel string, legacyEligible bool, excludeKeyIDs map[int]struct{}) (dbmodel.ChannelKey, []*protocolroute.AttemptPlan) {
 	log.Debugf("request model %s, mode: %d, forwarding to channel: %s model: %s (attempt %d/%d, sticky=%t)",
 		h.request.requestModel, h.group.Mode, channel.Name, upstreamModel,
 		h.iterator.Index()+1, h.iterator.Len(), h.iterator.IsSticky())
 	return selectChannelAttempt(channelAttemptInput{
 		channel: channel, upstreamModel: upstreamModel, requestModel: h.request.requestModel,
-		request: h.request.internalRequest, iterator: h.iterator, group: h.group,
+		request: h.request.internalRequest, iterator: h.iterator, excludeKeyIDs: excludeKeyIDs, group: h.group,
 		protocolRoutingEnabled: h.protocolRoutingEnabled, legacyEligible: legacyEligible,
 		responsesPassthroughRequired: h.passthroughRequired,
 	})
@@ -317,7 +342,9 @@ func classifyAttemptResult(result attemptResult) attemptAction {
 }
 
 func (h *relayHandler) handleSuccessfulAttempt(channel *dbmodel.Channel, key dbmodel.ChannelKey, plan *protocolroute.AttemptPlan, result attemptResult) bool {
-	outlierwindow.Report(channel.ID, plan.UpstreamModel(), true, result.StatusCode, time.Now())
+	now := time.Now()
+	availability.RecordCredentialSuccess(channel.ID, key.ID, now)
+	outlierwindow.Report(channel.ID, plan.UpstreamModel(), true, result.StatusCode, now)
 	saveHTTPReplayState(httpReplaySaveInput{
 		ctx: h.c.Request.Context(), inboundType: h.inboundType, request: h.request.internalRequest,
 		inAdapter: h.request.inAdapter, metrics: h.metrics, previousState: h.replayState,
