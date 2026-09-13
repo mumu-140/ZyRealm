@@ -288,4 +288,5 @@ func Reset() {
 	shared.mu.Lock()
 	shared.entries = make(map[runtimeKey]*entry)
 	shared.mu.Unlock()
+	resetCredentialRuntime()
 }
