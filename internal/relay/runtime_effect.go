@@ -7,11 +7,16 @@ import (
 	"github.com/bestruirui/octopus/internal/relay/availability"
 )
 
-// recordRuntimeAvailabilityEvidence converts one attempt result into shared
-// short-lived runtime eligibility state. Request/content/capability semantics are
-// intentionally neutral here; they may affect routing but must not condemn the
-// provider itself.
-func recordRuntimeAvailabilityEvidence(ctx context.Context, channelID int, upstreamModel string, result attemptResult, now time.Time) {
+// recordRuntimeAvailabilityEvidence updates the shared fast-path runtime facts
+// from one real upstream attempt. It is independent of GroupMode so changing
+// routing strategies does not reset or fork provider/model availability state.
+func recordRuntimeAvailabilityEvidence(
+	ctx context.Context,
+	channelID int,
+	upstreamModel string,
+	result attemptResult,
+	now time.Time,
+) {
 	if result.Success {
 		availability.RecordSuccess(channelID, upstreamModel, now)
 		return
@@ -20,7 +25,7 @@ func recordRuntimeAvailabilityEvidence(ctx context.Context, channelID int, upstr
 		return
 	}
 	if isAmbiguousTransportCancellation(ctx, result.Err) {
-		availability.RecordModelSuspect(channelID, upstreamModel, "ambiguous_cancel", now)
+		availability.RecordModelSuspect(channelID, upstreamModel, "ambiguous_transport_cancel", now)
 		return
 	}
 	if result.FirstTokenTimeout {
