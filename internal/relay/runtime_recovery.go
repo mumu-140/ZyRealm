@@ -52,6 +52,6 @@ func writeRuntimeCooldownUnavailable(c *gin.Context, items []dbmodel.GroupItem, 
 	if seconds := retryAfterSecondsUntil(until, now); seconds > 0 {
 		c.Header("Retry-After", strconv.Itoa(seconds))
 	}
-	resp.ErrorWithCode(c, http.StatusServiceUnavailable, CodeRelayNoAvailableChannel, "all eligible channels are cooling down")
+	resp.ErrorWithCode(c, http.StatusServiceUnavailable, CodeRelayNoAvailableChannel, "no available channel: all eligible channels are cooling down")
 	return true
 }
