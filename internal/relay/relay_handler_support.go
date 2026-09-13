@@ -152,6 +152,10 @@ func runSameChannelAttempts(
 	var result attemptResult
 	for planIndex, plan := range activePlans {
 		result = runProtocolRetries(ctx, request, channel, key, plan, firstTokenTimeout, maxRetries)
+		if result.FirstTokenTimeout || isAmbiguousTransportCancellation(ctx, result.Err) ||
+			shouldFailoverProviderImmediately(result) || isRelayAttemptBudgetExceeded(result.Err) {
+			return result
+		}
 		if planIndex+1 >= len(plans) {
 			return result
 		}
