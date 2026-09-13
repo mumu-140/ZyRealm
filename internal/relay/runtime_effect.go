@@ -32,6 +32,10 @@ func recordRuntimeAvailabilityEvidence(
 		availability.RecordModelFailure(channelID, upstreamModel, "first_token_timeout", now)
 		return
 	}
+	if classifyRoutingFailure(result) == failureDomainModelCapacity {
+		availability.EnsureModelFailure(channelID, upstreamModel, "model_capacity", now)
+		return
+	}
 	if shouldFailoverProviderImmediately(result) {
 		availability.RecordProviderFailure(channelID, "provider_transient", now)
 	}
