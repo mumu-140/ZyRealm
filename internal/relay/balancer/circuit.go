@@ -21,11 +21,12 @@ const (
 	StateHalfOpen                     // 半开，仅允许单个试探请求
 )
 
-// FailureKind 区分硬失败与软失败（限流）。独立 const 块，避免与
-// CircuitState 共用 iota 计数器导致 FailureHard 从 3 开始。
+// FailureKind 区分硬失败、软失败（限流）与不应进入熔断器的语义失败。
+// 独立 const 块，避免与 CircuitState 共用 iota 计数器导致 FailureHard 从 3 开始。
 const (
 	FailureHard          FailureKind = iota // 上游硬失败，计入连续失败并可触发熔断
 	FailureSoftRateLimit                    // 上游限流，按 Retry-After 冷却，不累计硬失败
+	FailureIgnore                           // 请求/凭据/能力语义错误，不作为上游健康证据
 )
 
 // circuitEntry 单个熔断器条目
@@ -251,8 +252,12 @@ func RecordSuccess(channelID, keyID int, modelName string) {
 
 // RecordFailure 记录失败，可能触发熔断。
 // FailureSoftRateLimit 用于 429/503 这类软失败：Closed 状态下不累计阈值，
-// HalfOpen 状态下重新进入 Open，但不放大 TripCount。
+// HalfOpen 状态下重新进入 Open，但不放大 TripCount。FailureIgnore 完全不写入熔断状态。
 func RecordFailure(channelID, keyID int, modelName string, kind FailureKind) {
+	if kind == FailureIgnore {
+		return
+	}
+
 	key := circuitKey(channelID, keyID, modelName)
 	entry := getOrCreateEntry(channelID, keyID, modelName)
 
