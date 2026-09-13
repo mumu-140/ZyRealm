@@ -150,6 +150,12 @@ func (h *relayHandler) processCandidate() bool {
 		h.iterator.Skip(channel.ID, 0, channel.Name, "channel disabled")
 		return false
 	}
+	if h.request.attemptBudget != nil && !h.request.attemptBudget.canUseProvider(channel.ID) {
+		h.iterator.Skip(channel.ID, 0, channel.Name, errRelayProviderAttemptsExceeded.Error())
+		h.iterator.SkipProvider(channel.ID)
+		h.lastErr = errRelayProviderAttemptsExceeded
+		return false
+	}
 	legacyEligible, reason := legacyChannelEligibility(channel, h.request.internalRequest, h.passthroughRequired)
 	key, plans := h.selectCandidateAttempt(channel, item.ModelName, legacyEligible)
 	if key.ChannelKey == "" || len(plans) == 0 {
