@@ -120,6 +120,13 @@ func (r *relayRequest) requestContext() context.Context {
 	return r.ctx
 }
 
+type dispatchState uint8
+
+const (
+	dispatchNotSent dispatchState = iota
+	dispatchMaybeSent
+)
+
 // relayAttempt 尝试级上下文
 type relayAttempt struct {
 	*relayRequest // 嵌入请求级上下文
@@ -135,6 +142,7 @@ type relayAttempt struct {
 	upstreamErrorBody    string
 	upstreamStatusCode   int
 	upstreamStarted      bool
+	dispatchState        dispatchState
 }
 
 // attemptResult 封装单次尝试的结果
@@ -150,5 +158,6 @@ type attemptResult struct {
 	UpstreamErrorBody string        // 原始上游错误体，仅用于封闭的协议 mismatch 分类
 	UpstreamStatus    int           // 未归一化的上游 HTTP 状态码
 	UpstreamStarted   bool          // 上游已返回成功状态，可能已开始模型执行
+	DispatchState     dispatchState // 是否已经进入可能把请求发给上游的 transport 调用
 	Plan              *protocolroute.AttemptPlan
 }
