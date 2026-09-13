@@ -6,8 +6,9 @@ import (
 )
 
 const (
-	defaultMaxProviderAttempts = 4
-	defaultMaxWireAttempts     = 8
+	defaultMaxProviderAttempts           = 4
+	defaultMaxWireAttempts               = 8
+	defaultMaxUnknownCrossProviderReplay = 1
 )
 
 var (
@@ -20,10 +21,12 @@ var (
 // do not consume it; a budget slot is charged only when a real relay attempt is
 // about to start.
 type relayAttemptBudget struct {
-	maxProviders int
-	maxWires     int
-	providers    map[int]struct{}
-	wires        int
+	maxProviders         int
+	maxWires             int
+	maxUnknownReplays    int
+	providers            map[int]struct{}
+	wires                int
+	unknownReplayCount   int
 }
 
 func newRelayAttemptBudget() *relayAttemptBudget {
@@ -38,9 +41,10 @@ func newRelayAttemptBudgetWithLimits(maxProviders, maxWires int) *relayAttemptBu
 		maxWires = defaultMaxWireAttempts
 	}
 	return &relayAttemptBudget{
-		maxProviders: maxProviders,
-		maxWires:     maxWires,
-		providers:    make(map[int]struct{}),
+		maxProviders:      maxProviders,
+		maxWires:          maxWires,
+		maxUnknownReplays: defaultMaxUnknownCrossProviderReplay,
+		providers:         make(map[int]struct{}),
 	}
 }
 
@@ -75,6 +79,21 @@ func (b *relayAttemptBudget) tryStartWire(channelID int) error {
 	}
 	b.wires++
 	return nil
+}
+
+// tryUnknownCrossProviderReplay charges one replay whose upstream outcome is
+// unknown (for example an outbound context cancellation while the client is
+// still alive). Ordinary provider rejections and NOT_SENT transport failures do
+// not consume this separate safety budget.
+func (b *relayAttemptBudget) tryUnknownCrossProviderReplay() bool {
+	if b == nil {
+		return true
+	}
+	if b.unknownReplayCount >= b.maxUnknownReplays {
+		return false
+	}
+	b.unknownReplayCount++
+	return true
 }
 
 func (b *relayAttemptBudget) wireExhausted() bool {
