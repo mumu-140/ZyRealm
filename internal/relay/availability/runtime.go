@@ -30,15 +30,15 @@ type runtimeKey struct {
 }
 
 type entry struct {
-	state              State
-	reason             string
-	since              time.Time
-	cooldownUntil      time.Time
-	failureStreak      int
-	successStreak      int
-	lastFailureAt      time.Time
-	lastSuccessAt      time.Time
-	halfOpenInFlight   bool
+	state            State
+	reason           string
+	since            time.Time
+	cooldownUntil    time.Time
+	failureStreak    int
+	successStreak    int
+	lastFailureAt    time.Time
+	lastSuccessAt    time.Time
+	halfOpenInFlight bool
 }
 
 type Lease struct {
@@ -157,10 +157,11 @@ func AcquireCandidate(channelID int, model string, now time.Time) (Lease, bool) 
 	return lease, true
 }
 
-// ReleaseLease releases an unused or neutrally completed half-open trial. A
+// ReleaseLease releases an unused or semantically neutral half-open trial. A
 // caller that recorded success/failure first has already transitioned the entry,
-// so this becomes a no-op for that key. Neutral half-open results become suspect
-// rather than immediately flooding the recovered provider with traffic.
+// so this becomes a no-op for that key. Neutral outcomes return to an unleased
+// HALF_OPEN state, preserving single-flight recovery until a real health signal
+// is observed.
 func ReleaseLease(lease Lease, now time.Time) {
 	if len(lease.keys) == 0 {
 		return
@@ -172,9 +173,8 @@ func ReleaseLease(lease Lease, now time.Time) {
 		if e == nil || e.state != StateHalfOpen || !e.halfOpenInFlight {
 			continue
 		}
-		e.state = StateSuspect
+		e.state = StateHalfOpen
 		e.since = now
-		e.cooldownUntil = time.Time{}
 		e.halfOpenInFlight = false
 	}
 }
