@@ -55,3 +55,16 @@ func isClientCancellation(ctx context.Context, err error) bool {
 	}
 	return errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded)
 }
+
+// isAmbiguousTransportCancellation identifies a cancellation reported by the
+// outbound attempt while the outer client request is still alive. The source
+// may be an upstream transport, proxy, adapter, or child context, so this is a
+// request-local failover signal rather than proof that the client disconnected
+// or that the provider should be globally penalized.
+func isAmbiguousTransportCancellation(ctx context.Context, err error) bool {
+	if err == nil || isClientCancellation(ctx, err) ||
+		isLocalRelayBudgetExceeded(ctx, err) || isFirstTokenTimeout(ctx, err) {
+		return false
+	}
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
