@@ -57,8 +57,8 @@ func TestHandleAttemptResultAmbiguousCancellationSkipsProviderOnceWithoutHardPen
 		UpstreamModel:  modelName,
 	})
 	result := attemptResult{
-		Err:             fmt.Errorf("channel provider-a failed: failed to send request: %w", context.Canceled),
-		UpstreamStarted: true,
+		Err:           fmt.Errorf("channel provider-a failed: failed to send request: %w", context.Canceled),
+		DispatchState: dispatchMaybeSent,
 	}
 
 	if terminal := h.handleAttemptResult(&dbmodel.Channel{ID: providerA, Name: "provider-a"}, dbmodel.ChannelKey{ID: keyA}, plan, result); terminal {
@@ -126,8 +126,8 @@ func TestHandleAttemptResultNotSentCancellationDoesNotConsumeUnknownReplayBudget
 		UpstreamModel:  modelName,
 	})
 	result := attemptResult{
-		Err:             fmt.Errorf("channel provider-a failed before upstream response: failed to send request: %w", context.Canceled),
-		UpstreamStarted: false,
+		Err:           fmt.Errorf("channel provider-a failed before transport send: %w", context.Canceled),
+		DispatchState: dispatchNotSent,
 	}
 
 	if terminal := h.handleAttemptResult(&dbmodel.Channel{ID: providerA, Name: "provider-a"}, dbmodel.ChannelKey{ID: keyA}, plan, result); terminal {
