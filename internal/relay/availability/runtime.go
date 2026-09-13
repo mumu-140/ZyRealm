@@ -232,6 +232,22 @@ func RecordModelFailure(channelID int, model, reason string, now time.Time) time
 	return recordCooldown(modelKey(channelID, model), reason, now, modelCooldown)
 }
 
+// EnsureModelFailure records one model-scoped failure unless that exact
+// provider-model scope is already in an active cooldown. The fast failover path
+// may record capacity evidence before the common runtime updater observes the
+// same attempt; suppressing only an already-active cooldown prevents that single
+// attempt from advancing the failure streak twice. HALF_OPEN failures are not
+// suppressed because a failed real recovery trial must re-enter cooldown.
+func EnsureModelFailure(channelID int, model, reason string, now time.Time) time.Time {
+	shared.mu.Lock()
+	defer shared.mu.Unlock()
+	key := modelKey(channelID, model)
+	if e := shared.entries[key]; e != nil && e.state == StateCooldown && e.cooldownUntil.After(now) {
+		return e.cooldownUntil
+	}
+	return recordCooldown(key, reason, now, modelCooldown)
+}
+
 // RecordModelSuspect records ambiguous evidence without immediately condemning
 // the provider. A second ambiguous failure inside a short window escalates the
 // channel-model pair into the first model-cooldown stage.
