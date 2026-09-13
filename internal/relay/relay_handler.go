@@ -103,6 +103,7 @@ func buildRelayHandler(
 		c: c, inAdapter: inAdapter, internalRequest: request, metrics: metrics,
 		apiKeyID: apiKeyID, requestModel: request.Model, groupID: group.ID,
 		groupSessionTTL: group.SessionKeepTime, iter: iterator, rawBody: rawBody, heartbeat: heartbeat,
+		attemptBudget: newRelayAttemptBudget(),
 	}
 	return &relayHandler{
 		inboundType: inboundType, c: c, group: group,
@@ -115,6 +116,10 @@ func buildRelayHandler(
 
 func (h *relayHandler) run() {
 	for h.iterator.Next() {
+		if h.request.attemptBudget != nil && h.request.attemptBudget.wireExhausted() {
+			h.lastErr = errRelayWireAttemptsExceeded
+			break
+		}
 		if h.c.Request.Context().Err() != nil {
 			log.Debugf("request context canceled, stopping retry")
 			h.metrics.SaveWithChannelStats(h.c.Request.Context(), false, context.Canceled, h.iterator.Attempts(), false)
@@ -201,8 +206,9 @@ func (h *relayHandler) acquireCandidate(channel *dbmodel.Channel, key dbmodel.Ch
 
 func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel.ChannelKey, plan *protocolroute.AttemptPlan, result attemptResult) bool {
 	ambiguousCancellation := isAmbiguousTransportCancellation(h.c.Request.Context(), result.Err)
-	if ambiguousCancellation || result.FirstTokenTimeout {
-		// Both conditions should leave this provider for the remainder of the
+	budgetExceeded := isRelayAttemptBudgetExceeded(result.Err)
+	if ambiguousCancellation || result.FirstTokenTimeout || isProviderAttemptBudgetExceeded(result.Err) {
+		// These conditions should leave this provider for the remainder of the
 		// current request. Ambiguous cancellation is deliberately request-local:
 		// it is not enough evidence by itself to globally degrade provider health.
 		h.iterator.SkipProvider(channel.ID)
@@ -214,11 +220,12 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 	//     漏掉它们会让持续吐流失败的渠道-模型永远显示健康。
 	//   - Canceled 是客户端主动断开，与上游健康无关，继续排除。
 	//   - 单次 ambiguous transport cancellation 只做请求内绕开，暂不污染共享健康/熔断。
-	if !result.Success && !result.Canceled && !ambiguousCancellation {
+	//   - request-local attempt budget exhaustion is not upstream health evidence.
+	if !result.Success && !result.Canceled && !ambiguousCancellation && !budgetExceeded {
 		reportOutlierFailure(channel.ID, plan.UpstreamModel(), result.StatusCode,
 			outlierErrorText(result.Err, result.UpstreamErrorBody), time.Now())
 	}
-	if !result.Success && !result.Written && !result.Canceled && !ambiguousCancellation && !result.ResetConversation {
+	if !result.Success && !result.Written && !result.Canceled && !ambiguousCancellation && !budgetExceeded && !result.ResetConversation {
 		failureKind := circuitFailureKind(h.group.RetryEnabled, result.StatusCode)
 		balancer.RecordFailure(channel.ID, key.ID, plan.UpstreamModel(), failureKind)
 		if failureKind == balancer.FailureHard {
