@@ -1429,7 +1429,7 @@ func TestForwardViaWSPreservesClientUserAgentHeaders(t *testing.T) {
 	wsUpstreamPool.Remove(newWSPoolKey(channel.ID, channel.Keys[0].ID, buildUpstreamWSHeaders(c.Request.Header, channel, channel.Keys[0].ChannelKey)))
 }
 
-func TestHandlerRetryEnabledDoesNotTurnRecent429IntoNoAvailableKey(t *testing.T) {
+func TestHandlerRetryEnabledRespectsModelCapacityCooldown(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := setupRelayTestDB(t)
 
@@ -1493,14 +1493,14 @@ func TestHandlerRetryEnabledDoesNotTurnRecent429IntoNoAvailableKey(t *testing.T)
 	c2.Request.Header.Set("Content-Type", "application/json")
 	Handler(inbound.InboundTypeOpenAIChat, c2)
 
-	if recorder2.Code != http.StatusTooManyRequests {
-		t.Fatalf("expected second request to still reach upstream and return 429, got status %d body %s", recorder2.Code, recorder2.Body.String())
+	if recorder2.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected second request to be rejected by provider-model cooldown, got status %d body %s", recorder2.Code, recorder2.Body.String())
 	}
-	if hits.Load() != 4 {
-		t.Fatalf("expected second request to retry upstream twice instead of no available key, got %d total hits", hits.Load())
+	if hits.Load() != 2 {
+		t.Fatalf("expected cooling provider-model not to be retried, got %d total hits", hits.Load())
 	}
-	if strings.Contains(recorder2.Body.String(), "no available key") {
-		t.Fatalf("expected second response body not to mention no available key, got %s", recorder2.Body.String())
+	if !strings.Contains(recorder2.Body.String(), "no available channel") {
+		t.Fatalf("expected runtime eligibility rejection, got %s", recorder2.Body.String())
 	}
 }
 
@@ -1654,19 +1654,20 @@ func TestSoftRateLimitFailureDoesNotTripOrAmplifyCircuitBreaker(t *testing.T) {
 		t.Fatalf("expected exactly three upstream calls after soft-rate-limit probe, got %d", hits.Load())
 	}
 
-	resp5 := makeRequest(`{"model":"relay-soft-rate-limit-group","messages":[{"role":"user","content":"fifth"}]}`)
-	if resp5.Code != http.StatusBadGateway {
-		t.Fatalf("expected circuit to reopen after soft probe without passing, got status %d body %s", resp5.Code, resp5.Body.String())
+	tripped, remaining := balancer.IsTripped(channel.ID, channel.Keys[0].ID, "breaker-model")
+	if !tripped {
+		t.Fatalf("expected soft 429 half-open probe to reopen circuit")
+	}
+	if remaining <= 0 || remaining > 1100*time.Millisecond {
+		t.Fatalf("expected soft 429 to preserve the original 1s circuit cooldown without amplification, remaining=%v", remaining)
 	}
 
-	time.Sleep(1100 * time.Millisecond)
-	phase.Store(2)
-	resp6 := makeRequest(`{"model":"relay-soft-rate-limit-group","messages":[{"role":"user","content":"sixth"}]}`)
-	if resp6.Code != http.StatusOK {
-		t.Fatalf("expected breaker to recover after second equal-length cooldown, got status %d body %s", resp6.Code, resp6.Body.String())
+	resp5 := makeRequest(`{"model":"relay-soft-rate-limit-group","messages":[{"role":"user","content":"fifth"}]}`)
+	if resp5.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected provider-model runtime cooldown to reject immediate request, got status %d body %s", resp5.Code, resp5.Body.String())
 	}
-	if hits.Load() != 4 {
-		t.Fatalf("expected success probe to make one additional upstream call, got %d", hits.Load())
+	if hits.Load() != 3 {
+		t.Fatalf("expected runtime cooldown to prevent another upstream probe, got %d total hits", hits.Load())
 	}
 }
 
