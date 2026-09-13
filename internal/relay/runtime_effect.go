@@ -7,16 +7,11 @@ import (
 	"github.com/bestruirui/octopus/internal/relay/availability"
 )
 
-// recordRuntimeAvailabilityEvidence updates the shared fast-path runtime facts
-// from one real upstream attempt. It is independent of GroupMode so changing
-// routing strategies does not reset or fork provider/model availability state.
-func recordRuntimeAvailabilityEvidence(
-	ctx context.Context,
-	channelID int,
-	upstreamModel string,
-	result attemptResult,
-	now time.Time,
-) {
+// recordRuntimeAvailabilityEvidence converts one attempt result into shared
+// short-lived runtime eligibility state. Request/content/capability semantics are
+// intentionally neutral here; they may affect routing but must not condemn the
+// provider itself.
+func recordRuntimeAvailabilityEvidence(ctx context.Context, channelID int, upstreamModel string, result attemptResult, now time.Time) {
 	if result.Success {
 		availability.RecordSuccess(channelID, upstreamModel, now)
 		return
@@ -25,7 +20,7 @@ func recordRuntimeAvailabilityEvidence(
 		return
 	}
 	if isAmbiguousTransportCancellation(ctx, result.Err) {
-		availability.RecordModelSuspect(channelID, upstreamModel, "ambiguous_transport_cancel", now)
+		availability.RecordModelSuspect(channelID, upstreamModel, "ambiguous_cancel", now)
 		return
 	}
 	if result.FirstTokenTimeout {
@@ -33,10 +28,10 @@ func recordRuntimeAvailabilityEvidence(
 		return
 	}
 	if classifyRoutingFailure(result) == failureDomainModelCapacity {
-		availability.EnsureModelFailure(channelID, upstreamModel, "model_capacity", now)
+		availability.EnsureModelFailureWithRetryAfter(channelID, upstreamModel, "model_capacity", now, result.RetryAfter)
 		return
 	}
 	if shouldFailoverProviderImmediately(result) {
-		availability.RecordProviderFailure(channelID, "provider_transient", now)
+		availability.RecordProviderFailureWithRetryAfter(channelID, "provider_transient", now, result.RetryAfter)
 	}
 }

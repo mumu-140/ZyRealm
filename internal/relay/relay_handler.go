@@ -64,6 +64,9 @@ func newRelayHandler(inboundType inbound.InboundType, c *gin.Context) (*relayHan
 	request, replayState := prepareHTTPReplay(inboundType, c.GetInt("api_key_id"), group.ID, request.Model, request)
 	iterator := newRelayIterator(group, c.GetInt("api_key_id"), request.Model, replayState)
 	if iterator.Len() == 0 {
+		if writeRuntimeCooldownUnavailable(c, group.Items, request.Model) {
+			return nil, false
+		}
 		resp.ErrorWithCode(c, http.StatusServiceUnavailable, CodeRelayNoAvailableChannel, "no available channel")
 		return nil, false
 	}

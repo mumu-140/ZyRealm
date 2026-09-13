@@ -14,7 +14,14 @@ const (
 	StateHalfOpen
 )
 
-const suspectEscalationWindow = 30 * time.Second
+const (
+	suspectEscalationWindow = 30 * time.Second
+	// Explicit server recovery hints are trusted only within a bounded horizon.
+	// This prevents malformed or hostile upstream values from sidelining a
+	// provider/model indefinitely while still allowing recovery hints much longer
+	// than a single request's retry backoff.
+	maxExplicitCooldown = time.Hour
+)
 
 type scope uint8
 
@@ -203,7 +210,17 @@ func modelCooldown(streak int) time.Duration {
 	}
 }
 
-func recordCooldown(key runtimeKey, reason string, now time.Time, duration func(int) time.Duration) time.Time {
+func explicitCooldownUntil(now time.Time, retryAfter time.Duration) time.Time {
+	if retryAfter <= 0 {
+		return time.Time{}
+	}
+	if retryAfter > maxExplicitCooldown {
+		retryAfter = maxExplicitCooldown
+	}
+	return now.Add(retryAfter)
+}
+
+func recordCooldown(key runtimeKey, reason string, now time.Time, duration func(int) time.Duration, retryAfter time.Duration) time.Time {
 	e := shared.entries[key]
 	if e == nil {
 		e = &entry{}
@@ -216,20 +233,32 @@ func recordCooldown(key runtimeKey, reason string, now time.Time, duration func(
 	e.since = now
 	e.lastFailureAt = now
 	e.halfOpenInFlight = false
-	e.cooldownUntil = now.Add(duration(e.failureStreak))
+	if explicit := explicitCooldownUntil(now, retryAfter); !explicit.IsZero() {
+		e.cooldownUntil = explicit
+	} else {
+		e.cooldownUntil = now.Add(duration(e.failureStreak))
+	}
 	return e.cooldownUntil
 }
 
 func RecordProviderFailure(channelID int, reason string, now time.Time) time.Time {
+	return RecordProviderFailureWithRetryAfter(channelID, reason, now, 0)
+}
+
+func RecordProviderFailureWithRetryAfter(channelID int, reason string, now time.Time, retryAfter time.Duration) time.Time {
 	shared.mu.Lock()
 	defer shared.mu.Unlock()
-	return recordCooldown(providerKey(channelID), reason, now, providerCooldown)
+	return recordCooldown(providerKey(channelID), reason, now, providerCooldown, retryAfter)
 }
 
 func RecordModelFailure(channelID int, model, reason string, now time.Time) time.Time {
+	return RecordModelFailureWithRetryAfter(channelID, model, reason, now, 0)
+}
+
+func RecordModelFailureWithRetryAfter(channelID int, model, reason string, now time.Time, retryAfter time.Duration) time.Time {
 	shared.mu.Lock()
 	defer shared.mu.Unlock()
-	return recordCooldown(modelKey(channelID, model), reason, now, modelCooldown)
+	return recordCooldown(modelKey(channelID, model), reason, now, modelCooldown, retryAfter)
 }
 
 // EnsureModelFailure records one model-scoped failure unless that exact
@@ -239,13 +268,26 @@ func RecordModelFailure(channelID int, model, reason string, now time.Time) time
 // attempt from advancing the failure streak twice. HALF_OPEN failures are not
 // suppressed because a failed real recovery trial must re-enter cooldown.
 func EnsureModelFailure(channelID int, model, reason string, now time.Time) time.Time {
+	return EnsureModelFailureWithRetryAfter(channelID, model, reason, now, 0)
+}
+
+// EnsureModelFailureWithRetryAfter preserves the single-attempt dedupe above,
+// but lets a trusted Retry-After refine an already-created default cooldown.
+// Replacing only the deadline (without incrementing failureStreak) is important
+// when the fast model-capacity failover path records first and the common runtime
+// updater observes the same wire attempt immediately afterward.
+func EnsureModelFailureWithRetryAfter(channelID int, model, reason string, now time.Time, retryAfter time.Duration) time.Time {
 	shared.mu.Lock()
 	defer shared.mu.Unlock()
 	key := modelKey(channelID, model)
 	if e := shared.entries[key]; e != nil && e.state == StateCooldown && e.cooldownUntil.After(now) {
+		if explicit := explicitCooldownUntil(now, retryAfter); !explicit.IsZero() {
+			e.cooldownUntil = explicit
+			e.reason = reason
+		}
 		return e.cooldownUntil
 	}
-	return recordCooldown(key, reason, now, modelCooldown)
+	return recordCooldown(key, reason, now, modelCooldown, retryAfter)
 }
 
 // RecordModelSuspect records ambiguous evidence without immediately condemning
@@ -261,7 +303,7 @@ func RecordModelSuspect(channelID int, model, reason string, now time.Time) Stat
 		shared.entries[key] = e
 	}
 	if e.state == StateSuspect && !e.lastFailureAt.IsZero() && now.Sub(e.lastFailureAt) <= suspectEscalationWindow {
-		recordCooldown(key, reason, now, modelCooldown)
+		recordCooldown(key, reason, now, modelCooldown, 0)
 		return StateCooldown
 	}
 	e.state = StateSuspect
