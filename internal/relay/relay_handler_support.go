@@ -317,7 +317,7 @@ type exhaustedRelayInput struct {
 	lastErr                 error
 	lastResult              attemptResult
 	capacitySkipped         bool
-	rateSkipped            bool
+	rateSkipped             bool
 	passthroughRequired     bool
 	passthroughCapableFound bool
 }
