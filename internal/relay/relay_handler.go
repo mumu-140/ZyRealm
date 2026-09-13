@@ -312,6 +312,15 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 		h.metrics.SaveWithChannelStats(h.c.Request.Context(), false, result.Err, h.iterator.Attempts(), false)
 		return true
 	}
+	if isExplicitContentPolicyFailure(result) {
+		h.metrics.SaveWithChannelStats(h.c.Request.Context(), false, result.Err, h.iterator.Attempts(), false)
+		statusCode := result.StatusCode
+		if statusCode <= 0 {
+			statusCode = http.StatusBadRequest
+		}
+		h.heartbeat.FlushOrError(h.c, statusCode, "channel failed")
+		return true
+	}
 	h.lastErr = result.Err
 	h.lastResult = result
 	return false
