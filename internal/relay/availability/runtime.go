@@ -234,7 +234,7 @@ func RecordModelFailure(channelID int, model, reason string, now time.Time) time
 
 // RecordModelSuspect records ambiguous evidence without immediately condemning
 // the provider. A second ambiguous failure inside a short window escalates the
-// channel-model pair into a short cooldown.
+// channel-model pair into the first model-cooldown stage.
 func RecordModelSuspect(channelID int, model, reason string, now time.Time) State {
 	shared.mu.Lock()
 	defer shared.mu.Unlock()
@@ -251,7 +251,10 @@ func RecordModelSuspect(channelID int, model, reason string, now time.Time) Stat
 	e.state = StateSuspect
 	e.reason = reason
 	e.since = now
-	e.failureStreak = 1
+	// A single ambiguous cancellation is soft evidence, not a cooldown-producing
+	// failure. Keep the cooldown streak at zero so a second corroborating event
+	// enters the first 15-second model cooldown stage rather than jumping to 60s.
+	e.failureStreak = 0
 	e.successStreak = 0
 	e.lastFailureAt = now
 	e.cooldownUntil = time.Time{}
