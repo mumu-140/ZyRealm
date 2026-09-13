@@ -256,7 +256,11 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 	failureDomain := classifyRoutingFailure(result)
 	explicitContentPolicy := isExplicitContentPolicyFailure(result)
 
-	if ambiguousCancellation && !result.Written && !result.ResetConversation && h.request.attemptBudget != nil {
+	// Only a MAYBE_SENT ambiguous cancellation spends the single balanced
+	// unknown-outcome replay allowance. A pre-response/NOT_SENT cancellation is
+	// safe to fail over and must preserve that allowance for a later unknown
+	// upstream outcome.
+	if ambiguousCancellation && result.UpstreamStarted && !result.Written && !result.ResetConversation && h.request.attemptBudget != nil {
 		if !h.request.attemptBudget.tryUnknownCrossProviderReplay() {
 			// Balanced replay policy: once an unknown upstream outcome has already
 			// been replayed across providers, terminate rather than risk another
