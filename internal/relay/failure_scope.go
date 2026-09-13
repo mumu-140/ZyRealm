@@ -66,7 +66,7 @@ var modelErrorMarkers = []string{
 
 // classifyFailureScope 判定失败作用域。text 为「错误信息 + 上游错误体」的拼接，
 // statusCode==0 表示连接层失败（未拿到 HTTP 响应）。
-// 判定顺序即优先级：已知模型级本地超时 → 连接层 → 客户端 → 模型能力不匹配 → 渠道凭据/额度 → 拦截页 → 模型 → 状态码兜底。
+// 判定顺序即优先级：已知模型级本地超时 → 连接层 → 客户端/内容策略 → 模型能力不匹配 → 渠道凭据/额度 → 拦截页 → 模型 → 状态码兜底。
 func classifyFailureScope(statusCode int, text string) failureScope {
 	text = strings.ToLower(text)
 
@@ -78,7 +78,7 @@ func classifyFailureScope(statusCode int, text string) failureScope {
 	if statusCode == 0 || containsAny(text, connectionErrorMarkers) {
 		return scopeChannel
 	}
-	if isBlockedInvalidRequestError(text) || containsAny(text, clientErrorMarkers) {
+	if isBlockedInvalidRequestError(text) || containsAny(text, clientErrorMarkers) || containsAny(text, contentPolicyMarkers) {
 		return scopeIgnore
 	}
 	// Some relays wrap a model/effort capability error in an auth-shaped 401
