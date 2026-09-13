@@ -44,6 +44,20 @@ func newRelayAttemptBudgetWithLimits(maxProviders, maxWires int) *relayAttemptBu
 	}
 }
 
+// canUseProvider is a non-mutating preflight used before acquiring local
+// concurrency/RPM capacity. A previously charged provider remains usable until
+// the wire budget is exhausted; a new provider is rejected after the unique
+// provider limit has been reached.
+func (b *relayAttemptBudget) canUseProvider(channelID int) bool {
+	if b == nil {
+		return true
+	}
+	if _, seen := b.providers[channelID]; seen {
+		return true
+	}
+	return len(b.providers) < b.maxProviders
+}
+
 // tryStartWire charges one execution attempt. A provider is charged once per
 // request even when multiple credentials/protocol plans are attempted inside it.
 func (b *relayAttemptBudget) tryStartWire(channelID int) error {
@@ -54,7 +68,7 @@ func (b *relayAttemptBudget) tryStartWire(channelID int) error {
 		return errRelayWireAttemptsExceeded
 	}
 	if _, seen := b.providers[channelID]; !seen {
-		if len(b.providers) >= b.maxProviders {
+		if !b.canUseProvider(channelID) {
 			return errRelayProviderAttemptsExceeded
 		}
 		b.providers[channelID] = struct{}{}
