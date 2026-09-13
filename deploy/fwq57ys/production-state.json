@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-08-23T16:47:39Z",
+  "updatedAt": "2026-09-13T17:10:14Z",
   "repository": {
     "github": "mumu-140/octopus-concurrency",
     "canonicalPath": "/opt/octopus-mumu",
@@ -16,9 +16,9 @@
     "container": {
       "name": "octopus",
       "id": "5e9ee7e0e674814fc0aeba380ad533960f525e458296dd34aabe06c27b2d6679",
-      "image": "mumu-140/octopus-concurrency:v0.10.2-mumu.26",
-      "imageId": "sha256:9d8a2b1694777a9f46226c1d44caa16157d5fba5ba28edd99415359f6068b5f3",
-      "startedAt": "2026-08-23T16:43:17.293918622Z",
+      "image": "mumu-140/octopus-concurrency:v0.11.0-mumu.1",
+      "imageId": "sha256:5e35801c9f6508a26b592ac6f0dd153cfe5043cc29213a63ce2c2d84e3b340c1",
+      "startedAt": "2026-09-09T02:16:48.748767079Z",
       "networkMode": "host",
       "restartCount": 0,
       "dataMount": {
@@ -28,9 +28,9 @@
       }
     },
     "release": {
-      "version": "v0.10.2-mumu.26",
-      "tag": "v0.10.2-mumu.26",
-      "sourceCommit": "d5b76ab2cd708ffa1c305ea2fb872ed0bad79f50"
+      "version": "v0.11.0-mumu.1",
+      "tag": "v0.11.0-mumu.1",
+      "sourceCommit": "46a347b340a5bc612a873658933b7fa10e752ea6"
     },
     "httpChecks": [
       "http://127.0.0.1:35276/",
