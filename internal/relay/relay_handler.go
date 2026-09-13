@@ -212,11 +212,13 @@ func (h *relayHandler) acquireCandidate(channel *dbmodel.Channel, key dbmodel.Ch
 
 func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel.ChannelKey, plan *protocolroute.AttemptPlan, result attemptResult) bool {
 	ambiguousCancellation := isAmbiguousTransportCancellation(h.c.Request.Context(), result.Err)
+	hardProviderFailure := shouldFailoverProviderImmediately(result)
 	budgetExceeded := isRelayAttemptBudgetExceeded(result.Err)
-	if ambiguousCancellation || result.FirstTokenTimeout || isProviderAttemptBudgetExceeded(result.Err) {
+	if ambiguousCancellation || result.FirstTokenTimeout || hardProviderFailure || isProviderAttemptBudgetExceeded(result.Err) {
 		// These conditions should leave this provider for the remainder of the
 		// current request. Ambiguous cancellation is deliberately request-local:
 		// it is not enough evidence by itself to globally degrade provider health.
+		// Hard provider failures continue through the shared health/circuit path.
 		h.iterator.SkipProvider(channel.ID)
 	}
 
