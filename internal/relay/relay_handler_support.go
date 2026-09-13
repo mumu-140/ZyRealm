@@ -122,14 +122,6 @@ func selectChannelAttempt(input channelAttemptInput) (dbmodel.ChannelKey, []*pro
 			}
 			return dbmodel.ChannelKey{}, nil
 		}
-		if !availability.CredentialAvailableRevision(input.channel.ID, usedKey.ID, usedKey.CredentialRevision, time.Now()) {
-			selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
-			continue
-		}
-		if input.iterator.SkipCircuitBreak(input.channel.ID, usedKey.ID, input.channel.Name) {
-			selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
-			continue
-		}
 
 		plans := buildGroupProtocolPlans(groupProtocolPlanInput{
 			Enabled: input.protocolRoutingEnabled, Group: input.group,
