@@ -253,6 +253,7 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 	ambiguousCancellation := isAmbiguousTransportCancellation(h.c.Request.Context(), result.Err)
 	hardProviderFailure := shouldFailoverProviderImmediately(result)
 	budgetExceeded := isRelayAttemptBudgetExceeded(result.Err)
+	failureDomain := classifyRoutingFailure(result)
 
 	if ambiguousCancellation && !result.Written && !result.ResetConversation && h.request.attemptBudget != nil {
 		if !h.request.attemptBudget.tryUnknownCrossProviderReplay() {
@@ -285,7 +286,8 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 		reportOutlierFailure(channel.ID, plan.UpstreamModel(), result.StatusCode,
 			outlierErrorText(result.Err, result.UpstreamErrorBody), now)
 	}
-	if !result.Success && !result.Written && !result.Canceled && !ambiguousCancellation && !budgetExceeded && !result.ResetConversation {
+	if !result.Success && !result.Written && !result.Canceled && !ambiguousCancellation && !budgetExceeded &&
+		!result.ResetConversation && failureDomain != failureDomainModelCapability {
 		failureKind := circuitFailureKind(h.group.RetryEnabled, result.StatusCode)
 		balancer.RecordFailure(channel.ID, key.ID, plan.UpstreamModel(), failureKind)
 		if failureKind == balancer.FailureHard {
