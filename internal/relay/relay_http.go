@@ -145,14 +145,28 @@ func (ra *relayAttempt) forwardViaHTTPPassthrough(ctx context.Context, pt model.
 		}
 		return response.StatusCode, nil
 	}
-	return response.StatusCode, ra.handleResponsePassthrough(ctx, response, cfg)
+	return ra.handleResponsePassthrough(ctx, response, cfg)
 }
 
 // handleResponsePassthrough handles non-streaming passthrough responses.
-func (ra *relayAttempt) handleResponsePassthrough(ctx context.Context, response *http.Response, cfg model.PassthroughConfig) error {
+func (ra *relayAttempt) handleResponsePassthrough(ctx context.Context, response *http.Response, cfg model.PassthroughConfig) (int, error) {
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
-		return fmt.Errorf("failed to read response body: %w", err)
+		return http.StatusBadGateway, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Anthropic clients require a real Message object on a successful non-streaming
+	// response. Some intermediate gateways return their own JSON error envelope with
+	// HTTP 200; validate before committing downstream so the routing layer can fail
+	// over instead of leaking a fake success to Claude Code.
+	if ra.effectiveUpstreamProtocol() == protocol.Anthropic {
+		semanticStatus, validationErr := validateAnthropicSuccessResponse(body)
+		if validationErr != nil {
+			ra.upstreamErrorBody = string(body)
+			log.Warnf("invalid Anthropic 2xx response from channel %s: upstream_status=%d semantic_status=%d err=%v",
+				ra.channel.Name, response.StatusCode, semanticStatus, validationErr)
+			return semanticStatus, validationErr
+		}
 	}
 
 	contentType := response.Header.Get("Content-Type")
@@ -174,7 +188,7 @@ func (ra *relayAttempt) handleResponsePassthrough(ctx context.Context, response 
 		}
 	}
 
-	return nil
+	return response.StatusCode, nil
 }
 
 // forwardViaHTTPStandard 是 forwardViaHTTP 的原路径（直通判定失败时的兜底）。
