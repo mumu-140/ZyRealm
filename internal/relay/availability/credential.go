@@ -34,6 +34,17 @@ func credentialCooldown(streak int) time.Duration {
 	}
 }
 
+func transientCredentialCooldown(streak int) time.Duration {
+	switch streak {
+	case 1:
+		return 15 * time.Second
+	case 2:
+		return 60 * time.Second
+	default:
+		return 5 * time.Minute
+	}
+}
+
 // CredentialAvailable returns whether the key may participate in scheduling.
 // Credential cooldown uses time-based re-entry instead of a separate half-open
 // lease; provider/model scopes own the more expensive passive single-flight
@@ -48,7 +59,7 @@ func CredentialAvailable(channelID, keyID int, now time.Time) bool {
 	return e == nil || !e.cooldownUntil.After(now)
 }
 
-func RecordCredentialFailure(channelID, keyID int, reason string, now time.Time) time.Time {
+func recordCredentialFailure(channelID, keyID int, reason string, now time.Time, cooldown func(int) time.Duration) time.Time {
 	if keyID <= 0 {
 		return time.Time{}
 	}
@@ -63,8 +74,16 @@ func RecordCredentialFailure(channelID, keyID int, reason string, now time.Time)
 	e.failureStreak++
 	e.reason = reason
 	e.lastFailureAt = now
-	e.cooldownUntil = now.Add(credentialCooldown(e.failureStreak))
+	e.cooldownUntil = now.Add(cooldown(e.failureStreak))
 	return e.cooldownUntil
+}
+
+func RecordCredentialFailure(channelID, keyID int, reason string, now time.Time) time.Time {
+	return recordCredentialFailure(channelID, keyID, reason, now, credentialCooldown)
+}
+
+func RecordCredentialTransientFailure(channelID, keyID int, reason string, now time.Time) time.Time {
+	return recordCredentialFailure(channelID, keyID, reason, now, transientCredentialCooldown)
 }
 
 func RecordCredentialSuccess(channelID, keyID int, now time.Time) {
