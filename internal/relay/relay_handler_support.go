@@ -115,14 +115,14 @@ func selectChannelAttempt(input channelAttemptInput) (dbmodel.ChannelKey, []*pro
 		PreferredKeyID: input.iterator.StickyKeyID(),
 	}
 	for {
-		usedKey := input.channel.GetChannelKey(selectOpts)
+		usedKey := selectFairChannelCredential(input.channel, selectOpts, input.iterator, time.Now())
 		if usedKey.ChannelKey == "" {
 			if len(selectOpts.ExcludeKeyIDs) == 0 {
 				input.iterator.Skip(input.channel.ID, 0, input.channel.Name, "no available key")
 			}
 			return dbmodel.ChannelKey{}, nil
 		}
-		if !availability.CredentialAvailable(input.channel.ID, usedKey.ID, time.Now()) {
+		if !availability.CredentialAvailableRevision(input.channel.ID, usedKey.ID, usedKey.CredentialRevision, time.Now()) {
 			selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
 			continue
 		}

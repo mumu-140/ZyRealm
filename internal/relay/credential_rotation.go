@@ -8,11 +8,15 @@ import (
 
 const defaultMaxCredentialsPerProvider = 2
 
-func recordCredentialRoutingFailure(channelID, keyID int, result attemptResult, now time.Time) {
+func recordCredentialRoutingFailureRevision(channelID, keyID, revision int, result attemptResult, now time.Time) {
 	text := outlierErrorText(result.Err, result.UpstreamErrorBody)
 	if containsAny(text, credentialConcurrencyMarkers) {
-		availability.RecordCredentialTransientFailure(channelID, keyID, "credential_concurrency", now)
+		availability.RecordCredentialTransientFailureRevision(channelID, keyID, revision, "credential_concurrency", now)
 		return
 	}
-	availability.RecordCredentialFailure(channelID, keyID, "credential_failure", now)
+	availability.RecordCredentialFailureRevision(channelID, keyID, revision, "credential_failure", now)
+}
+
+func recordCredentialRoutingFailure(channelID, keyID int, result attemptResult, now time.Time) {
+	recordCredentialRoutingFailureRevision(channelID, keyID, 1, result, now)
 }

@@ -202,7 +202,7 @@ func (h *relayHandler) processCandidate() bool {
 		}
 
 		if classifyRoutingFailure(result) == failureDomainCredential {
-			recordCredentialRoutingFailure(channel.ID, key.ID, result, time.Now())
+			recordCredentialRoutingFailureRevision(channel.ID, key.ID, key.CredentialRevision, result, time.Now())
 			excludedKeyIDs[key.ID] = struct{}{}
 			h.lastErr = result.Err
 			h.lastResult = result
@@ -361,7 +361,7 @@ func classifyAttemptResult(result attemptResult) attemptAction {
 
 func (h *relayHandler) handleSuccessfulAttempt(channel *dbmodel.Channel, key dbmodel.ChannelKey, plan *protocolroute.AttemptPlan, result attemptResult) bool {
 	now := time.Now()
-	availability.RecordCredentialSuccess(channel.ID, key.ID, now)
+	availability.RecordCredentialSuccessRevision(channel.ID, key.ID, key.CredentialRevision, now)
 	outlierwindow.Report(channel.ID, plan.UpstreamModel(), true, result.StatusCode, now)
 	saveHTTPReplayState(httpReplaySaveInput{
 		ctx: h.c.Request.Context(), inboundType: h.inboundType, request: h.request.internalRequest,
