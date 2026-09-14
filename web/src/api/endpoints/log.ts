@@ -367,28 +367,42 @@ export function useLogs(options: UseLogsOptions = {}) {
                     }
                 };
 
+                let sseBuffer: RelayLog[] = [];
+                let sseFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+                const flushSSEBuffer = () => {
+                    sseFlushTimer = null;
+                    if (sseBuffer.length === 0 || cancelled) return;
+                    const batch = [...sseBuffer];
+                    sseBuffer = [];
+
+                    queryClient.setQueryData(
+                        logsInfiniteQueryKey(pageSize, filters),
+                        (old: InfiniteData<CursorPage, LogCursor | null> | undefined) => {
+                            if (!old) {
+                                return { pages: [{ logs: batch, has_more: false, next_cursor: null }], pageParams: [null] };
+                            }
+
+                            const seen = new Set(old.pages.flatMap((p) => p.logs.map((l) => l.id)));
+                            const newUnique = batch.filter((l) => !seen.has(l.id));
+                            if (newUnique.length === 0) return old;
+
+                            const firstPage = old.pages[0] ?? { logs: [], has_more: false, next_cursor: null };
+                            const prepended = [...newUnique, ...firstPage.logs];
+                            // Keep first page bounded without triggering full refetches
+                            const nextFirstPage = { ...firstPage, logs: prepended.slice(0, Math.max(pageSize, 30)) };
+                            return { ...old, pages: [nextFirstPage, ...old.pages.slice(1)] };
+                        }
+                    );
+                };
+
                 eventSource.onmessage = (event) => {
                     try {
                         const log: RelayLog = JSON.parse(event.data);
-                        queryClient.setQueryData(
-                            logsInfiniteQueryKey(pageSize, filters),
-                            (old: InfiniteData<CursorPage, LogCursor | null> | undefined) => {
-                                if (!old) {
-                                    return { pages: [{ logs: [log], has_more: false, next_cursor: null }], pageParams: [null] };
-                                }
-
-                                const exists = old.pages.some((p) => p?.logs.some((x) => x.id === log.id));
-                                if (exists) return old;
-
-                                const firstPage = old.pages[0] ?? { logs: [], has_more: false, next_cursor: null };
-                                const prepended = [log, ...firstPage.logs];
-                                const nextFirstPage = { ...firstPage, logs: prepended.slice(0, pageSize) };
-                                if (prepended.length > pageSize && old.pages.length > 1) {
-                                    queryClient.invalidateQueries({ queryKey: logsInfiniteQueryKey(pageSize, filters) });
-                                }
-                                return { ...old, pages: [nextFirstPage, ...old.pages.slice(1)] };
-                            }
-                        );
+                        sseBuffer.unshift(log);
+                        if (!sseFlushTimer) {
+                            sseFlushTimer = setTimeout(flushSSEBuffer, 150);
+                        }
                     } catch (e) {
                         logger.error('解析日志数据失败:', e);
                     }
@@ -397,6 +411,10 @@ export function useLogs(options: UseLogsOptions = {}) {
                 eventSource.onerror = () => {
                     setIsConnected(false);
                     setError(new Error('SSE 连接断开'));
+                    if (sseFlushTimer) {
+                        clearTimeout(sseFlushTimer);
+                        sseFlushTimer = null;
+                    }
                     eventSource.close();
                     eventSourceRef.current = null;
                     scheduleReconnect();

@@ -6,12 +6,13 @@ import { useGroupList } from '@/api/endpoints/group';
 import { useSearchStore, useToolbarViewOptionsStore } from '@/components/modules/toolbar';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
 
-// 分组卡目标宽度:旧 4 列 ~276px 的 1.5 倍,一行 3-4 个,不排挤 5 列
-const GROUP_COLUMN_MIN_WIDTH = 414;
+// 分组卡目标宽度: 一行 3-4 个 (较窄紧凑卡片)
+const GROUP_COLUMN_MIN_WIDTH = 290;
 function resolveGroupColumns(width: number): number {
-    const byMinWidth = Math.max(1, Math.floor((width + 16) / (GROUP_COLUMN_MIN_WIDTH + 16)));
-    if (byMinWidth >= 4) return width >= 1420 ? 4 : 3;
-    return byMinWidth;
+    if (width >= 1260) return 4;
+    if (width >= 920) return 3;
+    if (width >= 580) return 2;
+    return 1;
 }
 
 export function Group() {

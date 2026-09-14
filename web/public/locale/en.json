@@ -120,6 +120,7 @@
     "summary": {
       "periodLabel": "Statistics period",
       "loadError": "Some statistics could not be refreshed; available data is still shown.",
+      "chartTitle": "Cost & Usage Trend",
       "periods": {
         "today": "Today",
         "last7Days": "7 days",
@@ -133,9 +134,10 @@
         "allTime": "Total cost"
       },
       "metrics": {
+        "cost": "Cost",
         "requests": "Requests",
         "tokens": "Tokens",
-        "waitTime": "Latency"
+        "waitTime": "Avg Latency"
       }
     },
     "rank": {

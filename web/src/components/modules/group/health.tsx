@@ -184,51 +184,53 @@ export function GroupHealthBadge({ groupId }: { groupId?: number }) {
     return (
         <Dialog open={open} onOpenChange={setOpen}>
             <Card className="mb-3 gap-0 rounded-xl border-border/70 bg-background/80 py-0 shadow-none">
-                <CardContent className="flex items-center justify-between gap-2 px-3 py-1.5">
+                <CardContent className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5">
                     <DialogTrigger asChild>
                         <button type="button" className="grid min-w-0 flex-1 grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-2 gap-y-0.5 text-left">
                             <span className={cn('row-span-2 size-2 rounded-full self-center', statusDotTone(latest?.status))} />
-                            <span className="text-sm font-medium leading-5 text-foreground">{t('title')}</span>
+                            <span className="text-sm font-medium leading-5 text-foreground whitespace-nowrap">{t('title')}</span>
                             <span className="min-w-0 truncate text-xs leading-5 text-muted-foreground">
                                 {lastRunRelative}
                             </span>
-                            <span className="col-start-2 col-span-2 flex min-w-0 items-center gap-3 text-xs leading-4 text-muted-foreground">
-                                <Badge variant="outline" className={cn('h-5 px-1.5 text-[10px] uppercase tracking-wide', probeModeTone(latest?.probe_mode ?? 'standard'))}>
+                            <span className="col-start-2 col-span-2 flex min-w-0 items-center gap-2 text-xs leading-4 text-muted-foreground flex-wrap">
+                                <Badge variant="outline" className={cn('h-5 px-1.5 text-[10px] uppercase tracking-wide whitespace-nowrap', probeModeTone(latest?.probe_mode ?? 'standard'))}>
                                     {t(`probeMode.${latest?.probe_mode ?? 'standard'}`)}
                                 </Badge>
-                                <span className="inline-flex items-center gap-1">
+                                <span className="inline-flex items-center gap-1 whitespace-nowrap">
                                     <Activity className="size-3.5" />
                                     {successCount}/{attempts.length || 0}
                                 </span>
-                                <span className="inline-flex items-center gap-1">
+                                <span className="inline-flex items-center gap-1 whitespace-nowrap">
                                     <Clock3 className="size-3.5" />
                                     {latest?.duration_ms ?? 0}ms
                                 </span>
                             </span>
                         </button>
                     </DialogTrigger>
-                    <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-7 rounded-lg px-2 text-xs"
-                        disabled={isRunPendingForGroup || isRunning}
-                        onClick={() => runGroupHealth.mutate({ groupId })}
-                    >
-                        {isRunning || isStandardRunPending ? <LoaderCircle className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                        {t('run')}
-                    </Button>
-                    <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-7 rounded-lg px-2 text-xs"
-                        disabled={isRunPendingForGroup || isRunning}
-                        onClick={() => runGroupHealth.mutate({ groupId, probeMode: 'full' })}
-                    >
-                        {isFullRunPending ? <LoaderCircle className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                        {t('runFull')}
-                    </Button>
+                    <div className="flex items-center gap-1 shrink-0 flex-wrap">
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 rounded-lg px-2 text-xs shrink-0 whitespace-nowrap"
+                            disabled={isRunPendingForGroup || isRunning}
+                            onClick={() => runGroupHealth.mutate({ groupId })}
+                        >
+                            {isRunning || isStandardRunPending ? <LoaderCircle className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+                            <span className="whitespace-nowrap">{t('run')}</span>
+                        </Button>
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 rounded-lg px-2 text-xs shrink-0 whitespace-nowrap"
+                            disabled={isRunPendingForGroup || isRunning}
+                            onClick={() => runGroupHealth.mutate({ groupId, probeMode: 'full' })}
+                        >
+                            {isFullRunPending ? <LoaderCircle className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+                            <span className="whitespace-nowrap">{t('runFull')}</span>
+                        </Button>
+                    </div>
                 </CardContent>
             </Card>
 

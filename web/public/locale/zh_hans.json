@@ -120,6 +120,7 @@
     "summary": {
       "periodLabel": "统计时间范围",
       "loadError": "部分统计刷新失败，现有数据仍保留显示。",
+      "chartTitle": "消费趋势分析",
       "periods": {
         "today": "今日",
         "last7Days": "7 天",
@@ -133,9 +134,10 @@
         "allTime": "累计总花费"
       },
       "metrics": {
-        "requests": "请求",
-        "tokens": "Token",
-        "waitTime": "耗时"
+        "cost": "消费金额",
+        "requests": "请求调用数",
+        "tokens": "Token 吞吐量",
+        "waitTime": "平均响应耗时"
       }
     },
     "rank": {

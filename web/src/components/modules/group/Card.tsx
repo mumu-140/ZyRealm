@@ -323,7 +323,7 @@ export function GroupCard({ group }: { group: Group }) {
 
             {/* Mode: quick switch (no need to enter Edit) */}
             {/* Mode: quick switch — flex-wrap 让按钮按内容自适应宽度，自然换行，不溢出不截断。*/}
-            <div className="flex flex-wrap gap-1 mb-3">
+            <div className="flex flex-wrap gap-1.5 mb-3">
                 {([GroupMode.RoundRobin, GroupMode.Random, GroupMode.Failover, GroupMode.Weighted, GroupMode.HealthFirst, GroupMode.LeastUsed, GroupMode.P2C, GroupMode.StrictRandom] as const).map((m) => (
                     <button
                         key={m}
@@ -335,13 +335,13 @@ export function GroupCard({ group }: { group: Group }) {
                             updateGroup.mutate({ id: group.id!, mode: m }, { onSuccess, onError });
                         }}
                         className={cn(
-                            'shrink-0 px-2.5 py-1.5 text-xs leading-tight whitespace-nowrap rounded-lg transition-colors',
-                            group.mode === m ? 'bg-primary text-primary-foreground' : 'bg-muted hover:bg-muted/80',
+                            'shrink-0 px-2 py-1 text-xs leading-tight whitespace-nowrap text-nowrap rounded-lg transition-colors font-medium',
+                            group.mode === m ? 'bg-primary text-primary-foreground shadow-xs' : 'bg-muted/70 hover:bg-muted text-muted-foreground hover:text-foreground',
                             // Keep visuals stable (no opacity/disabled flicker) while still preventing double-submit via onClick guard.
                             (!group.id) && 'cursor-not-allowed opacity-50'
                         )}
                     >
-                        {t(`mode.${MODE_LABELS[m]}`)}
+                        <span className="whitespace-nowrap text-nowrap">{t(`mode.${MODE_LABELS[m]}`)}</span>
                     </button>
                 ))}
             </div>

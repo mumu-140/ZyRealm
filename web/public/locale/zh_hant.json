@@ -120,6 +120,7 @@
     "summary": {
       "periodLabel": "統計時間範圍",
       "loadError": "部分統計重新整理失敗，現有資料仍保留顯示。",
+      "chartTitle": "消費趨勢分析",
       "periods": {
         "today": "今日",
         "last7Days": "7 天",
@@ -133,9 +134,10 @@
         "allTime": "累計總花費"
       },
       "metrics": {
-        "requests": "請求",
-        "tokens": "Token",
-        "waitTime": "耗時"
+        "cost": "消費金額",
+        "requests": "請求調用數",
+        "tokens": "Token 吞吐量",
+        "waitTime": "平均響應耗時"
       }
     },
     "rank": {

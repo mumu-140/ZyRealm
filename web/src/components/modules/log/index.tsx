@@ -1,14 +1,15 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLogs, useLogSiteActionTargets, type LogKeywordMode, type LogKeywordScope } from '@/api/endpoints/log';
-import { LogCard, type LogSiteActionTargets } from './Item';
+import { useLogs, type LogKeywordMode, type LogKeywordScope, type RelayLog } from '@/api/endpoints/log';
+import { LogCard, LogDetailModal } from './Item';
 import { Loader2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
 import { useSearchStore } from '@/components/modules/toolbar';
 import { useToolbarViewOptionsStore } from '@/components/modules/toolbar/view-options-store';
 import { useLogUIStore } from './ui-store';
+import { TooltipProvider } from '@/components/animate-ui/components/animate/tooltip';
 
 type LogFilters = {
     keyword: string;
@@ -82,16 +83,7 @@ export function Log() {
     const loadMore = liveLogsQuery.loadMore;
     const warning = liveLogsQuery.warning;
 
-    const logIDs = useMemo(() => logs.map((log) => log.id), [logs]);
-    const siteActionTargetsQuery = useLogSiteActionTargets(logIDs, logs.length > 0);
-    const siteActionTargets = useMemo(() => {
-        const next = new Map<number, LogSiteActionTargets>();
-        const data = siteActionTargetsQuery.data ?? {};
-        for (const [id, targets] of Object.entries(data)) {
-            next.set(Number(id), targets);
-        }
-        return next;
-    }, [siteActionTargetsQuery.data]);
+    const [selectedLog, setSelectedLog] = useState<RelayLog | null>(null);
 
     const canLoadMore = hasMore && !isLoading && !isLoadingMore && logs.length > 0;
     const handleReachEnd = useCallback(() => {
@@ -140,28 +132,43 @@ export function Log() {
         return null;
     }, [hasMore, logs.length, t]);
 
+    const handleSelectLog = useCallback((log: RelayLog) => {
+        setSelectedLog(log);
+    }, []);
+
+    const handleCloseDetail = useCallback(() => {
+        setSelectedLog(null);
+    }, []);
+
     return (
-        <div className="flex h-full min-h-0 flex-col gap-3">
-            {warning ? (
-                <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-                    {warning}
+        <TooltipProvider>
+            <div className="flex h-full min-h-0 flex-col gap-3">
+                {warning ? (
+                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                        {warning}
+                    </div>
+                ) : null}
+                <div className="relative min-h-0 flex-1">
+                    <VirtualizedGrid
+                        items={logs}
+                        layout="list"
+                        columns={{ default: 1 }}
+                        estimateItemHeight={96}
+                        overscan={4}
+                        getItemKey={(log) => `log-${log.id}`}
+                        renderItem={(log) => <LogCard log={log} onSelect={handleSelectLog} />}
+                        footer={footer}
+                        onReachEnd={handleReachEnd}
+                        reachEndEnabled={canLoadMore}
+                        reachEndOffset={2}
+                    />
                 </div>
-            ) : null}
-            <div className="relative min-h-0 flex-1">
-                <VirtualizedGrid
-                    items={logs}
-                    layout="list"
-                    columns={{ default: 1 }}
-                    estimateItemHeight={80}
-                    overscan={8}
-                    getItemKey={(log) => `log-${log.id}`}
-                    renderItem={(log) => <LogCard log={log} siteTargets={siteActionTargets.get(log.id) ?? null} />}
-                    footer={footer}
-                    onReachEnd={handleReachEnd}
-                    reachEndEnabled={canLoadMore}
-                    reachEndOffset={2}
+                <LogDetailModal
+                    log={selectedLog}
+                    open={Boolean(selectedLog)}
+                    onClose={handleCloseDetail}
                 />
             </div>
-        </div>
+        </TooltipProvider>
     );
 }
