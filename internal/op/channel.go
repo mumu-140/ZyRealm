@@ -49,6 +49,9 @@ func ChannelCreate(channel *model.Channel, ctx context.Context) error {
 	if channel == nil {
 		return fmt.Errorf("channel is nil")
 	}
+	if err := model.ValidateChannelCustomHeaders(channel.CustomHeader); err != nil {
+		return fmt.Errorf("invalid custom header: %w", err)
+	}
 	if channel.MaxConcurrency < 0 {
 		return fmt.Errorf("max concurrency must be greater than or equal to 0")
 	}
@@ -177,6 +180,11 @@ func ChannelUpdate(req *model.ChannelUpdateRequest, ctx context.Context) (*model
 			return nil, err
 		} else if managed {
 			return nil, fmt.Errorf("managed site channel is read-only; please edit it from the site account")
+		}
+	}
+	if req.CustomHeader != nil {
+		if err := model.ValidateChannelCustomHeaders(*req.CustomHeader); err != nil {
+			return nil, fmt.Errorf("invalid custom header: %w", err)
 		}
 	}
 
@@ -617,7 +625,6 @@ func ChannelGetByName(name string, ctx context.Context) (*model.Channel, error) 
 					if key.ID != 0 {
 						channelKeyCache.Del(key.ID)
 					}
-				}
 			}
 		}
 		return nil, err
