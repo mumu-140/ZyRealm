@@ -1,14 +1,29 @@
-<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="zyrealm" x1="18" y1="18" x2="82" y2="82" gradientUnits="userSpaceOnUse">
+    <linearGradient id="zyrealm-core" x1="20" y1="15" x2="80" y2="85" gradientUnits="userSpaceOnUse">
       <stop stop-color="#2563EB"/>
+      <stop offset="0.5" stop-color="#0284C7"/>
       <stop offset="1" stop-color="#06B6D4"/>
     </linearGradient>
+    <linearGradient id="wing-glow" x1="50" y1="10" x2="50" y2="90" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38BDF8"/>
+      <stop offset="1" stop-color="#1D4ED8"/>
+    </linearGradient>
   </defs>
-  <g fill="none" stroke="url(#zyrealm)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M50 9 L82 27 V73 L50 91 L18 73 V27 Z"/>
-    <path d="M31 34 H69"/>
-    <path d="M68 34 L32 66"/>
-    <path d="M31 66 H69"/>
-  </g>
+
+  <!-- 左翼 3 阶几何羽片 -->
+  <path d="M 18 20 L 38 40 L 35 50 L 18 32 Z" fill="url(#wing-glow)" opacity="0.95"/>
+  <path d="M 22 40 L 40 54 L 37 62 L 23 50 Z" fill="url(#wing-glow)" opacity="0.8"/>
+  <path d="M 28 56 L 42 66 L 39 72 L 28 64 Z" fill="url(#wing-glow)" opacity="0.65"/>
+
+  <!-- 右翼 3 阶几何羽片 (镜像) -->
+  <path d="M 82 20 L 62 40 L 65 50 L 82 32 Z" fill="url(#wing-glow)" opacity="0.95"/>
+  <path d="M 78 40 L 60 54 L 63 62 L 77 50 Z" fill="url(#wing-glow)" opacity="0.8"/>
+  <path d="M 72 56 L 58 66 L 61 72 L 72 64 Z" fill="url(#wing-glow)" opacity="0.65"/>
+
+  <!-- 底部界域盾脊尖端 -->
+  <path d="M 42 74 L 50 86 L 58 74 L 50 78 Z" fill="#06B6D4"/>
+
+  <!-- 核心立体 Z 字能量路由轨 -->
+  <path d="M 32 32 L 68 32 L 68 39 L 45 61 L 68 61 L 68 68 L 32 68 L 32 61 L 55 39 L 32 39 Z" fill="url(#zyrealm-core)"/>
 </svg>
