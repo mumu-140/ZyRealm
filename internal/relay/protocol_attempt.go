@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/bestruirui/octopus/internal/headerutil"
 	dbmodel "github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/protocol"
 	"github.com/bestruirui/octopus/internal/protocolroute"
@@ -187,13 +188,22 @@ func newRelayAttempt(request *relayRequest, channel *dbmodel.Channel, key dbmode
 	if adapter == nil {
 		return nil, fmt.Errorf("no adapter registered for upstream protocol: %s", plan.UpstreamProtocol())
 	}
+	if request.templateHeaderSource == nil && request.c != nil && request.c.Request != nil {
+		request.templateHeaderSource = headerutil.SnapshotClientHeaderTemplateSource(request.c.Request.Header)
+	}
 	attemptRequest := cloneRelayRequestForAttempt(request)
 	attemptRequest.internalRequest = request.internalRequest.Clone()
 	attemptRequest.internalRequest.Model = plan.UpstreamModel()
+	attemptChannel := channel
+	if channel != nil {
+		clonedChannel := *channel
+		clonedChannel.CustomHeader = renderEffectiveCustomHeaders(plan.HeaderPolicy().Set, attemptRequest.clientHeaderTemplateSource())
+		attemptChannel = &clonedChannel
+	}
 	return &relayAttempt{
 		relayRequest:         attemptRequest,
 		outAdapter:           adapter,
-		channel:              channel,
+		channel:              attemptChannel,
 		usedKey:              key,
 		plan:                 plan,
 		upstreamProtocol:     plan.UpstreamProtocol(),
