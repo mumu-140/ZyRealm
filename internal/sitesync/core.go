@@ -2,6 +2,7 @@ package sitesync
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/utils/log"
+	"github.com/bestruirui/octopus/internal/utils/modelmatch"
 )
 
 type syncSnapshot struct {
@@ -36,8 +38,7 @@ func SyncAccount(ctx context.Context, accountID int) (*model.SiteSyncResult, err
 		return nil, sanitizeSiteError(err)
 	}
 
-	snapshot, syncErr := syncAccountState(ctx, siteRecord, account)
-	if snapshot == nil && syncErr != nil {
+	failBeforePersist := func(syncErr error) (*model.SiteSyncResult, error) {
 		message := sanitizeSiteStatusMessage(syncErr)
 		updateErr := updateAccountSyncState(ctx, account.ID, model.SiteExecutionStatusFailed, message, "")
 		if updateErr != nil {
@@ -47,6 +48,23 @@ func SyncAccount(ctx context.Context, accountID int) (*model.SiteSyncResult, err
 			log.Warnf("failed to mark site account projection stale (account=%d): %v", account.ID, staleErr)
 		}
 		return nil, sanitizeSiteError(syncErr)
+	}
+
+	globalFilter, err := op.SettingGetString(model.SettingKeyModelFilterRegex)
+	if err != nil {
+		return failBeforePersist(fmt.Errorf("load global model filter: %w", err))
+	}
+	if err := modelmatch.Validate(globalFilter); err != nil {
+		return failBeforePersist(fmt.Errorf("invalid global model filter: %w", err))
+	}
+	ctx = withGlobalModelFilter(ctx, globalFilter)
+
+	snapshot, syncErr := syncAccountState(ctx, siteRecord, account)
+	if snapshot == nil && syncErr != nil {
+		return failBeforePersist(syncErr)
+	}
+	if err := applyGlobalModelFilterToSnapshot(snapshot, globalFilter); err != nil {
+		return failBeforePersist(err)
 	}
 
 	if err := persistSyncSnapshot(ctx, account.ID, snapshot); err != nil {
