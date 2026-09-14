@@ -37,6 +37,7 @@ type wsRelayResult struct {
 
 // HandleWSResponse handles WebSocket upgrade for /v1/responses.
 func HandleWSResponse(c *gin.Context) {
+	requestContext := contextWithClientHeaderTemplateSource(c.Request.Context(), c.Request.Header)
 	conn, err := websocket.Accept(c.Writer, c.Request, &websocket.AcceptOptions{
 		InsecureSkipVerify: true, // Allow cross-origin
 	})
@@ -48,7 +49,7 @@ func HandleWSResponse(c *gin.Context) {
 
 	conn.SetReadLimit(wsClientReadLimit)
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), wsClientMaxAge)
+	ctx, cancel := context.WithTimeout(requestContext, wsClientMaxAge)
 	defer cancel()
 
 	apiKeyID := c.GetInt("api_key_id")
@@ -398,7 +399,8 @@ func warmupUpstreamWSConnection(ctx context.Context, channel *dbmodel.Channel, u
 	warmupCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
-	pc := TryUpstreamWS(warmupCtx, channel, channel.GetBaseUrl(), usedKey.ChannelKey, usedKey.ID, nil)
+	renderedChannel := renderedChannelForTemplateSource(channel, clientHeaderTemplateSourceFromContext(ctx))
+	pc := TryUpstreamWS(warmupCtx, renderedChannel, renderedChannel.GetBaseUrl(), usedKey.ChannelKey, usedKey.ID, nil)
 	if pc == nil {
 		return fmt.Errorf("upstream ws unavailable")
 	}
@@ -429,17 +431,18 @@ func newWSRelayRequest(
 	}
 
 	return &relayRequest{
-		c:               nil,
-		ctx:             ctx,
-		inAdapter:       inAdapter,
-		internalRequest: executionRequest,
-		metrics:         NewRelayMetrics(apiKeyID, requestModel, rawBody, metricsRequest),
-		apiKeyID:        apiKeyID,
-		requestModel:    requestModel,
-		groupID:         group.ID,
-		groupSessionTTL: group.SessionKeepTime,
-		iter:            iter,
-		streamWriter:    NewWSStreamWriter(ctx, conn),
+		c:                    nil,
+		ctx:                  ctx,
+		inAdapter:            inAdapter,
+		internalRequest:      executionRequest,
+		metrics:              NewRelayMetrics(apiKeyID, requestModel, rawBody, metricsRequest),
+		apiKeyID:             apiKeyID,
+		requestModel:         requestModel,
+		groupID:              group.ID,
+		groupSessionTTL:      group.SessionKeepTime,
+		iter:                 iter,
+		templateHeaderSource: clientHeaderTemplateSourceFromContext(ctx),
+		streamWriter:         NewWSStreamWriter(ctx, conn),
 	}, &group, nil
 }
 
@@ -566,10 +569,11 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 				}
 			}
 
+			renderedChannel := renderedChannelForTemplateSource(channel, req.clientHeaderTemplateSource())
 			ra := &relayAttempt{
 				relayRequest:         req,
 				outAdapter:           outAdapter,
-				channel:              channel,
+				channel:              renderedChannel,
 				usedKey:              usedKey,
 				firstTokenTimeOutSec: group.FirstTokenTimeOut,
 			}
