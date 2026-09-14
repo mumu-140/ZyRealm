@@ -577,6 +577,10 @@ export function ChannelForm({
                                     ))}
                                 </SelectContent>
                             </Select>
+                            <p className="text-xs text-muted-foreground">
+                                {t('customHeaderValue')}: <code>{'{client_header:Header-Name}'}</code>
+                                <span className="ml-2">🔒 Authorization / Cookie / Proxy / Forwarded / WebSocket</span>
+                            </p>
                             <div className="space-y-2">
                                 {(formData.custom_header ?? []).map((h, idx) => (
                                     <div key={`hdr-${idx}`} className="flex items-center gap-2">
