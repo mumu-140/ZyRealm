@@ -59,8 +59,13 @@ func (ra *relayAttempt) copyHeaders(outboundRequest *http.Request) {
 	if outboundRequest.Header.Get("User-Agent") == "" {
 		outboundRequest.Header.Set("User-Agent", "")
 	}
+	templateSource := ra.clientHeaderTemplateSource()
 	for key, value := range ra.effectiveHeaders() {
-		outboundRequest.Header.Set(key, value)
+		rendered := renderConfiguredHeader(key, value, templateSource)
+		if rendered == nil {
+			continue
+		}
+		outboundRequest.Header.Set(rendered.HeaderKey, rendered.HeaderValue)
 	}
 	if ra.adaptiveHeaderIsolationEnabled() {
 		restoreAdapterCredentials(outboundRequest.Header, adapterCredentials)
