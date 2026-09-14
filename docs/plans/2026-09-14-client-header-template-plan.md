@@ -5,10 +5,12 @@
 > Source baseline: ZyRealm `main@cbe4638b01aa5beb1a46f73dfb41cabaecaf890c`.
 >
 > Upstream idea reference: Octopus `1c48ee5105042b8eebaba05c05b2773b04e6c7f3`.
+>
+> Safety review: revised on 2026-09-14 after tracing the complete HTTP + downstream-WS + upstream-WS data flow. The original idea of reusing a full handshake-header snapshot through `clientRequestHeaders()` is explicitly rejected below because it would broaden existing WS header-forwarding semantics.
 
 ## Goal
 
-Add request-scoped template expansion to channel custom-header values so operators can forward selected client metadata to upstream providers without weakening ZyRealm's existing credential and proxy-header isolation.
+Add request-scoped template expansion to channel custom-header values so operators can forward selected client metadata to upstream providers without weakening ZyRealm's existing credential, body, protocol, or proxy-header isolation.
 
 Example:
 
@@ -21,295 +23,471 @@ The implementation must behave consistently for:
 
 - normal HTTP transformed requests;
 - HTTP passthrough requests;
-- downstream WebSocket `/v1/responses` requests that use upstream WebSocket;
-- retries/failover attempts, using the original client metadata rather than mutating shared channel configuration.
+- downstream WebSocket `/v1/responses` requests using upstream WebSocket transform mode;
+- downstream WebSocket `/v1/responses` requests using upstream WebSocket passthrough mode;
+- WebSocket warmup (`generate:false`);
+- WS reconnect/replay paths;
+- ordinary retries/provider failover, always using the same immutable request-scoped template source.
 
-## Why this is not a direct upstream cherry-pick
+## Non-negotiable invariants
 
-ZyRealm's relay is materially different from Octopus:
+### 1. Client-header templates are Header-only metadata
 
-- HTTP request headers pass through `relayAttempt.copyHeaders()`.
-- Adaptive header isolation captures adapter-owned credentials before client/channel overlays and restores them afterward.
-- WebSocket upstream dials build their own headers in `buildUpstreamWSHeaders()` and use those headers in the WS pool key.
-- Downstream WebSocket relay requests currently detach from `gin.Context`, so `clientRequestHeaders()` returns no original handshake headers once `relayRequest.c == nil`.
+A template source must never be inserted into or serialized with:
 
-A correct implementation therefore needs a shared renderer plus a request-level source-header snapshot that both HTTP and WS paths can use.
+- `rawBody`;
+- `InternalLLMRequest`;
+- `reqBody map[string]json.RawMessage`;
+- transformed OpenAI/Anthropic/Responses JSON;
+- WS `response.create` payloads;
+- replay conversation state;
+- parameter override JSON.
 
-## Current source map
+The template source is a separate request-scoped metadata field used only while constructing outbound HTTP or WS **headers**.
 
-### HTTP
+This is the primary structural guarantee that `{}`, quotes, commas, backslashes, JSON-looking strings, or other legal header characters cannot corrupt request JSON.
+
+### 2. Do not broaden existing ordinary header forwarding
+
+Current behavior matters:
+
+- HTTP ingress has a live `gin.Context`, and ordinary safe client headers are copied by `copyHeaders()`.
+- downstream WS requests create `relayRequest{c:nil,...}`;
+- therefore `clientRequestHeaders()` currently returns `nil` for downstream WS ingress;
+- upstream WS therefore does **not** currently receive a general copy of downstream WS handshake headers.
+
+P0.1 must preserve that behavior.
+
+**Rejected design:** storing all downstream handshake headers in `relayRequest.clientHeaders` and making `clientRequestHeaders()` return that snapshot.
+
+Why rejected: that would cause downstream WS to begin forwarding ordinary handshake metadata that it did not forward before. Some upstreams may reject unexpected Origin, subprotocol, SDK, tenant, tracing, or provider-specific headers. That is a compatibility change unrelated to templates.
+
+### 3. Template problems must not corrupt the body or masquerade as upstream transport failures
+
+A malformed, missing, denied, or invalid template result must be handled before network dispatch and must never:
+
+- mutate request JSON;
+- cause a JSON parser error;
+- be classified as a provider/credential outage;
+- poison circuit-breaker/cooldown state;
+- trigger credential rotation merely because local template rendering failed.
+
+Save/update validation should reject invalid configuration early. Runtime rendering remains defensive for imported/legacy/stale configuration.
+
+### 4. Sensitive client data must not enter the template snapshot
+
+Authorization/cookie/proxy-auth/client-IP/hop-by-hop/WS-handshake-control headers are excluded **when the snapshot is created**, not merely when a placeholder is later evaluated.
+
+This gives defense in depth: secrets are not retained in the template source object at all.
+
+## Current source trace
+
+### HTTP body and relay construction
+
+`internal/relay/relay_parse.go`
+
+Current order:
+
+1. `io.ReadAll(c.Request.Body)` reads original body bytes.
+2. inbound adapter `TransformRequest(..., body)` parses/transforms the body.
+3. `InternalLLMRequest.Validate()` validates it.
+4. `newRelayHandler()` resolves group/routing state.
+5. only then does `buildRelayHandler()` construct `relayRequest`.
+
+Therefore a template-source snapshot added to `relayRequest` can remain completely outside body parsing.
+
+### HTTP outbound header application
 
 `internal/relay/relay_request.go`
 
-Current order in `relayAttempt.copyHeaders()`:
+Current `copyHeaders()` order:
 
 1. capture adapter credentials when adaptive header isolation is enabled;
-2. copy allowed client headers, excluding `hopByHopHeaders` and any `allowClientHeader()` rejection;
-3. preserve/merge special `anthropic-beta` behavior;
+2. copy allowed ordinary client headers, excluding `hopByHopHeaders` and `allowClientHeader()` rejects;
+3. preserve/merge `anthropic-beta`;
 4. ensure User-Agent exists;
 5. apply `ra.effectiveHeaders()` channel custom headers;
-6. restore adapter credentials when isolation is enabled.
+6. restore adapter credentials.
 
-Both HTTP forwarding paths call this same function:
+Both HTTP forwarding paths use it:
 
-- `forwardViaHTTPPassthrough()` in `internal/relay/relay_http.go`;
-- `forwardViaHTTPStandard()` in `internal/relay/relay_http.go`.
+- `forwardViaHTTPPassthrough()`;
+- `forwardViaHTTPStandard()`.
 
-This is the correct common insertion point for HTTP behavior.
+Template rendering belongs only in step 5.
 
-### WebSocket
-
-`internal/relay/ws_pool.go`
-
-`buildUpstreamWSHeaders()` independently:
-
-1. copies client headers allowed by `shouldProxyUpstreamWSHeader()`;
-2. applies `channel.CustomHeader` literally;
-3. overwrites `Authorization` with the selected upstream key;
-4. forces `OpenAI-Beta: responses_websockets=2026-02-06`.
-
-The final header set participates in `wsHeaderSignature()` and therefore in `wsPoolKey`. This is correct for tenant/project-sensitive custom headers: different rendered headers must not share the same pooled upstream connection identity.
-
-### Downstream WebSocket request construction
+### Downstream WS JSON path
 
 `internal/relay/ws_client.go`
 
-`HandleWSResponse()` accepts the downstream WebSocket from a `gin.Context`, but `newWSRelayRequest()` currently constructs:
+Current `response.create` flow is structurally separate from request headers:
+
+1. `websocket.Accept(...)` upgrades the connection.
+2. `conn.Read(ctx)` receives a WS text frame as `data []byte`.
+3. `json.Unmarshal(data, &msg)` validates event type.
+4. `processWSResponseCreate()` unmarshals `data` into `map[string]json.RawMessage`.
+5. it removes/adds WS-only fields such as `type`, `generate`, `previous_response_id`, `stream`.
+6. it marshals that map to `bodyBytes`.
+7. the inbound adapter parses `bodyBytes` into `InternalLLMRequest`.
+8. `newWSRelayRequest()` constructs `relayRequest{c:nil,...}`.
+
+The header-template source must be passed beside `data/bodyBytes`; it must never be merged into those values.
+
+### Upstream WS body path
+
+Two independent WS payload builders exist:
+
+- transform mode in `internal/relay/relay_websocket.go` marshals a Responses request to JSON and sends it with `SendResponseCreate()`;
+- passthrough mode in `internal/relay/ws_passthrough.go` parses/mutates/re-marshals its JSON payload and sends it with `SendRaw()`.
+
+Neither path needs template values in the payload. P0.1 must not modify these JSON-building functions except tests proving they remain unaffected.
+
+### Upstream WS headers and pool identity
+
+`internal/relay/ws_pool.go`
+
+`buildUpstreamWSHeaders()` currently:
+
+1. copies ordinary client headers accepted by `shouldProxyUpstreamWSHeader()`;
+2. applies `channel.CustomHeader` literally;
+3. forces upstream `Authorization`;
+4. forces Responses WS `OpenAI-Beta`.
+
+The final header set participates in `wsHeaderSignature()` / `wsPoolKey`.
+
+This is desirable for template-rendered tenant/project metadata: two different rendered custom-header sets must not reuse the same upstream pooled connection.
+
+## Corrected design
+
+### 1. Add a dedicated sanitized template-source snapshot
+
+Add a request-level field with a narrow purpose, for example:
 
 ```go
-&relayRequest{
-    c:   nil,
-    ctx: ctx,
-    ...
+templateHeaderSource http.Header
+```
+
+or a small immutable relay-local wrapper.
+
+Do **not** call it `clientHeaders`; the field is not a general header-forwarding source.
+
+Create a helper such as:
+
+```go
+func snapshotClientHeaderTemplateSource(src http.Header) http.Header
+```
+
+Properties:
+
+- create a new map/slices; never retain the caller's mutable map;
+- canonical/case-insensitive header behavior;
+- include only source names accepted by `isAllowedClientHeaderTemplateSource()`;
+- never copy blocked credential/cookie/proxy/forwarded/WS-control headers;
+- callers treat the returned snapshot as immutable;
+- do not log values.
+
+This source snapshot is request metadata only and is not serialized.
+
+### 2. Preserve `clientRequestHeaders()` exactly as an ordinary-forwarding accessor
+
+Do **not** change its semantics for P0.1.
+
+Conceptually it remains:
+
+```go
+func (ra *relayAttempt) clientRequestHeaders() http.Header {
+    if ra == nil || ra.c == nil || ra.c.Request == nil {
+        return nil
+    }
+    return ra.c.Request.Header
 }
 ```
 
-and `relayAttempt.clientRequestHeaders()` returns nil whenever `ra.c == nil`.
+Consequences:
 
-Therefore P0.1 must preserve a request-level clone of the original downstream handshake headers before the relay detaches from `gin.Context`.
+- HTTP ordinary-header forwarding remains unchanged.
+- downstream WS (`c == nil`) still does not suddenly forward general handshake headers upstream.
+- templates use `templateHeaderSource`, not `clientRequestHeaders()`.
 
-### Security boundary
+This separation is a required compatibility boundary.
 
-`internal/relay/type.go` already excludes at least:
+### 3. Capture template metadata without touching JSON
 
-- `authorization`;
-- `x-api-key`;
-- `proxy-authorization`;
-- hop-by-hop connection headers;
-- forwarded client-address headers (`x-forwarded-*`, `x-real-ip`, `forwarded`, Cloudflare/client-IP variants);
-- `content-length`, `host`, `accept-encoding`, etc.
+#### HTTP ingress
 
-P0.1 must not create a template side channel that bypasses this existing intent.
+In `buildRelayHandler()`, after request parsing/validation has already succeeded, create:
 
-## Design decision
+```go
+templateHeaderSource: snapshotClientHeaderTemplateSource(c.Request.Header)
+```
 
-### 1. Add one shared, pure renderer
+This cannot alter the already-read `rawBody` or `InternalLLMRequest`.
 
-Create a small relay-local helper, suggested file:
+#### Downstream WS ingress
+
+In `HandleWSResponse()`, snapshot template-eligible handshake metadata once from the original upgrade request, preferably immediately before `websocket.Accept()`:
+
+```go
+templateHeaderSource := snapshotClientHeaderTemplateSource(c.Request.Header)
+```
+
+Then thread that separate value through:
+
+- `processWSResponseCreate(...)`;
+- `newWSRelayRequest(...)`;
+- replay reconstruction;
+- warmup path.
+
+Do not place it in `reqBody`, `bodyBytes`, `InternalLLMRequest`, conversation state, or raw replay JSON.
+
+### 4. Shared parser/renderer must return structured outcome
+
+Create a relay-local helper, suggested file:
 
 `internal/relay/client_header_template.go`
 
-Suggested responsibilities:
+Suggested conceptual API:
 
 ```go
-func renderClientHeaderTemplate(value string, source http.Header) string
+type clientHeaderTemplateResult struct {
+    Value  string
+    Apply  bool
+    Reason string // diagnostic category only, never a secret value
+}
+
+func renderClientHeaderTemplate(value string, source http.Header) clientHeaderTemplateResult
+func validateClientHeaderTemplate(value string) error
 func isAllowedClientHeaderTemplateSource(name string) bool
 ```
 
-Implementation characteristics:
+The exact type may differ, but rendering must distinguish:
 
-- recognize `{client_header:<header-name>}` placeholders inside arbitrary surrounding text;
-- header lookup must be case-insensitive, using canonical `http.Header` behavior;
-- trim placeholder header names;
-- unknown/missing headers render to an empty string;
-- multiple placeholders in one value are supported;
-- plain values without placeholders are returned byte-for-byte unchanged;
-- no recursive/template-within-template evaluation;
-- no environment-variable, body-field, query-param, cookie, or Go-template functionality in P0.1.
+- literal/no-template value -> apply unchanged;
+- all referenced sources present and valid -> apply rendered value;
+- missing source -> do not synthesize malformed partial metadata;
+- denied/malformed source -> do not apply that custom header;
+- invalid rendered HTTP field value -> do not apply that custom header.
 
-Keep this helper free of channel/database state so it is deterministic and unit-testable.
+Do not make request-body functions aware of this result.
 
-### 2. Template source policy must be stricter than ordinary forwarding
+### 5. Missing/invalid dynamic metadata is non-blocking at runtime
 
-Do **not** simply allow any header that happens to exist on the client request.
+Upstream Octopus replaces a missing source with an empty string. ZyRealm should be more defensive for availability.
+
+P0.1 runtime policy:
+
+- configuration-time malformed/denied templates are rejected on save/update/import paths where validation is available;
+- if runtime source metadata is absent, skip **that configured custom header** rather than abort the whole LLM request;
+- if a rendered value is invalid as an HTTP header field value, skip that custom header and emit a value-free diagnostic;
+- do not return a provider/network failure for local template resolution;
+- do not mutate circuit/cooldown/credential health because of a local template problem.
+
+This avoids a missing optional `OpenAI-Project`/tenant metadata header turning into a local JSON/transport failure.
+
+If the upstream provider truly requires that metadata, it may still reject the request semantically; that is unavoidable when the client did not supply required metadata. The relay should nevertheless remain structurally correct and observable.
+
+### 6. Header syntax validation
+
+ZyRealm already depends directly on `golang.org/x/net`, so implementation may use existing HTTP header validation utilities such as `httpguts.ValidHeaderFieldName` / `ValidHeaderFieldValue` if appropriate, without adding a dependency.
+
+At minimum validate:
+
+- custom header key syntax;
+- placeholder source-name syntax;
+- final rendered header value;
+- no CR/LF/NUL/control-character injection.
+
+Do not JSON-escape header values. Headers and JSON are distinct protocol fields; JSON escaping a Header would be incorrect.
+
+### 7. Template source policy
 
 `isAllowedClientHeaderTemplateSource()` should reject at minimum:
 
-- every name present in `hopByHopHeaders`;
-- `cookie` and `set-cookie`;
-- any future credential-like aliases already recognized by adapter/header isolation code, if that list is broader than `hopByHopHeaders`;
-- malformed/empty header names.
+- every name in `hopByHopHeaders`;
+- `authorization`;
+- `x-api-key`;
+- `cookie` / `set-cookie`;
+- `proxy-authorization` / proxy authentication variants;
+- forwarded/client address identity headers;
+- `host` / `content-length` / `accept-encoding`;
+- `connection` / `upgrade`;
+- every `sec-websocket-*` header;
+- malformed/empty names;
+- any additional credential aliases recognized by adaptive header-isolation code.
 
-Reason: ordinary forwarding rules and template exfiltration have different risk. A user intentionally configuring `X-Leak: {client_header:Authorization}` must not be able to copy a downstream credential into an arbitrary upstream header.
-
-Expected allowed examples:
+Expected allowed examples include:
 
 - `OpenAI-Project`;
 - `OpenAI-Organization`;
 - `X-Tenant-ID`;
-- other non-sensitive application metadata that is not blocked by the relay's header policy.
+- other non-sensitive application metadata.
 
-Do not hardcode an allowlist limited to OpenAI headers; ZyRealm supports arbitrary providers and enterprise metadata.
+Do not hardcode an OpenAI-only allowlist; ZyRealm supports arbitrary providers.
 
-### 3. Preserve original client headers on `relayRequest`
+### 8. Per-attempt rendering; never mutate channel/cache objects
 
-Add a request-level field, suggested shape:
+Render channel custom-header values per relay attempt from:
 
-```go
-clientHeaders http.Header
-```
+- the current attempt's effective channel header configuration; and
+- the immutable request-level `templateHeaderSource`.
 
-Populate it once from the original downstream request with `Clone()`.
+Do not write results into:
 
-HTTP construction path:
+- `dbmodel.Channel.CustomHeader`;
+- cached channel objects;
+- group state;
+- replay state.
 
-- set `clientHeaders` from `c.Request.Header.Clone()` when creating the `relayRequest`;
-- retain current `c` behavior for response writing and other request state.
+Retries/failover must reuse the same source snapshot but render against each attempt's own channel header config.
 
-WebSocket construction path:
+### 9. HTTP integration is header-only
 
-- capture the initial HTTP upgrade request headers in `HandleWSResponse()` before entering the message loop;
-- thread that immutable snapshot through `processWSResponseCreate()` / `newWSRelayRequest()` for both the first attempt and replay request construction;
-- do not rebuild the template source from response.create JSON payloads.
+Modify only the custom-header loop inside `copyHeaders()`.
 
-Rationale: custom header templates refer to client **HTTP/WS handshake metadata**, not model request body fields.
+Required order remains:
 
-### 4. Centralize access through a request method
+1. adapter creates outbound request/body;
+2. adapter credentials exist;
+3. adaptive isolation captures credentials when enabled;
+4. ordinary safe client headers are copied exactly as today;
+5. channel custom headers are rendered against `templateHeaderSource`;
+6. only successful render results are set;
+7. protected adapter credentials are restored.
 
-Change `clientRequestHeaders()` to prefer the stored snapshot:
+No changes are required to:
 
-```go
-func (r *relayRequest) clientRequestHeaders() http.Header
-```
+- `TransformRequest()` body parsing;
+- `TransformRequestRaw()` raw body;
+- parameter overrides;
+- stream payload serialization.
 
-Semantics:
+### 10. WS integration requires two logically separate header inputs
 
-1. if `clientHeaders` exists, return it;
-2. otherwise, for backward compatibility in tests/internal paths, fall back to `r.c.Request.Header` when available;
-3. otherwise return nil.
+Do not overload one `http.Header` parameter with two meanings.
 
-Callers should treat the returned header as read-only.
+The WS dial/header builder should conceptually receive:
 
-This avoids divergent logic between HTTP and WS.
+1. `forwardHeaders` — existing ordinary client headers, preserving current semantics;
+2. `templateHeaderSource` — sanitized metadata used only to render configured channel custom headers.
 
-### 5. Render channel headers per attempt, never mutate `channel.CustomHeader`
-
-Add a helper that renders the effective channel headers against the request snapshot, for example:
-
-```go
-func (ra *relayAttempt) renderedEffectiveHeaders() map[string]string
-```
-
-or a lower-level function taking the existing map and `http.Header`.
-
-Rules:
-
-- render after channel/attempt overlay resolution (`effectiveHeaders()`), so adaptive/base URL/key attempt semantics stay intact;
-- do not write rendered values back into cached `dbmodel.Channel` objects;
-- each retry/failover attempt renders from the same immutable client-header snapshot;
-- preserve existing header key precedence and adaptive credential restoration order.
-
-### 6. HTTP integration
-
-Modify only the custom-header application portion of `relayAttempt.copyHeaders()`:
-
-Current conceptual line:
+For example, signatures may evolve toward:
 
 ```go
-for key, value := range ra.effectiveHeaders() {
-    outboundRequest.Header.Set(key, value)
-}
+func buildUpstreamWSHeaders(
+    forwardHeaders http.Header,
+    templateHeaderSource http.Header,
+    channel *dbmodel.Channel,
+    key string,
+) http.Header
 ```
 
-becomes per-request rendered values.
+or an equivalent small context struct.
 
-Required ordering remains:
+For downstream WS ingress:
 
-1. outbound adapter defaults/credentials already exist;
-2. capture adapter credentials if adaptive isolation is enabled;
-3. copy allowed ordinary client headers;
-4. apply rendered channel custom headers;
-5. restore protected adapter credentials.
+- `forwardHeaders` remains `nil` as it is today;
+- `templateHeaderSource` contains only safe snapshotted handshake metadata.
 
-This ensures a custom header template cannot replace protected upstream adapter credentials when adaptive isolation is active.
+For HTTP ingress that later uses upstream WS:
 
-Do not add separate logic in `forwardViaHTTPPassthrough()` or `forwardViaHTTPStandard()`; both already converge on `copyHeaders()`.
+- ordinary forwarding behavior continues to use current `clientRequestHeaders()`;
+- template rendering uses the sanitized snapshot.
 
-### 7. WebSocket integration
+Final WS precedence remains:
 
-Refactor `buildUpstreamWSHeaders()` so custom header values use the same shared renderer and source policy as HTTP.
-
-Preferred signature remains explicit/pure, e.g.:
-
-```go
-func buildUpstreamWSHeaders(clientHeaders http.Header, channel *dbmodel.Channel, key string) http.Header
-```
-
-but the custom-header loop should render each `HeaderValue` against `clientHeaders`.
-
-Keep final precedence unchanged:
-
-1. safe client headers;
+1. existing ordinary forwarded headers;
 2. rendered channel custom headers;
-3. forced upstream `Authorization`;
-4. forced Responses WS beta header.
+3. forced selected upstream `Authorization`;
+4. forced Responses WS `OpenAI-Beta`.
 
-This guarantees templates cannot override the selected upstream key or required WS beta mode.
+### 11. Preserve WS pool isolation
 
-Because rendered headers remain part of `wsHeaderSignature()`, connection pooling automatically separates different tenant/project header values. Add an explicit test for this invariant.
+`wsHeaderSignature()` must continue to hash/sign the **final outbound header set**.
 
-### 8. Configuration validation at persistence boundary
+Required invariant:
 
-Do not rely only on frontend validation.
+- same channel/key + same rendered custom headers -> reusable pool identity;
+- same channel/key + different rendered tenant/project header -> different pool identity.
 
-Add channel custom-header template validation in the shared channel save/update path so it covers:
+Do not put raw template source headers into the pool key if they are not actually emitted upstream. The pool identity should reflect final outbound behavior, not unused client metadata.
 
-- channel create;
-- channel update;
+### 12. Warmup must use the same template metadata
+
+Current downstream WS `generate:false` warmup eventually calls `TryUpstreamWS(..., nil)` without request header metadata.
+
+That becomes insufficient when a channel's upstream WS handshake requires a rendered client-header template.
+
+Thread `templateHeaderSource` into:
+
+- `bestEffortWarmupUpstreamWS()`;
+- `warmupUpstreamWSConnection()`;
+- the WS header builder.
+
+But preserve `forwardHeaders == nil` for downstream WS ordinary forwarding.
+
+This ensures warmup targets the same rendered-header pool identity as the real request rather than warming an unusable generic connection.
+
+### 13. Replay/reconnect must retain only the sanitized template source
+
+Both transform and passthrough WS reconnect paths call `TryUpstreamWS*()` again.
+
+They must reuse the same request-level `templateHeaderSource` so a reconnect cannot silently lose tenant/project headers or switch pool identity.
+
+Replay must not copy template metadata into replay JSON or conversation state. It remains request-scoped metadata attached to the newly constructed `relayRequest` for that downstream connection/request.
+
+## Configuration validation
+
+Backend validation must cover channel custom headers across:
+
+- create;
+- update;
 - batch custom-header update;
-- any internal/import path that reuses the same persistence helpers, where practical.
-
-Source audit shows channel writes are handled across `internal/server/handlers/channel.go`, `internal/server/handlers/channel_batch.go`, and `internal/op/channel.go`; implementation should place reusable validation low enough that batch operations cannot bypass it.
+- practical import/restore paths that reuse shared validation.
 
 Validation should reject:
 
-- malformed placeholders such as an unclosed `{client_header:...` expression;
-- empty placeholder names;
-- blocked sensitive source names (`Authorization`, `X-Api-Key`, `Cookie`, proxy-auth, forwarded IP headers, etc.).
+- malformed/unclosed `{client_header:...` syntax;
+- empty source names;
+- denied sensitive source names;
+- invalid source header-name syntax;
+- invalid custom output header-name syntax;
+- literal values containing invalid HTTP header control characters.
 
 Validation should allow:
 
-- ordinary literal custom-header values;
+- literal custom-header values;
 - mixed literal + allowed placeholders;
-- multiple allowed placeholders in one value.
+- multiple placeholders;
+- absent runtime source values (not knowable at save time);
+- legal JSON-looking text inside header values, because it remains a header value.
 
-Do not reject a placeholder merely because the header is absent at save time; the client-specific value only exists at request time.
+Do not duplicate parser logic in create/update/batch handlers.
 
-### 9. Frontend affordance only, not a redesign
+## Frontend scope
 
 Use the existing custom-header editor in:
 
 `web/src/components/modules/channel/Form.tsx`
 
-Add compact explanatory text near the value input, with a safe example such as:
+Add a compact syntax hint such as:
 
 ```text
 {client_header:OpenAI-Project}
 ```
 
-and state that sensitive authentication/cookie/proxy headers cannot be referenced.
+State that authentication/cookie/proxy/forwarding/WS-control headers cannot be referenced.
 
-Add translations to all current locale files:
+Update:
 
 - `web/public/locale/zh_hans.json`;
 - `web/public/locale/zh_hant.json`;
 - `web/public/locale/en.json`.
 
-No new modal, DSL editor, syntax highlighter, or template preview is needed in P0.1.
+No new editor/modal/DSL UI is needed.
 
 ## Test-first implementation sequence
 
-### Task 1 — Pure parser/renderer security tests
+### Task 1 — Parser, source filtering, and renderer tests
 
 Create:
 
@@ -322,72 +500,103 @@ Write failing tests first for:
 - case-insensitive lookup;
 - mixed literal + placeholder;
 - multiple placeholders;
-- missing allowed header -> empty string;
+- missing source -> target custom header is skipped, request is not failed;
 - blocked Authorization;
 - blocked X-Api-Key;
 - blocked Cookie;
 - blocked proxy/forwarded client identity headers;
+- blocked `Sec-WebSocket-*` source;
 - malformed/empty placeholders rejected by validator;
-- renderer never recursively expands values read from the client header.
+- source header values are not recursively interpreted as templates;
+- JSON-looking legal header text remains byte-for-byte a header value;
+- CR/LF/control-character result is rejected/skipped;
+- template source snapshot never contains blocked credentials/cookies/WS-control headers.
 
-Then implement the smallest shared helper needed to pass.
+### Task 2 — Body/JSON isolation regression tests
 
-### Task 2 — HTTP integration tests
+These tests are mandatory because P0.1 must prove absence of cross-layer mutation.
 
-Add focused tests around `copyHeaders()` using a request with:
+HTTP transformed path:
 
-- an allowed source header (`OpenAI-Project` or `X-Tenant-ID`);
-- a channel custom header containing the placeholder;
-- an adapter credential already present on the outbound request;
-- adaptive header isolation enabled where the existing test helpers permit it.
+- construct a valid JSON request body;
+- record the body/internal request before header application;
+- render/apply template headers;
+- assert body bytes/semantic payload are unchanged.
 
-Assert:
+HTTP passthrough path:
 
-- rendered custom header reaches upstream request;
-- ordinary safe header copying remains unchanged;
-- protected adapter credential remains the adapter credential, not a client/template value;
-- HTTP standard and passthrough both rely on the same `copyHeaders()` behavior rather than duplicating template code.
+- record `rawBody` before `copyHeaders()`;
+- assert it remains identical after header application.
 
-If full forward-path tests are already expensive, unit-test `copyHeaders()` directly and add one end-to-end HTTP relay regression for confidence.
+WS transform path:
 
-### Task 3 — Preserve downstream WS handshake headers
+- use a `response.create` payload containing nested objects/arrays/tool fields;
+- provide template-source values containing quotes/braces/commas/backslashes;
+- assert the generated WS JSON is valid and semantically identical to baseline except pre-existing WS transformations (`type`/`stream` etc.);
+- assert template values appear only in outbound headers.
 
-Add the request-level `clientHeaders` snapshot and thread it through WS request construction.
+WS passthrough path:
 
-Tests should prove:
+- perform the same separation check around `buildWSPassthroughRequestPayload()`;
+- assert no template metadata is inserted into payload JSON.
 
-- `newWSRelayRequest()` retains the provided original headers even with `c == nil`;
-- replay request reconstruction retains the same source-header snapshot;
-- nil/no-header internal call paths remain safe.
+### Task 3 — HTTP integration and compatibility
 
-### Task 4 — Upstream WS rendering + pool isolation
+Tests around `copyHeaders()` must prove:
 
-Extend existing WS pool/header tests or add a focused file.
+- rendered custom header reaches outbound request;
+- ordinary safe header copying is unchanged;
+- missing dynamic source skips only that configured custom header;
+- adapter credentials remain protected under adaptive header isolation;
+- no template failure becomes a provider/credential routing failure;
+- standard and passthrough paths share the same header logic.
 
-Assert:
+### Task 4 — Downstream WS snapshot isolation
 
-- allowed template renders into the upstream WS handshake;
-- selected upstream `Authorization: Bearer <key>` wins over any channel/template attempt;
-- required `OpenAI-Beta` wins over channel/template attempts;
-- blocked client header sources are not exposed;
-- two otherwise-identical requests with different rendered tenant/project values produce different `wsHeaderSignature()` / pool keys;
-- identical rendered headers produce the same pool signature.
+Tests must prove:
 
-### Task 5 — Persistence validation
+- only template-eligible handshake metadata is snapshotted;
+- Authorization/Cookie/Upgrade/Connection/Sec-WebSocket values are absent from the snapshot;
+- `newWSRelayRequest()` retains the sanitized template source with `c == nil`;
+- `clientRequestHeaders()` still returns nil for downstream WS and its existing semantics are unchanged;
+- replay reconstruction carries the same sanitized template source separately from JSON/body state.
 
-Add unit tests at the reusable validation layer covering both valid and invalid custom-header configs.
+This task specifically guards against the rejected over-broad design.
 
-Add handler/op regression coverage sufficient to prove batch updates cannot bypass validation.
+### Task 5 — Upstream WS transform + passthrough + reconnect
 
-Do not duplicate parser logic between handler, batch handler, and op layer.
+Tests must prove:
 
-### Task 6 — Frontend hint and locale coverage
+- transform mode renders allowed template values into handshake headers;
+- passthrough mode does the same;
+- forced upstream `Authorization` still wins;
+- required WS `OpenAI-Beta` still wins;
+- reconnect/redial preserves the same template-derived headers;
+- ordinary downstream WS handshake headers are **not** newly forwarded merely because template support exists.
 
-Update the existing form only.
+### Task 6 — WS pool identity and warmup
 
-Add/extend the lightweight web tests if there is an established pure-logic test location for channel form helpers; otherwise rely on type/lint/build for the static hint and keep parser enforcement backend-side.
+Tests must prove:
 
-Required verification:
+- different final rendered tenant/project headers -> different `wsHeaderSignature()` / pool key;
+- identical final rendered headers -> same signature;
+- unused template-source metadata does not alter pool identity;
+- `generate:false` warmup uses the same template metadata as the subsequent real request;
+- warmup does not start forwarding ordinary downstream WS handshake headers.
+
+### Task 7 — Persistence validation
+
+Add reusable validation-layer tests for valid/invalid custom-header templates.
+
+Prove batch updates cannot bypass validation.
+
+Where possible, imported/legacy invalid data should be handled defensively at runtime by skipping the affected custom header rather than crashing or corrupting routing state.
+
+### Task 8 — Frontend hint/locales
+
+Update only the existing form and three locale files.
+
+Required frontend checks:
 
 ```bash
 cd web
@@ -396,15 +605,15 @@ pnpm test
 pnpm build
 ```
 
-### Task 7 — Full repository verification
+### Task 9 — Full repository verification
 
-Run the same gates as `.github/workflows/ci.yml`:
+Run CI-equivalent gates:
 
 ```bash
 bash scripts/check-governance.sh --repo
 mkdir -p static/out
 touch static/out/.keep
-go vet ./...      # evidence only; current workflow allows the known baseline warning
+go vet ./...      # evidence only; compare with known baseline
 go test -buildvcs=false ./...
 cd web
 pnpm install --frozen-lockfile
@@ -413,7 +622,7 @@ pnpm test
 pnpm build
 ```
 
-Do not claim P0.1 complete until the required CI jobs are green on the feature branch/PR.
+Do not claim P0.1 complete until branch/PR CI is green.
 
 ## Expected file set
 
@@ -422,12 +631,15 @@ Likely backend changes:
 - `internal/relay/client_header_template.go` (new)
 - `internal/relay/client_header_template_test.go` (new)
 - `internal/relay/type.go`
+- `internal/relay/relay_handler.go`
 - `internal/relay/relay_request.go`
 - `internal/relay/ws_client.go`
 - `internal/relay/ws_pool.go`
-- related existing WS/relay test files as appropriate
-- reusable channel validation in `internal/op/...` or another shared validation file chosen after implementation-time inspection
-- channel/batch handler tests as required
+- `internal/relay/relay_websocket.go`
+- `internal/relay/ws_passthrough.go`
+- related relay/WS tests
+- shared channel custom-header validation under `internal/op/...` or another existing shared validation layer chosen during implementation
+- channel/batch validation tests
 
 Likely frontend changes:
 
@@ -439,28 +651,34 @@ Likely frontend changes:
 Not expected:
 
 - database migrations;
-- changes to routing decision/failure-domain logic;
-- changes to balancer/credential fairness;
+- routing/failure-domain algorithm changes;
+- balancer/credential-fairness changes;
 - protocol transformer changes;
+- request-body schema changes;
+- JSON schema changes;
 - new dependencies;
-- deployment scripts.
+- deployment changes.
 
 ## Acceptance criteria
 
-P0.1 is complete only when all of the following are true:
+P0.1 is complete only when all are true:
 
-1. A channel custom-header value can interpolate one or more safe client headers.
-2. Existing literal custom headers behave exactly as before.
-3. HTTP transformed and HTTP passthrough forwarding behave consistently.
-4. Downstream WS ingress preserves handshake metadata and upstream WS templates render consistently with HTTP.
-5. Sensitive downstream credentials/cookies/proxy-auth/forwarded identity headers cannot be referenced through the template syntax.
-6. Upstream adapter credentials remain protected by current isolation/precedence rules.
-7. WS connection pool identity includes the final rendered header set, preventing cross-tenant header reuse.
-8. Invalid or unsafe template configs are rejected by backend validation, including batch updates.
-9. No channel object/cache is mutated per request.
-10. No DB migration or new dependency is introduced.
-11. Governance, backend tests, frontend lint/test/build are green; `go vet` is checked against the known baseline.
+1. Safe client metadata can be interpolated into configured custom headers.
+2. Literal custom headers behave as before.
+3. HTTP transformed and passthrough paths behave consistently.
+4. Downstream WS transform and passthrough paths render templates without broadening ordinary handshake-header forwarding.
+5. Template metadata remains structurally separate from all JSON/body/replay state.
+6. Complex JSON bodies remain semantically unchanged by template rendering.
+7. Sensitive downstream credentials/cookies/proxy/forwarded/WS-control headers are absent from the template source and cannot be referenced.
+8. Missing/invalid runtime metadata cannot corrupt JSON, cannot create header injection, and does not by itself abort the relay as a provider failure.
+9. Upstream adapter credentials and forced WS beta headers retain existing precedence.
+10. WS pool identity is based on final emitted headers, so cross-tenant connection reuse cannot occur.
+11. WS warmup/reconnect use the same template metadata as the real request.
+12. Invalid configs are rejected at backend persistence boundaries; runtime remains defensive for stale/imported data.
+13. No per-request mutation of channel/cache objects occurs.
+14. No DB migration, request-body schema change, or new dependency is introduced.
+15. Governance, backend tests, frontend lint/test/build are green; `go vet` is checked against baseline.
 
 ## Stop condition
 
-After P0.1 is implemented and verified, stop. Update the roadmap checkbox/evidence, merge or otherwise stabilize P0.1, and only then begin source audit for P0.2 (global model filter).
+After P0.1 is implemented and verified, stop. Record evidence in the roadmap, stabilize/merge P0.1, and only then begin source audit for P0.2.
