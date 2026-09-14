@@ -10,6 +10,7 @@ import (
 	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/utils/diff"
 	"github.com/bestruirui/octopus/internal/utils/log"
+	"github.com/bestruirui/octopus/internal/utils/modelmatch"
 )
 
 var lastSyncModelsTime = time.Now()
@@ -33,6 +34,18 @@ func SyncModelsTaskWithReport() (report SyncModelsReport) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
+	globalFilter, err := op.SettingGetString(model.SettingKeyModelFilterRegex)
+	if err != nil {
+		report.Error = "load global model filter: " + err.Error()
+		log.Errorf("failed to load global model filter: %v", err)
+		return report
+	}
+	if err := modelmatch.Validate(globalFilter); err != nil {
+		report.Error = "invalid global model filter: " + err.Error()
+		log.Errorf("invalid global model filter: %v", err)
+		return report
+	}
+
 	channels, err := op.ChannelList(ctx)
 	if err != nil {
 		report.Error = err.Error()
@@ -49,6 +62,9 @@ func SyncModelsTaskWithReport() (report SyncModelsReport) {
 
 		report.Checked++
 		fetchedModels, fetchErr := helper.FetchModels(ctx, channel)
+		if fetchErr == nil {
+			fetchedModels, fetchErr = modelmatch.Filter(fetchedModels, globalFilter)
+		}
 		result, newModels := buildChannelSyncResult(channel, fetchedModels, fetchErr)
 		if fetchErr != nil {
 			report.Failed++
