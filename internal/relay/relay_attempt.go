@@ -61,6 +61,13 @@ func (ra *relayAttempt) attachRoutingDecision(span *balancer.AttemptSpan, result
 		ra.requestContext(), result, result.Decision, ra.usedKey.CredentialRevision,
 		providerAttempt, wireAttempt,
 	))
+	if ra.attemptBudget != nil {
+		ra.attemptBudget.bindTraceSpan(span)
+	}
+	if result.Decision.SkipProvider && !result.Decision.Terminal && ra.iter != nil &&
+		!ra.iter.HasAlternativeProvider(ra.channel.ID) {
+		markFailoverStop(result, failoverStopNoAlternative)
+	}
 	return result
 }
 
