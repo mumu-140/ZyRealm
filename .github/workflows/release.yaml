@@ -26,6 +26,7 @@ jobs:
     env:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      GHCR_IMAGE: ghcr.io/mumu-140/octopus-concurrency
     steps:
       - name: 检出发布提交
         uses: actions/checkout@v5
@@ -85,7 +86,7 @@ jobs:
         id: image-tags
         shell: bash
         run: |
-          tags="ghcr.io/${{ github.repository }}:${{ steps.metadata.outputs.version }}"
+          tags="${GHCR_IMAGE}:${{ steps.metadata.outputs.version }}"
           if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
             tags="$tags\nmumu-140/octopus-concurrency:${{ steps.metadata.outputs.version }}"
           fi

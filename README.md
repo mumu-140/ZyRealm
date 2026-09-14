@@ -8,7 +8,7 @@
 
 A provider control plane for resilient multi-model, multi-credential LLM traffic.
 
-[简体中文](README_zh.md) · [Getting Started](USAGE.md) · [Releases](https://github.com/mumu-140/octopus-concurrency/releases)
+[简体中文](README_zh.md) · [Getting Started](USAGE.md) · [Releases](https://github.com/mumu-140/ZyRealm/releases)
 
 </div>
 
@@ -79,6 +79,8 @@ Use an immutable release tag rather than `latest`:
 docker pull ghcr.io/mumu-140/octopus-concurrency:v0.11.0-mumu.2
 ```
 
+The GitHub repository is **`mumu-140/ZyRealm`**. The GHCR image namespace intentionally remains **`ghcr.io/mumu-140/octopus-concurrency`** for deployment compatibility with existing servers and Compose files.
+
 A minimal local configuration listens on port `8080` and stores SQLite data under `data/`.
 
 ```json
@@ -139,6 +141,7 @@ Some internal names still contain `octopus` by design:
 - Go module/import paths inherited from upstream;
 - `OCTOPUS_*` environment variables;
 - database/migration compatibility names;
+- the established GHCR image namespace used by existing deployments;
 - historical protocol examples and migration records where changing the identifier would break compatibility.
 
 These are compatibility surfaces, not the current product identity. The UI and public product name are **ZyRealm / 自由界**.

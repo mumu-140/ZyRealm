@@ -8,7 +8,7 @@
 
 面向多供应商、多凭据与多协议流量的稳定控制平面。
 
-[English](README.md) · [快速开始](USAGE_zh.md) · [Releases](https://github.com/mumu-140/octopus-concurrency/releases)
+[English](README.md) · [快速开始](USAGE_zh.md) · [Releases](https://github.com/mumu-140/ZyRealm/releases)
 
 </div>
 
@@ -78,6 +78,8 @@ ZyRealm 的界面定位为“LLM Routing Control Plane”，而不是普通后�
 docker pull ghcr.io/mumu-140/octopus-concurrency:v0.11.0-mumu.2
 ```
 
+GitHub 仓库正式名称为 **`mumu-140/ZyRealm`**。为避免破坏现有服务器、Compose 与部署脚本，GHCR 镜像命名空间暂时继续保留为 **`ghcr.io/mumu-140/octopus-concurrency`**。
+
 最小本地配置：
 
 ```json
@@ -138,11 +140,12 @@ Disabled、runtime cooldown、并发已满、RPM 已满、circuit 不可用等�
 - 上游继承的 Go module/import path；
 - `OCTOPUS_*` 环境变量；
 - 数据库 / migration 中的历史兼容命名；
+- 现有部署继续使用的 GHCR 镜像命名空间；
 - 某些历史协议示例和迁移记录。
 
 这些名字如果机械替换，可能导致配置、构建、迁移或已有部署失效。因此：
 
-**产品品牌是 ZyRealm / 自由界；Octopus 名称只在需要兼容或 attribution 的位置保留。**
+**产品品牌和 GitHub 仓库名是 ZyRealm / 自由界；Octopus 名称只在需要兼容或 attribution 的位置保留。**
 
 ## 许可证与上游
 
