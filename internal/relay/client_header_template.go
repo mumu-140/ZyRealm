@@ -1,12 +1,34 @@
 package relay
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/bestruirui/octopus/internal/headerutil"
 	dbmodel "github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/utils/log"
 )
+
+type clientHeaderTemplateContextKey struct{}
+
+func contextWithClientHeaderTemplateSource(ctx context.Context, source http.Header) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	snapshot := headerutil.SnapshotClientHeaderTemplateSource(source)
+	if snapshot == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, clientHeaderTemplateContextKey{}, snapshot)
+}
+
+func clientHeaderTemplateSourceFromContext(ctx context.Context) http.Header {
+	if ctx == nil {
+		return nil
+	}
+	source, _ := ctx.Value(clientHeaderTemplateContextKey{}).(http.Header)
+	return source
+}
 
 func (r *relayRequest) clientHeaderTemplateSource() http.Header {
 	if r == nil {
