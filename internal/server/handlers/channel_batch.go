@@ -8,6 +8,7 @@ import (
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/server/resp"
+	"github.com/bestruirui/octopus/internal/utils/modelmatch"
 	"github.com/gin-gonic/gin"
 )
 
@@ -22,16 +23,25 @@ func batchUpdateChannels(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, "limits must be greater than or equal to 0")
 		return
 	}
+	globalFilter := ""
+	if request.RefreshModels {
+		var err error
+		globalFilter, err = loadGlobalModelFilterRegex()
+		if err != nil {
+			resp.Error(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	result := model.ChannelBatchUpdateResult{Errors: make(map[int]string)}
 	for _, id := range uniquePositiveIDs(request.IDs) {
-		if err := updateChannelBatchItem(c, id, request, &result); err != nil {
+		if err := updateChannelBatchItem(c, id, request, globalFilter, &result); err != nil {
 			result.Errors[id] = err.Error()
 		}
 	}
 	resp.Success(c, result)
 }
 
-func updateChannelBatchItem(c *gin.Context, id int, batch model.ChannelBatchUpdateRequest, result *model.ChannelBatchUpdateResult) error {
+func updateChannelBatchItem(c *gin.Context, id int, batch model.ChannelBatchUpdateRequest, globalFilter string, result *model.ChannelBatchUpdateResult) error {
 	channel, err := op.ChannelGet(id, c.Request.Context())
 	if err != nil {
 		return err
@@ -53,6 +63,10 @@ func updateChannelBatchItem(c *gin.Context, id int, batch model.ChannelBatchUpda
 		return nil
 	}
 	models, err := helper.FetchModels(c.Request.Context(), *updated)
+	if err != nil {
+		return err
+	}
+	models, err = modelmatch.Filter(models, globalFilter)
 	if err != nil {
 		return err
 	}
