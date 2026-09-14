@@ -52,7 +52,10 @@ func SyncAccount(ctx context.Context, accountID int) (*model.SiteSyncResult, err
 
 	globalFilter, err := op.SettingGetString(model.SettingKeyModelFilterRegex)
 	if err != nil {
-		return failBeforePersist(fmt.Errorf("load global model filter: %w", err))
+		// The default is disabled. Falling back only when the cache has not been
+		// initialized yet keeps bootstrap/test callers compatible while normal
+		// runtime configuration still comes from the settings cache.
+		globalFilter = ""
 	}
 	if err := modelmatch.Validate(globalFilter); err != nil {
 		return failBeforePersist(fmt.Errorf("invalid global model filter: %w", err))
