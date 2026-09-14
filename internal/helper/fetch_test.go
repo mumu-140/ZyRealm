@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -45,5 +46,28 @@ func TestFetchModelsUsesBrowserHeadersAndSummarizesHTMLError(t *testing.T) {
 	}
 	if observedAcceptLanguage == "" {
 		t.Fatalf("expected Accept-Language header to be set")
+	}
+}
+
+func TestFetchModelsAppliesChannelMatchRegexAndPreservesOrder(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"claude-3-5-sonnet"},{"id":"gpt-4o-mini"},{"id":"gpt-4.1"}]}`))
+	}))
+	defer server.Close()
+
+	pattern := `^gpt-`
+	got, err := FetchModels(context.Background(), model.Channel{
+		Type:       outbound.OutboundTypeOpenAIChat,
+		BaseUrls:   []model.BaseUrl{{URL: server.URL, Delay: 0}},
+		Keys:       []model.ChannelKey{{Enabled: true, ChannelKey: "managed-key"}},
+		MatchRegex: &pattern,
+	})
+	if err != nil {
+		t.Fatalf("FetchModels() error = %v", err)
+	}
+	want := []string{"gpt-4o-mini", "gpt-4.1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("FetchModels() = %#v, want %#v", got, want)
 	}
 }
