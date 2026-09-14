@@ -99,16 +99,20 @@ func TestCopyHeadersDoesNotRecursivelyExpandClientValue(t *testing.T) {
 	}
 }
 
-func TestBuildUpstreamWSHeadersRendersCustomHeaderTemplate(t *testing.T) {
+func TestBuildUpstreamWSHeadersUsesRenderedChannelWithoutForwardingTemplateSource(t *testing.T) {
 	channel := &dbmodel.Channel{CustomHeader: []dbmodel.CustomHeader{
 		{HeaderKey: "X-Upstream-Project", HeaderValue: "tenant-{client_header:OpenAI-Project}"},
 	}}
 	clientHeaders := http.Header{"OpenAI-Project": []string{"project-a"}}
+	renderedChannel := renderedChannelForTemplateSource(channel, clientHeaders)
 
-	headers := buildUpstreamWSHeaders(clientHeaders, channel, "selected-key")
+	headers := buildUpstreamWSHeaders(nil, renderedChannel, "selected-key")
 
 	if got := headers.Get("X-Upstream-Project"); got != "tenant-project-a" {
 		t.Fatalf("X-Upstream-Project=%q, want %q", got, "tenant-project-a")
+	}
+	if got := headers.Get("OpenAI-Project"); got != "" {
+		t.Fatalf("template source leaked into ordinary WS forwarding: %q", got)
 	}
 	if got := headers.Get("Authorization"); got != "Bearer selected-key" {
 		t.Fatalf("Authorization=%q, want selected upstream key", got)
@@ -123,13 +127,11 @@ func TestRenderedCustomHeaderSeparatesWSPoolIdentity(t *testing.T) {
 		{HeaderKey: "X-Upstream-Tenant", HeaderValue: "{client_header:X-Tenant-ID}"},
 	}}
 
-	headersA := buildUpstreamWSHeaders(http.Header{"X-Tenant-ID": []string{"tenant-a"}}, channel, "same-key")
-	headersB := buildUpstreamWSHeaders(http.Header{"X-Tenant-ID": []string{"tenant-b"}}, channel, "same-key")
+	renderedA := renderedChannelForTemplateSource(channel, http.Header{"X-Tenant-ID": []string{"tenant-a"}})
+	renderedB := renderedChannelForTemplateSource(channel, http.Header{"X-Tenant-ID": []string{"tenant-b"}})
+	headersA := buildUpstreamWSHeaders(nil, renderedA, "same-key")
+	headersB := buildUpstreamWSHeaders(nil, renderedB, "same-key")
 
-	// Remove the ordinary forwarded source header so this assertion proves that
-	// the rendered custom header itself participates in the pool identity.
-	headersA.Del("X-Tenant-ID")
-	headersB.Del("X-Tenant-ID")
 	if got, want := headersA.Get("X-Upstream-Tenant"), "tenant-a"; got != want {
 		t.Fatalf("tenant A custom header=%q, want %q", got, want)
 	}
