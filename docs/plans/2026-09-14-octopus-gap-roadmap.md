@@ -43,11 +43,36 @@ Verification evidence before this roadmap-only status update:
 - frontend: lint, tests, and production build success;
 - regression coverage includes HTTP rendering, sensitive-source rejection, persistence validation, WebSocket ordinary-header isolation, final-header pool separation, and a JSON-looking header value that is proven not to enter the WebSocket `response.create` JSON payload.
 
-**Gate before P0.2 planning:** merge/stabilize P0.1 first. Do not start P0.2 merely because the implementation branch is green.
+**Gate before the next implementation slice:** merge/stabilize P0.1 first.
+
+### P0.1H — First-token timeout must fail over — QUEUED HOTFIX, NOT YET SOURCE-AUDITED
+
+Observed current terminal outcome:
+
+```text
+channel failed: failed to send request: first token timeout (30s)
+
+failed to send request: first token timeout (30s)
+```
+
+Required behavior: a **first-token timeout on one attempt must not directly terminate the whole request** while another eligible route/candidate exists. It should enter the same retryable failover machinery used by other retryable attempt failures and advance to the next eligible credential/provider/channel/candidate according to ZyRealm's existing routing policy.
+
+The overall request may become failed only when the normal routing constraints say it must stop, for example: no eligible candidate remains, the attempt budget is exhausted, a terminal policy decision is reached, or replay-safety says a retry/failover is unsafe. The timeout duration itself (`30s` in the observed case) is not part of this change unless the later source audit shows a separate defect.
+
+Important invariants for the implementation audit:
+
+- do not special-case this by bypassing `RoutingDecision` / existing failure classification;
+- do not create an unlimited retry loop;
+- preserve replay-safety handling for requests that may already have reached the upstream;
+- preserve credential/provider/model failure-scope semantics and cooldown accounting;
+- avoid turning one first-token timeout into an unconditional terminal `channel failed` result when another route can still be tried;
+- add regression coverage proving that first-token timeout advances to the next candidate and only becomes terminal after the ordinary exhaustion/terminal conditions are met.
+
+**Execution order:** merge PR #16 first. Then deep-read the then-current first-token-timeout emission, error-classification, retry/failover, replay-safety, failure-scope, and attempt-budget paths and write the detailed hotfix plan before changing code. Complete this hotfix before beginning the P0.2 source audit.
 
 ### P0.2 — Global model filter — QUEUED, NOT YET SOURCE-AUDITED
 
-Remembered scope only: add a system-level model-discovery filter that composes with channel-level filtering (intended semantics: both must pass). Exact configuration ownership, regex engine, managed-channel behavior, cache invalidation, API shape, and tests are intentionally undecided until P0.1 is complete.
+Remembered scope only: add a system-level model-discovery filter that composes with channel-level filtering (intended semantics: both must pass). Exact configuration ownership, regex engine, managed-channel behavior, cache invalidation, API shape, and tests are intentionally undecided until P0.1 and the queued first-token-timeout hotfix are complete.
 
 Upstream reference: Octopus commit `d5a893ff124ca1cb56f2eb25e14380347d247ae9`.
 
@@ -83,6 +108,9 @@ No schema, migration, API, or runtime design is approved here. P1 must be source
 - [x] P0.1 detailed plan recorded.
 - [x] P0.1 implementation completed with full regression evidence on the feature branch.
 - [ ] P0.1 merged/stabilized on `main`.
+- [x] First-token-timeout failover hotfix requirement captured.
+- [ ] First-token-timeout failover source audit + detailed hotfix plan.
+- [ ] First-token-timeout failover implemented and merged with regression evidence.
 - [ ] P0.2 source audit + detailed plan.
 - [ ] P0.2 implemented and merged with full regression evidence.
 - [ ] P0.3 source audit + detailed plan.
