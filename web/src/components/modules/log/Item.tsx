@@ -667,19 +667,21 @@ export function LogDetailModal({ log, open, onClose }: LogDetailModalProps) {
     const [confirmDisableOpen, setConfirmDisableOpen] = useState(false);
     const [activeDisableTarget, setActiveDisableTarget] = useState<LogSiteActionTarget | null>(null);
     const [pendingDisableKey, setPendingDisableKey] = useState<string | null>(null);
+    const [prevLogId, setPrevLogId] = useState<number | undefined>(log?.id);
 
     const logId = log?.id;
+    if (logId !== prevLogId) {
+        setPrevLogId(logId);
+        setDetailLog(null);
+        setIsDiagnosticExpanded(false);
+    }
+
     const siteTargetsQuery = useLogSiteActionTargets(logId ? [logId] : [], open && Boolean(logId));
     const siteTargets = logId && siteTargetsQuery.data ? (siteTargetsQuery.data[logId] ?? null) : null;
     const disableMutation = useUpdateSiteChannelModelDisabled();
 
     useEffect(() => {
-        if (!open || !logId) {
-            setDetailLog(null);
-            setIsDiagnosticExpanded(false);
-            return;
-        }
-        setDetailLog(null);
+        if (!open || !logId) return;
         let cancelled = false;
         setDetailLoading(true);
         getLogDetail(logId)

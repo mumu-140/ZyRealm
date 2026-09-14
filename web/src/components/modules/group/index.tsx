@@ -7,7 +7,6 @@ import { useSearchStore, useToolbarViewOptionsStore } from '@/components/modules
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
 
 // 分组卡目标宽度: 一行 3-4 个 (较窄紧凑卡片)
-const GROUP_COLUMN_MIN_WIDTH = 290;
 function resolveGroupColumns(width: number): number {
     if (width >= 1260) return 4;
     if (width >= 920) return 3;

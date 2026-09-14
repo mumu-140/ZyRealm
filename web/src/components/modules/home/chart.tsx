@@ -24,8 +24,6 @@ const PERIOD_KEY: Record<ChartPeriod, 'today' | 'last7Days' | 'last30Days' | 'al
     all: 'allTime',
 };
 
-type Translate = (key: string) => string;
-
 export function StatsChart() {
     const t = useTranslations('home.summary');
     const total = useStatsTotal();
