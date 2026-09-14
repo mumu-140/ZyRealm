@@ -117,11 +117,10 @@ func RenderClientHeaderTemplate(value string, source http.Header) ClientHeaderTe
 		if source == nil {
 			return "", fmt.Errorf("missing_source")
 		}
-		actual, ok := source[http.CanonicalHeaderKey(name)]
-		if !ok || len(actual) == 0 {
+		value, ok := headerValueEqualFold(source, name)
+		if !ok {
 			return "", fmt.Errorf("missing_source")
 		}
-		value := source.Get(name)
 		if !httpguts.ValidHeaderFieldValue(value) {
 			return "", fmt.Errorf("invalid_source_value")
 		}
@@ -156,6 +155,19 @@ func SnapshotClientHeaderTemplateSource(src http.Header) http.Header {
 		return nil
 	}
 	return result
+}
+
+func headerValueEqualFold(source http.Header, name string) (string, bool) {
+	canonical := http.CanonicalHeaderKey(name)
+	if values, ok := source[canonical]; ok && len(values) > 0 {
+		return values[0], true
+	}
+	for key, values := range source {
+		if strings.EqualFold(key, name) && len(values) > 0 {
+			return values[0], true
+		}
+	}
+	return "", false
 }
 
 func walkClientHeaderTemplate(value string, resolve func(string) (string, error)) (string, error) {
