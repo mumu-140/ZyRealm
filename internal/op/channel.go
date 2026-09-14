@@ -625,6 +625,7 @@ func ChannelGetByName(name string, ctx context.Context) (*model.Channel, error) 
 					if key.ID != 0 {
 						channelKeyCache.Del(key.ID)
 					}
+				}
 			}
 		}
 		return nil, err
