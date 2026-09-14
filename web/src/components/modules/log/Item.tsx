@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Clock, Zap, AlertCircle, ArrowDownToLine, ArrowUpFromLine, DollarSign, ArrowRight, ArrowDown, Send, MessageSquare, Loader2, RotateCw, ChevronDown, ChevronUp, Pin, KeyRound, CircleOff, Link } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'motion/react';
@@ -661,8 +662,6 @@ export interface LogDetailModalProps {
 
 export function LogDetailModal({ log, open, onClose }: LogDetailModalProps) {
     const t = useTranslations('log.card');
-    const [detailLog, setDetailLog] = useState<RelayLog | null>(null);
-    const [detailLoading, setDetailLoading] = useState(false);
     const [isDiagnosticExpanded, setIsDiagnosticExpanded] = useState(false);
     const [confirmDisableOpen, setConfirmDisableOpen] = useState(false);
     const [activeDisableTarget, setActiveDisableTarget] = useState<LogSiteActionTarget | null>(null);
@@ -672,7 +671,6 @@ export function LogDetailModal({ log, open, onClose }: LogDetailModalProps) {
     const logId = log?.id;
     if (logId !== prevLogId) {
         setPrevLogId(logId);
-        setDetailLog(null);
         setIsDiagnosticExpanded(false);
     }
 
@@ -680,26 +678,14 @@ export function LogDetailModal({ log, open, onClose }: LogDetailModalProps) {
     const siteTargets = logId && siteTargetsQuery.data ? (siteTargetsQuery.data[logId] ?? null) : null;
     const disableMutation = useUpdateSiteChannelModelDisabled();
 
-    useEffect(() => {
-        if (!open || !logId) return;
-        let cancelled = false;
-        setDetailLoading(true);
-        getLogDetail(logId)
-            .then((item) => {
-                if (!cancelled) setDetailLog(item);
-            })
-            .catch((error) => {
-                if (!cancelled) {
-                    toast.error(error instanceof Error ? error.message : 'Failed to load log detail');
-                }
-            })
-            .finally(() => {
-                if (!cancelled) setDetailLoading(false);
-            });
-        return () => {
-            cancelled = true;
-        };
-    }, [open, logId]);
+    const detailQuery = useQuery({
+        queryKey: ['log', 'detail', logId],
+        queryFn: () => getLogDetail(logId!),
+        enabled: Boolean(open && logId),
+        staleTime: 60_000,
+    });
+    const detailLog = detailQuery.data ?? null;
+    const detailLoading = detailQuery.isLoading;
 
     if (!log) return null;
 
