@@ -1,15 +1,15 @@
 # Octopus Gap Adoption Roadmap
 
-> Status: staged adoption index. P0.1 is implemented and CI-verified on its feature branch, but is not merged yet; later slices remain intentionally unplanned.
+> Status: staged adoption index. P0.1 is merged and verified on `main`; P0.1H is now the active diagnostic/hotfix slice. Later P0/P1 work remains intentionally queued.
 >
-> Baseline: ZyRealm `main` at `cbe4638b01aa5beb1a46f73dfb41cabaecaf890c` (2026-09-14).
+> Current verified baseline: ZyRealm `main@c3e1e5a018b136ee61c7e2696275ea314f916dcd` (2026-09-14).
 
 ## Planning rule
 
 Adopt upstream ideas one slice at a time.
 
 1. Deep-read the ZyRealm source paths touched by the current slice.
-2. Write a detailed implementation plan for that slice only.
+2. Write a detailed implementation or diagnostic plan for that slice only.
 3. Implement it, run the full relevant regression suite, and merge it cleanly.
 4. Only then deep-read and plan the next slice.
 5. Do **not** lock P1 schema or architecture while P0 is still moving.
@@ -18,7 +18,7 @@ This is deliberate: Octopus and ZyRealm now have materially different runtime ar
 
 ## P0 sequence
 
-### P0.1 — Client-header templates — IMPLEMENTED + VERIFIED, AWAITING MERGE
+### P0.1 — Client-header templates — MERGED + VERIFIED
 
 Allow channel custom-header **values** to explicitly reference safe metadata from the original client request, using syntax such as:
 
@@ -33,46 +33,69 @@ ZyRealm-specific implementation keeps template metadata structurally separate fr
 
 Detailed source-audited plan: [`2026-09-14-client-header-template-plan.md`](./2026-09-14-client-header-template-plan.md).
 
-Verification evidence before this roadmap-only status update:
+Merge/verification evidence:
 
-- feature branch: `codex/client-header-template`;
-- verified implementation head: `dd27764924611ecef6c21aeece4085f9951a1924`;
-- GitHub Actions CI run: `34830206634`;
+- PR: `#16 feat(relay): support safe client header templates`;
+- squash merge commit: `c3e1e5a018b136ee61c7e2696275ea314f916dcd`;
+- merged-tree GitHub Actions CI run: `34831468603`;
 - governance: success;
 - backend: `go vet ./...` success and `go test -buildvcs=false ./...` success;
-- frontend: lint, tests, and production build success;
-- regression coverage includes HTTP rendering, sensitive-source rejection, persistence validation, WebSocket ordinary-header isolation, final-header pool separation, and a JSON-looking header value that is proven not to enter the WebSocket `response.create` JSON payload.
+- frontend: lint, tests, and production build success.
 
-**Gate before the next implementation slice:** merge/stabilize P0.1 first.
+### P0.1H — Pre-output transport failover + cancellation provenance — ACTIVE DIAGNOSTIC/HOTFIX
 
-### P0.1H — First-token timeout must fail over — QUEUED HOTFIX, NOT YET SOURCE-AUDITED
-
-Observed current terminal outcome:
+Production observations include three error families:
 
 ```text
-channel failed: failed to send request: first token timeout (30s)
-
-failed to send request: first token timeout (30s)
+failed to send request: first token timeout (20s/30s)
+failed to send request: Post "<upstream>/v1/chat/completions": context canceled
+stream read error: stream error: stream ID N; INTERNAL_ERROR; received from peer
 ```
 
-Required behavior: a **first-token timeout on one attempt must not directly terminate the whole request** while another eligible route/candidate exists. It should enter the same retryable failover machinery used by other retryable attempt failures and advance to the next eligible credential/provider/channel/candidate according to ZyRealm's existing routing policy.
+These errors must **not** be handled by a blanket “any failure -> switch” rule.
 
-The overall request may become failed only when the normal routing constraints say it must stop, for example: no eligible candidate remains, the attempt budget is exhausted, a terminal policy decision is reached, or replay-safety says a retry/failover is unsafe. The timeout duration itself (`30s` in the observed case) is not part of this change unless the later source audit shows a separate defect.
+Current-main source audit shows that first-token timeout and ambiguous outbound cancellation are already represented in the unified routing model:
 
-Important invariants for the implementation audit:
+- first-token timeout -> `RuleID=first_token_timeout`, `RetryDirective=next_provider`, provider-model scope, bounded unknown-outcome replay when `DispatchState=maybe_sent`;
+- outbound/child `context canceled` while the outer client request is still active -> `RuleID=ambiguous_transport_cancel`, request-local next-provider failover;
+- actual outer-client cancellation/deadline -> terminal by design;
+- any failure after downstream payload commitment -> terminal by design, because replaying another generated stream could splice/duplicate output.
 
-- do not special-case this by bypassing `RoutingDecision` / existing failure classification;
-- do not create an unlimited retry loop;
-- preserve replay-safety handling for requests that may already have reached the upstream;
-- preserve credential/provider/model failure-scope semantics and cooldown accounting;
-- avoid turning one first-token timeout into an unconditional terminal `channel failed` result when another route can still be tried;
-- add regression coverage proving that first-token timeout advances to the next candidate and only becomes terminal after the ordinary exhaustion/terminal conditions are met.
+Therefore a production row that ends in `channel failed` despite a retryable-looking message may be caused by a **later routing gate**, not by missing string recognition. Examples include:
 
-**Execution order:** merge PR #16 first. Then deep-read the then-current first-token-timeout emission, error-classification, retry/failover, replay-safety, failure-scope, and attempt-budget paths and write the detailed hotfix plan before changing code. Complete this hotfix before beginning the P0.2 source audit.
+- no eligible alternative provider/candidate;
+- all alternatives skipped by runtime cooldown, circuit, disabled state, capability negative cache, concurrency, or RPM;
+- provider/wire attempt budget exhausted;
+- the single bounded unknown-outcome cross-provider replay allowance already consumed;
+- downstream response already committed;
+- outer client/proxy context actually canceled;
+- deployed binary predates the current `main` behavior.
+
+The `stream read error ... INTERNAL_ERROR` family is the remaining likely classifier gap. Required semantic split:
+
+- before any real downstream payload is written -> eligible provider/transport failover candidate;
+- after payload is written -> terminal, never splice a second provider's stream.
+
+Current provider-transient marker coverage does not explicitly name `stream read error`, HTTP/2 `INTERNAL_ERROR`, or `received from peer`; this must only be changed after a real event proves `DownstreamCommitted=false`.
+
+Detailed source-audited diagnostic/hotfix plan: [`2026-09-14-relay-failover-error-audit.md`](./2026-09-14-relay-failover-error-audit.md).
+
+Runtime evidence gate before production code changes:
+
+- confirm deployed Git SHA;
+- collect 2-5 sanitized incidents for each error family;
+- prefer persisted `AttemptRoutingTrace` over raw log strings;
+- capture `RuleID`, `FailureDomain`, `FailureScope`, `RetryDirective`, `ReplaySafety`, `DispatchState`, `DownstreamCommitted`, `OuterContextState`, `OutboundContextCause`, `ProviderAttempt`, and `WireAttempt`;
+- record whether a next candidate existed and why it was skipped/blocked;
+- for peer stream errors, record whether any payload/token had been written before the error.
+
+**Hotfix success criterion:** any recoverable failure that occurs before downstream commitment must enter the existing candidate failover path; terminal behavior remains only when routing/safety/exhaustion policy requires it, and the final trace/log must expose why failover did not continue.
+
+**Execution order:** finish this diagnostic gate and P0.1H implementation/verification before beginning P0.2 source audit.
 
 ### P0.2 — Global model filter — QUEUED, NOT YET SOURCE-AUDITED
 
-Remembered scope only: add a system-level model-discovery filter that composes with channel-level filtering (intended semantics: both must pass). Exact configuration ownership, regex engine, managed-channel behavior, cache invalidation, API shape, and tests are intentionally undecided until P0.1 and the queued first-token-timeout hotfix are complete.
+Remembered scope only: add a system-level model-discovery filter that composes with channel-level filtering (intended semantics: both must pass). Exact configuration ownership, regex engine, managed-channel behavior, cache invalidation, API shape, and tests are intentionally undecided until P0.1H is complete.
 
 Upstream reference: Octopus commit `d5a893ff124ca1cb56f2eb25e14380347d247ae9`.
 
@@ -99,6 +122,7 @@ No schema, migration, API, or runtime design is approved here. P1 must be source
 - No wholesale merge/rebase from Octopus for these features.
 - No P1 database migration while P0 is in progress.
 - No replacement of ZyRealm credential fairness, cooldown, circuit breaking, failure-domain classification, protocol fallback, or replay-safety logic with Octopus's simpler routing model.
+- No blanket `if error then switch provider` handling that ignores downstream commitment or client cancellation provenance.
 - No speculative planning of later slices based on today's file layout; each slice must be planned against the then-current `main`.
 
 ## Progress checklist
@@ -106,11 +130,14 @@ No schema, migration, API, or runtime design is approved here. P1 must be source
 - [x] Gap inventory captured.
 - [x] P0.1 source audit completed enough to write an implementation plan.
 - [x] P0.1 detailed plan recorded.
-- [x] P0.1 implementation completed with full regression evidence on the feature branch.
-- [ ] P0.1 merged/stabilized on `main`.
-- [x] First-token-timeout failover hotfix requirement captured.
-- [ ] First-token-timeout failover source audit + detailed hotfix plan.
-- [ ] First-token-timeout failover implemented and merged with regression evidence.
+- [x] P0.1 implementation completed with full regression evidence.
+- [x] P0.1 merged/stabilized on `main`.
+- [x] First-token-timeout failover requirement captured.
+- [x] P0.1H source audit completed to the runtime-evidence gate.
+- [x] P0.1H diagnostic/hotfix plan recorded.
+- [ ] Sanitized production routing evidence collected for timeout/cancellation/peer-stream failures.
+- [ ] P0.1H implementation gap confirmed by runtime trace.
+- [ ] P0.1H implemented and merged with regression evidence.
 - [ ] P0.2 source audit + detailed plan.
 - [ ] P0.2 implemented and merged with full regression evidence.
 - [ ] P0.3 source audit + detailed plan.
