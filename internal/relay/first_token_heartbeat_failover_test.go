@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	dbmodel "github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
@@ -22,7 +23,10 @@ func TestHandlerFirstTokenTimeoutFailsOverAfterEarlyHeartbeat(t *testing.T) {
 	var stalledHits atomic.Int32
 	stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		stalledHits.Add(1)
-		<-r.Context().Done()
+		select {
+		case <-r.Context().Done():
+		case <-time.After(3 * time.Second):
+		}
 	}))
 	defer stalled.Close()
 
