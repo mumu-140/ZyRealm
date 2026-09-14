@@ -9,20 +9,21 @@ func cloneRelayRequestForAttempt(request *relayRequest) *relayRequest {
 		return nil
 	}
 	cloned := &relayRequest{
-		c:               request.c,
-		ctx:             request.ctx,
-		inAdapter:       request.inAdapter,
-		internalRequest: request.internalRequest,
-		metrics:         request.metrics,
-		apiKeyID:        request.apiKeyID,
-		requestModel:    request.requestModel,
-		groupID:         request.groupID,
-		groupSessionTTL: request.groupSessionTTL,
-		iter:            request.iter,
-		attemptBudget:   request.attemptBudget,
-		rawBody:         request.rawBody,
-		streamWriter:    request.streamWriter,
-		heartbeat:       request.heartbeat,
+		c:                    request.c,
+		ctx:                  request.ctx,
+		inAdapter:            request.inAdapter,
+		internalRequest:      request.internalRequest,
+		metrics:              request.metrics,
+		apiKeyID:             request.apiKeyID,
+		requestModel:         request.requestModel,
+		groupID:              request.groupID,
+		groupSessionTTL:      request.groupSessionTTL,
+		iter:                 request.iter,
+		attemptBudget:        request.attemptBudget,
+		templateHeaderSource: request.templateHeaderSource,
+		rawBody:              request.rawBody,
+		streamWriter:         request.streamWriter,
+		heartbeat:            request.heartbeat,
 	}
 	cloned.streamPayloadWritten.Store(request.streamPayloadWritten.Load())
 	cloned.responseCollected.Store(request.responseCollected.Load())
