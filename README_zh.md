@@ -75,7 +75,7 @@ ZyRealm 的界面定位为“LLM Routing Control Plane”，而不是普通后�
 生产或长期运行建议使用不可变版本标签，不使用 `latest`：
 
 ```bash
-docker pull ghcr.io/mumu-140/zyrealm:v0.11.0-mumu.2
+docker pull ghcr.io/mumu-140/zyrealm:<version>
 ```
 
 GitHub 仓库正式名称为 **`mumu-140/ZyRealm`**，后续正式版本统一发布到 **`ghcr.io/mumu-140/zyrealm`**。历史镜像仍可能保留在旧的 `ghcr.io/mumu-140/octopus-concurrency` 包路径下。
