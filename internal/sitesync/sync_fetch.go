@@ -666,6 +666,11 @@ func syncSiteModelsByGroup(
 
 	for _, token := range groupTokens {
 		result, err := fetcher(token, allowGlobalFallback)
+		filteredResult, filterErr := applyGlobalModelFilterToSiteFetchResult(result, globalModelFilterFromContext(ctx))
+		result = filteredResult
+		if filterErr != nil {
+			err = filterErr
+		}
 		groupResult := siteGroupSyncResult{
 			GroupKey:  model.NormalizeSiteGroupKey(token.GroupKey),
 			GroupName: model.NormalizeSiteGroupName(token.GroupKey, token.GroupName),
