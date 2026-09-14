@@ -1,6 +1,6 @@
 # Octopus Gap Adoption Roadmap
 
-> Status: planning index only. This file exists to prevent useful upstream ideas from being forgotten; it is intentionally **not** a full implementation plan for every item.
+> Status: staged adoption index. P0.1 is implemented and CI-verified on its feature branch, but is not merged yet; later slices remain intentionally unplanned.
 >
 > Baseline: ZyRealm `main` at `cbe4638b01aa5beb1a46f73dfb41cabaecaf890c` (2026-09-14).
 
@@ -18,7 +18,7 @@ This is deliberate: Octopus and ZyRealm now have materially different runtime ar
 
 ## P0 sequence
 
-### P0.1 — Client-header templates — ACTIVE
+### P0.1 — Client-header templates — IMPLEMENTED + VERIFIED, AWAITING MERGE
 
 Allow channel custom-header **values** to explicitly reference safe metadata from the original client request, using syntax such as:
 
@@ -29,11 +29,21 @@ X-Tenant-Context: tenant-{client_header:X-Tenant-ID}
 
 Upstream reference: Octopus commit `1c48ee5105042b8eebaba05c05b2773b04e6c7f3` (`client_header`).
 
-ZyRealm-specific requirement: preserve the existing credential/header-isolation boundary and make HTTP ingress and WebSocket ingress behave consistently. Client authorization/API-key/cookie/proxy-auth material must never become an arbitrary template source.
+ZyRealm-specific implementation keeps template metadata structurally separate from request bodies and ordinary WebSocket header forwarding. It uses a sanitized request-scoped template source, rejects credential/cookie/proxy/forwarded/WebSocket-control sources, validates configuration before persistence, renders per request/attempt without mutating cached channels, and includes final rendered headers in WebSocket pool identity.
 
 Detailed source-audited plan: [`2026-09-14-client-header-template-plan.md`](./2026-09-14-client-header-template-plan.md).
 
-**Gate before P0.2 planning:** P0.1 implementation merged with HTTP + WS + persistence-validation + security regression coverage and full CI green.
+Verification evidence before this roadmap-only status update:
+
+- feature branch: `codex/client-header-template`;
+- verified implementation head: `dd27764924611ecef6c21aeece4085f9951a1924`;
+- GitHub Actions CI run: `34830206634`;
+- governance: success;
+- backend: `go vet ./...` success and `go test -buildvcs=false ./...` success;
+- frontend: lint, tests, and production build success;
+- regression coverage includes HTTP rendering, sensitive-source rejection, persistence validation, WebSocket ordinary-header isolation, final-header pool separation, and a JSON-looking header value that is proven not to enter the WebSocket `response.create` JSON payload.
+
+**Gate before P0.2 planning:** merge/stabilize P0.1 first. Do not start P0.2 merely because the implementation branch is green.
 
 ### P0.2 — Global model filter — QUEUED, NOT YET SOURCE-AUDITED
 
@@ -71,7 +81,8 @@ No schema, migration, API, or runtime design is approved here. P1 must be source
 - [x] Gap inventory captured.
 - [x] P0.1 source audit completed enough to write an implementation plan.
 - [x] P0.1 detailed plan recorded.
-- [ ] P0.1 implemented and merged with full regression evidence.
+- [x] P0.1 implementation completed with full regression evidence on the feature branch.
+- [ ] P0.1 merged/stabilized on `main`.
 - [ ] P0.2 source audit + detailed plan.
 - [ ] P0.2 implemented and merged with full regression evidence.
 - [ ] P0.3 source audit + detailed plan.
