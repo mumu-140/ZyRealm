@@ -55,6 +55,36 @@ func TestRelayAttemptBudgetRejectsNewProviderButAllowsSeenProvider(t *testing.T)
 	}
 }
 
+func TestRelayAttemptBudgetAllowsMoreThanFourProvidersWhenConfigured(t *testing.T) {
+	budget := newRelayAttemptBudgetWithLimits(10, 20)
+	for channelID := 1; channelID <= 10; channelID++ {
+		if err := budget.tryStartWire(channelID); err != nil {
+			t.Fatalf("provider %d should be allowed: %v", channelID, err)
+		}
+	}
+	if len(budget.providers) != 10 {
+		t.Fatalf("provider count = %d, want 10", len(budget.providers))
+	}
+	if budget.canUseProvider(11) {
+		t.Fatalf("provider 11 should be rejected at configured provider limit")
+	}
+}
+
+func TestRelayAttemptBudgetAllowsWireBudgetAboveTwenty(t *testing.T) {
+	budget := newRelayAttemptBudgetWithLimits(100, 50)
+	for attempt := 0; attempt < 50; attempt++ {
+		if err := budget.tryStartWire(attempt + 1); err != nil {
+			t.Fatalf("wire attempt %d should be allowed: %v", attempt+1, err)
+		}
+	}
+	if budget.maxWires != 50 {
+		t.Fatalf("maxWires = %d, want 50", budget.maxWires)
+	}
+	if err := budget.tryStartWire(51); !errors.Is(err, errRelayWireAttemptsExceeded) {
+		t.Fatalf("wire overflow error = %v, want %v", err, errRelayWireAttemptsExceeded)
+	}
+}
+
 func TestRelayAttemptBudgetLimitsUnknownCrossProviderReplay(t *testing.T) {
 	budget := newRelayAttemptBudgetWithLimits(defaultMaxProviderAttempts, defaultMaxWireAttempts)
 	if !budget.tryUnknownCrossProviderReplay() {
@@ -70,20 +100,13 @@ func TestRelayAttemptBudgetLimitsUnknownCrossProviderReplay(t *testing.T) {
 
 func TestRelayAttemptBudgetUsesProductionDefaults(t *testing.T) {
 	budget := newRelayAttemptBudgetWithLimits(defaultMaxProviderAttempts, defaultMaxWireAttempts)
-	if budget.maxProviders != 4 {
-		t.Fatalf("maxProviders = %d, want 4", budget.maxProviders)
+	if budget.maxProviders != 20 {
+		t.Fatalf("maxProviders = %d, want 20", budget.maxProviders)
 	}
 	if budget.maxWires != 20 {
 		t.Fatalf("maxWires = %d, want 20", budget.maxWires)
 	}
 	if budget.maxUnknownReplays != 1 {
 		t.Fatalf("maxUnknownReplays = %d, want 1", budget.maxUnknownReplays)
-	}
-}
-
-func TestRelayAttemptBudgetHardCapsWiresAtTwenty(t *testing.T) {
-	budget := newRelayAttemptBudgetWithLimits(4, 100)
-	if budget.maxWires != hardMaxWireAttempts {
-		t.Fatalf("maxWires = %d, want hard cap %d", budget.maxWires, hardMaxWireAttempts)
 	}
 }

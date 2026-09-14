@@ -9,9 +9,8 @@ import (
 )
 
 const (
-	defaultMaxProviderAttempts           = 4
+	defaultMaxProviderAttempts           = 20
 	defaultMaxWireAttempts               = 20
-	hardMaxWireAttempts                  = 20
 	defaultMaxUnknownCrossProviderReplay = 1
 )
 
@@ -35,18 +34,23 @@ type relayAttemptBudget struct {
 }
 
 func newRelayAttemptBudget() *relayAttemptBudget {
-	return newRelayAttemptBudgetWithLimits(defaultMaxProviderAttempts, configuredMaxWireAttempts())
+	return newRelayAttemptBudgetWithLimits(configuredMaxProviderAttempts(), configuredMaxWireAttempts())
+}
+
+func configuredMaxProviderAttempts() int {
+	return configuredPositiveAttemptLimit(dbmodel.SettingKeyRelayMaxProviderAttempts, defaultMaxProviderAttempts)
 }
 
 func configuredMaxWireAttempts() int {
-	maxWires, err := op.SettingGetInt(dbmodel.SettingKeyRelayMaxWireAttempts)
-	if err != nil || maxWires <= 0 {
-		return defaultMaxWireAttempts
+	return configuredPositiveAttemptLimit(dbmodel.SettingKeyRelayMaxWireAttempts, defaultMaxWireAttempts)
+}
+
+func configuredPositiveAttemptLimit(key dbmodel.SettingKey, fallback int) int {
+	value, err := op.SettingGetInt(key)
+	if err != nil || value <= 0 {
+		return fallback
 	}
-	if maxWires > hardMaxWireAttempts {
-		return hardMaxWireAttempts
-	}
-	return maxWires
+	return value
 }
 
 func newRelayAttemptBudgetWithLimits(maxProviders, maxWires int) *relayAttemptBudget {
@@ -55,9 +59,6 @@ func newRelayAttemptBudgetWithLimits(maxProviders, maxWires int) *relayAttemptBu
 	}
 	if maxWires <= 0 {
 		maxWires = defaultMaxWireAttempts
-	}
-	if maxWires > hardMaxWireAttempts {
-		maxWires = hardMaxWireAttempts
 	}
 	return &relayAttemptBudget{
 		maxProviders:       maxProviders,
@@ -69,9 +70,10 @@ func newRelayAttemptBudgetWithLimits(maxProviders, maxWires int) *relayAttemptBu
 }
 
 // canUseProvider is a non-mutating preflight used before acquiring local
-// concurrency/RPM capacity. A previously charged provider remains usable until
-// the wire budget is exhausted; a new provider is rejected after the unique
-// provider limit has been reached.
+// concurrency/RPM capacity. The budget is keyed by channel ID: a previously
+// charged upstream channel remains usable until the wire budget is exhausted;
+// a new channel is rejected after the configured distinct-upstream limit has
+// been reached.
 func (b *relayAttemptBudget) canUseProvider(channelID int) bool {
 	if b == nil {
 		return true
@@ -82,8 +84,9 @@ func (b *relayAttemptBudget) canUseProvider(channelID int) bool {
 	return len(b.providers) < b.maxProviders
 }
 
-// tryStartWire charges one execution attempt. A provider is charged once per
-// request even when multiple credentials/protocol plans are attempted inside it.
+// tryStartWire charges one execution attempt. An upstream channel is charged
+// once per request even when multiple credentials/protocol plans are attempted
+// inside it.
 func (b *relayAttemptBudget) tryStartWire(channelID int) error {
 	if b == nil {
 		return nil
