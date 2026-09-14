@@ -126,6 +126,7 @@ func (h *relayHandler) run() {
 		}
 		if h.c.Request.Context().Err() != nil {
 			log.Debugf("request context canceled, stopping retry")
+			h.markFailoverStop(failoverStopClientCanceled)
 			h.metrics.SaveWithChannelStats(h.c.Request.Context(), false, context.Canceled, h.iterator.Attempts(), false)
 			return
 		}
@@ -133,12 +134,37 @@ func (h *relayHandler) run() {
 			return
 		}
 	}
+	h.markExhaustedFailoverStop()
 	writeExhaustedRelayError(exhaustedRelayInput{
 		c: h.c, heartbeat: h.heartbeat, metrics: h.metrics, attempts: h.iterator.Attempts(),
 		lastErr: h.lastErr, lastResult: h.lastResult, capacitySkipped: h.capacitySkipped,
 		rateSkipped: h.rateSkipped, passthroughRequired: h.passthroughRequired,
 		passthroughCapableFound: h.passthroughCapable,
 	})
+}
+
+func (h *relayHandler) markFailoverStop(reason failoverStopReason) {
+	if h == nil || reason == "" {
+		return
+	}
+	if h.lastResult.traceSpan != nil {
+		markFailoverStop(h.lastResult, reason)
+		return
+	}
+	if h.request != nil && h.request.attemptBudget != nil {
+		h.request.attemptBudget.markStop(reason)
+	}
+}
+
+func (h *relayHandler) markExhaustedFailoverStop() {
+	if h == nil {
+		return
+	}
+	reason := failoverStopCandidateExhausted
+	if budgetReason, ok := attemptBudgetFailoverStopReason(h.lastErr); ok {
+		reason = budgetReason
+	}
+	h.markFailoverStop(reason)
 }
 
 func (h *relayHandler) processCandidate() bool {

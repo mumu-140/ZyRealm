@@ -61,6 +61,19 @@ func (ra *relayAttempt) attachRoutingDecision(span *balancer.AttemptSpan, result
 		ra.requestContext(), result, result.Decision, ra.usedKey.CredentialRevision,
 		providerAttempt, wireAttempt,
 	))
+	if ra.attemptBudget != nil {
+		ra.attemptBudget.bindTraceSpan(span)
+	}
+	switch result.Decision.ReplaySafety {
+	case routingReplayCommitted:
+		markFailoverStop(result, failoverStopDownstreamCommitted)
+	case routingReplayClientCanceled:
+		markFailoverStop(result, failoverStopClientCanceled)
+	}
+	if result.Decision.SkipProvider && !result.Decision.Terminal && ra.iter != nil &&
+		!ra.iter.HasAlternativeProvider(ra.channel.ID) {
+		markFailoverStop(result, failoverStopNoAlternative)
+	}
 	return result
 }
 
@@ -127,6 +140,9 @@ func (ra *relayAttempt) deliveryStarted() bool {
 	}
 	if ra.streamWriter != nil {
 		return ra.streamWriter.Written()
+	}
+	if ra.internalRequest != nil && ra.internalRequest.Stream != nil && *ra.internalRequest.Stream {
+		return false
 	}
 	return ra.c != nil && ra.c.Writer.Written()
 }

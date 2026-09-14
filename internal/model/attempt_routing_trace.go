@@ -9,6 +9,7 @@ type AttemptRoutingTrace struct {
 	FailureScope         string `json:"failure_scope,omitempty"`
 	RuleID               string `json:"rule_id,omitempty"`
 	RetryDirective       string `json:"retry_directive,omitempty"`
+	FailoverStopReason   string `json:"failover_stop_reason,omitempty"`
 	RuntimeEffect        string `json:"runtime_effect,omitempty"`
 	RuntimeState         string `json:"runtime_state,omitempty"`
 	CooldownUntil        int64  `json:"cooldown_until,omitempty"`

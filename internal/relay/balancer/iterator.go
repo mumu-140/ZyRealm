@@ -28,7 +28,7 @@ func NewIterator(group model.Group, apiKeyID int, requestModel string) *Iterator
 	return NewIteratorWithPreference(group, apiKeyID, requestModel, nil)
 }
 
-// NewIteratorWithPreference 创建带优先通道偏好的负载均衡迭代器。
+// NewIteratorWithPreference 创建带优先通道偏好的迭代器。
 // runtime eligibility 在所有 GroupMode 之前统一应用；sticky 只能在当前
 // AVAILABLE 候选中生效，不能把 SUSPECT/HALF_OPEN/COOLDOWN 通道提到首位。
 func NewIteratorWithPreference(group model.Group, apiKeyID int, requestModel string, preferred *SessionEntry) *Iterator {
@@ -253,6 +253,20 @@ func (s *AttemptSpan) SetRoutingRuntime(effect, state string, cooldownUntil int6
 		attempt.RuntimeEffect = effect
 		attempt.RuntimeState = state
 		attempt.CooldownUntil = cooldownUntil
+	})
+}
+
+// SetFailoverStopReason records a late control-flow gate that intentionally
+// prevented a routing decision from advancing to another candidate. The first
+// concrete stop reason wins so a later generic exhaustion marker cannot hide it.
+func (s *AttemptSpan) SetFailoverStopReason(reason string) {
+	if s == nil || reason == "" {
+		return
+	}
+	s.updateAttempt(func(attempt *model.ChannelAttempt) {
+		if attempt.FailoverStopReason == "" {
+			attempt.FailoverStopReason = reason
+		}
 	})
 }
 
