@@ -76,7 +76,7 @@ The ZyRealm management panel is organized as a control plane rather than a gener
 Use an immutable release tag rather than `latest`:
 
 ```bash
-docker pull ghcr.io/mumu-140/zyrealm:v0.11.0-mumu.2
+docker pull ghcr.io/mumu-140/zyrealm:<version>
 ```
 
 The GitHub repository is **`mumu-140/ZyRealm`** and new releases are published under **`ghcr.io/mumu-140/zyrealm`**. Historical images may remain available under the previous `ghcr.io/mumu-140/octopus-concurrency` package path.
