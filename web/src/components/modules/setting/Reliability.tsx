@@ -1,33 +1,47 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { Gauge, Hash, HeartPulse, ShieldCheck, Timer, TimerOff, type LucideIcon } from 'lucide-react';
+import { Gauge, Hash, HeartPulse, Network, ShieldCheck, Timer, TimerOff, type LucideIcon } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { SettingKey } from '@/api/endpoints/setting';
 import { useSettingStore, type Locale } from '@/stores/setting';
 import { SettingCard, SettingRow, SettingSection, useSettingField, useSettingToggle } from './shared';
 
+const RELAY_MAX_PROVIDER_ATTEMPTS_KEY = 'relay_max_provider_attempts';
 const RELAY_MAX_WIRE_ATTEMPTS_KEY = 'relay_max_wire_attempts';
 
-const ROUTING_BUDGET_COPY: Record<Locale, { title: string; hint: string; label: string; fieldHint: string }> = {
+const ROUTING_BUDGET_COPY: Record<Locale, {
+    title: string;
+    hint: string;
+    providerLabel: string;
+    providerHint: string;
+    wireLabel: string;
+    wireHint: string;
+}> = {
     zh_hans: {
         title: '请求级路由预算',
-        hint: '限制单个请求真正发往上游的总尝试次数，包括同渠道重试、凭据轮换和协议/Provider failover。Provider 数量上限仍为 4；未知上游结果的跨 Provider 重放仍最多 1 次。',
-        label: '最大上游尝试次数',
-        fieldHint: '允许范围 1–20，默认 20。达到预算后不再发起新的上游调用；服务端始终硬限制为最多 20。',
+        hint: '两个预算独立生效，并由你按上游规模设置。不同上游渠道数控制单请求最多进入多少个不同 Channel；真实发送次数控制实际发往上游的总 wire attempt。同渠道的凭据轮换和协议重试只增加真实发送次数，不重复增加渠道数。未知执行结果的跨 Provider 重放仍最多 1 次。',
+        providerLabel: '最大不同上游渠道数',
+        providerHint: '必须为正整数，无代码级最大值。默认 20。第 N+1 个新渠道只会在达到你设置的此预算后才被阻止。',
+        wireLabel: '最大真实上游发送次数',
+        wireHint: '必须为正整数，无代码级最大值。默认 20。每次真正发送到上游都会计数，包括同渠道的凭据轮换和协议重试。',
     },
     zh_hant: {
         title: '請求級路由預算',
-        hint: '限制單個請求真正送往上游的總嘗試次數，包括同渠道重試、憑據輪換和協議/Provider failover。Provider 數量上限仍為 4；未知上游結果的跨 Provider 重放仍最多 1 次。',
-        label: '最大上游嘗試次數',
-        fieldHint: '允許範圍 1–20，預設 20。達到預算後不再發起新的上游呼叫；服務端始終硬限制為最多 20。',
+        hint: '兩個預算獨立生效，並由你按上游規模設定。不同上游渠道數控制單請求最多進入多少個不同 Channel；真實發送次數控制實際送往上游的總 wire attempt。同渠道的憑據輪換和協議重試只增加真實發送次數，不重複增加渠道數。未知執行結果的跨 Provider 重放仍最多 1 次。',
+        providerLabel: '最大不同上游渠道數',
+        providerHint: '必須為正整數，無程式碼級最大值。預設 20。第 N+1 個新渠道只會在達到你設定的此預算後才被阻止。',
+        wireLabel: '最大真實上游發送次數',
+        wireHint: '必須為正整數，無程式碼級最大值。預設 20。每次真正送到上游都會計數，包括同渠道的憑據輪換和協議重試。',
     },
     en: {
-        title: 'Request routing budget',
-        hint: 'Limits the total real upstream attempts for one request, including same-channel retries, credential rotation, and protocol/provider failover. The provider cap remains 4 and unknown-outcome cross-provider replay remains limited to 1.',
-        label: 'Maximum upstream attempts',
-        fieldHint: 'Allowed range: 1–20. Default: 20. No new upstream call is started after the budget is exhausted, and the server always enforces a hard maximum of 20.',
+        title: 'Request routing budgets',
+        hint: 'The two budgets are independent and administrator-defined. Distinct upstream channels limits how many different Channels one request may enter; real upstream sends limits total wire attempts. Credential rotation and protocol retries inside an already-seen Channel consume wire attempts without consuming another channel slot. Unknown-outcome cross-provider replay remains limited to 1.',
+        providerLabel: 'Maximum distinct upstream channels',
+        providerHint: 'Must be a positive integer. There is no application-level maximum. Default: 20. A new Channel is blocked only after this configured budget is reached.',
+        wireLabel: 'Maximum real upstream sends',
+        wireHint: 'Must be a positive integer. There is no application-level maximum. Default: 20. Every real upstream send counts, including credential rotation and protocol retries within a Channel.',
     },
 };
 
@@ -83,13 +97,20 @@ export function SettingReliability() {
             {/* 请求级路由预算 */}
             <SettingSection title={routingBudget.title} tooltip={routingBudget.hint} />
             <NumberFieldRow
-                settingKey={RELAY_MAX_WIRE_ATTEMPTS_KEY}
-                label={routingBudget.label}
+                settingKey={RELAY_MAX_PROVIDER_ATTEMPTS_KEY}
+                label={routingBudget.providerLabel}
                 placeholder="20"
-                tooltip={routingBudget.fieldHint}
+                tooltip={routingBudget.providerHint}
+                icon={Network}
+                min={1}
+            />
+            <NumberFieldRow
+                settingKey={RELAY_MAX_WIRE_ATTEMPTS_KEY}
+                label={routingBudget.wireLabel}
+                placeholder="20"
+                tooltip={routingBudget.wireHint}
                 icon={Gauge}
                 min={1}
-                max={20}
             />
 
             {/* 分组健康检查 */}
