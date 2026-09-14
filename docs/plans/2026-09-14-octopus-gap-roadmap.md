@@ -1,8 +1,8 @@
 # Octopus Gap Adoption Roadmap
 
-> Status: staged adoption index. P0.1 is merged and verified on `main`; P0.1H is implemented and fully CI-verified on its feature branch, with final integration still pending. Later P0/P1 work remains intentionally queued.
+> Status: staged adoption index. P0.1 and P0.1H are both merged and verified on `main`. P0.2 is now the next eligible slice, but remains source-audit-only until a fresh plan is written against the then-current code.
 >
-> Current verified baseline: ZyRealm `main@c3e1e5a018b136ee61c7e2696275ea314f916dcd` (2026-09-14).
+> P0.1H runtime merge baseline: ZyRealm `main@12b3a6952739fac85f678002f0d0e8c77190e446` (2026-09-14).
 
 ## Planning rule
 
@@ -42,27 +42,27 @@ Merge/verification evidence:
 - backend: `go vet ./...` success and `go test -buildvcs=false ./...` success;
 - frontend: lint, tests, and production build success.
 
-### P0.1H — First-token timeout after heartbeat must fail over — IMPLEMENTED + VERIFIED, AWAITING INTEGRATION
+### P0.1H — First-token timeout after heartbeat must fail over — MERGED + VERIFIED
 
-Observed terminal symptom:
+Production evidence was collected read-only and sanitized before the fix. The preserved report is [`../debug/2026-09-14-relay-failover-diagnostic.md`](../debug/2026-09-14-relay-failover-diagnostic.md), with structured companion [`../debug/2026-09-14-relay-failover-diagnostic.jsonl`](../debug/2026-09-14-relay-failover-diagnostic.jsonl).
 
-```text
-channel failed: failed to send request: first token timeout (30s)
+The diagnostic covered 12 requests / 18 real attempts and established three important boundaries:
 
-failed to send request: first token timeout (30s)
-```
+- three first-token-timeout incidents were stopped because infrastructure heartbeat/header output had been mistaken for real downstream model delivery;
+- three final `context canceled` incidents had authoritative outer-context cancellation and were correctly terminal;
+- two `INTERNAL_ERROR; received from peer` stream failures occurred after real model protocol payload had already been emitted and were correctly terminal.
 
-Source audit showed that ZyRealm already classified first-token timeout correctly as a next-provider event when downstream output was not committed. The defect was the commitment signal: for HTTP streaming, an infrastructure SSE heartbeat could make the generic Gin response writer look written before any provider payload had been delivered. The routing layer then correctly treated the timeout as post-commit and terminal, but based on the wrong signal.
+The first-token timeout classifier itself was already correct. The defect was the commitment signal: for HTTP streaming, an infrastructure SSE heartbeat could make the generic Gin response writer look written before any provider payload had been delivered. The routing layer then treated the timeout as post-commit and terminal based on the wrong signal.
 
 The hotfix keeps the existing unified routing policy and changes only what counts as delivery commitment:
 
 - WebSocket: commitment requires an actual downstream event;
-- HTTP streaming: commitment requires an actual provider stream payload;
+- HTTP streaming: commitment requires actual provider stream payload;
 - non-stream HTTP: ordinary response-writer commitment remains authoritative.
 
-A deterministic real-handler regression now exercises the exact failure mode: provider A waits through an early heartbeat and reaches first-token timeout, then provider B succeeds and its SSE payload reaches the client. No timeout duration, replay allowance, retry budget, failure scope, circuit behavior, or cooldown policy was broadened.
+A deterministic real-handler regression exercises the failure mode end-to-end: provider A waits through an early heartbeat and reaches first-token timeout, then provider B succeeds and its SSE payload reaches the client. No timeout duration, replay allowance, retry budget, failure scope, circuit behavior, or cooldown policy was broadened.
 
-The same slice also makes valid terminal outcomes explainable through an optional bounded `failover_stop_reason` in the existing serialized attempt routing trace:
+The same slice adds optional bounded `failover_stop_reason` observability to the existing serialized attempt routing trace:
 
 - `downstream_committed`
 - `client_canceled`
@@ -72,31 +72,29 @@ The same slice also makes valid terminal outcomes explainable through an optiona
 - `provider_attempt_budget`
 - `candidate_exhausted`
 
-Later gates late-bind the reason to the originating attempt span, and the first concrete reason wins so a specific reason is not overwritten by a generic exhaustion reason.
+Later gates late-bind the reason to the originating attempt span, and the first concrete reason wins so a specific reason is not overwritten by generic exhaustion.
 
-Detailed source audit, deterministic reproduction, TDD evidence, reference-repository comparison, and merge checklist: [`2026-09-14-relay-failover-error-audit.md`](./2026-09-14-relay-failover-error-audit.md).
+Detailed source audit, runtime evidence, TDD evidence, reference-repository comparison, and completion record: [`2026-09-14-relay-failover-error-audit.md`](./2026-09-14-relay-failover-error-audit.md).
 
-Reference-repository result: current upstream Octopus has a substantially simpler relay loop and no equivalent ZyRealm `AttemptRoutingTrace` / replay-budget / failure-domain machinery. Its explicit request-state idea is useful, but its handler is not safe to copy verbatim; the implementation therefore reuses ZyRealm's existing `RoutingDecision` and `AttemptSpan` architecture.
+Reference-repository result: current upstream Octopus has a substantially simpler relay loop and no equivalent ZyRealm `AttemptRoutingTrace` / replay-budget / failure-domain machinery. Its explicit request-state idea was useful, but its handler was not copied verbatim; the implementation reuses ZyRealm's existing `RoutingDecision` and `AttemptSpan` architecture.
 
-Verified code evidence before the final documentation fold:
+Merge/verification evidence:
 
-- branch: `codex/first-token-timeout-heartbeat-failover`;
-- code head: `5692cc99be10334b14b7e11e02b2abc43f4c96de`;
-- GitHub Actions CI run: `34845934726`;
-- governance: success;
-- backend Vet + full Go tests: success;
-- frontend lint/test/build: success;
-- no database migration, dependency, frontend feature, deployment script, P0.2/P0.3/P1 implementation.
+- sanitized diagnostic PR: `#18 chore(debug): add sanitized relay failover evidence`, diagnostic head `adba0bea2c2c4252e9126080e653405493af7d0f`;
+- implementation PR: `#19 fix(relay): fail over after heartbeat-only first-token timeout`;
+- final PR head: `76346f581421b0f9393e59b77c20c40ae8e1e676`;
+- final PR-triggered CI run: `34849018591` — governance, backend Vet/full tests, and frontend lint/test/build all success;
+- squash merge commit: `12b3a6952739fac85f678002f0d0e8c77190e446`;
+- merged-tree CI run: `34860648315` — governance, backend Vet/full tests, and frontend lint/test/build all success;
+- no database migration, dependency change, frontend feature, deployment script, timeout-duration change, broad retry rule, P0.2/P0.3/P1 implementation.
 
-A production incident trace was not available through the current repository tooling and has not been invented. The exact defect was instead proven with deterministic real-handler integration reproduction. The documentation-inclusive final branch head must still pass fresh CI and PR boundary review before merge.
+The audited `INTERNAL_ERROR` samples were post-payload failures, so P0.1H deliberately did **not** add a broad peer-error substring classifier. Any future pre-output peer-stream case remains evidence-driven.
 
-Other audited-looking error families such as pre-output HTTP/2 peer `INTERNAL_ERROR` remain evidence-driven follow-ups and are not silently folded into this first-token-timeout hotfix.
+**Execution order:** P0.1H is closed. P0.2 may now begin with a fresh source audit against the current `main`; do not implement P0.2 from the remembered scope alone.
 
-**Execution order:** merge/stabilize P0.1H before beginning the P0.2 source audit.
+### P0.2 — Global model filter — QUEUED, SOURCE AUDIT NEXT
 
-### P0.2 — Global model filter — QUEUED, NOT YET SOURCE-AUDITED
-
-Remembered scope only: add a system-level model-discovery filter that composes with channel-level filtering (intended semantics: both must pass). Exact configuration ownership, regex engine, managed-channel behavior, cache invalidation, API shape, and tests are intentionally undecided until P0.1H is complete.
+Remembered scope only: add a system-level model-discovery filter that composes with channel-level filtering (intended semantics: both must pass). Exact configuration ownership, regex engine, managed-channel behavior, cache invalidation, API shape, and tests are intentionally undecided until the fresh P0.2 source audit is complete.
 
 Upstream reference: Octopus commit `d5a893ff124ca1cb56f2eb25e14380347d247ae9`.
 
@@ -135,13 +133,13 @@ No schema, migration, API, or runtime design is approved here. P1 must be source
 - [x] P0.1 merged/stabilized on `main`.
 - [x] First-token-timeout failover requirement captured.
 - [x] P0.1H source audit + detailed hotfix plan recorded.
-- [ ] Sanitized production incident trace collected. Not available in current tooling; no values fabricated.
-- [x] P0.1H defect confirmed by deterministic real-handler heartbeat + timeout reproduction.
+- [x] Sanitized production routing evidence collected and preserved.
+- [x] P0.1H defect confirmed by production trace and deterministic real-handler heartbeat + timeout reproduction.
 - [x] P0.1H delivery-commitment fix implemented with TDD.
 - [x] P0.1H bounded failover stop-reason observability implemented and regression-tested.
-- [x] P0.1H code head passed governance, backend Vet/full tests, and frontend lint/test/build.
-- [ ] P0.1H final documentation-inclusive head passes fresh CI and PR boundary review.
-- [ ] P0.1H merged/stabilized on `main`.
+- [x] P0.1H final PR head passed governance, backend Vet/full tests, and frontend lint/test/build.
+- [x] P0.1H final diff/review boundary audited.
+- [x] P0.1H merged/stabilized on `main`; merged-tree CI `34860648315` all green.
 - [ ] P0.2 source audit + detailed plan.
 - [ ] P0.2 implemented and merged with full regression evidence.
 - [ ] P0.3 source audit + detailed plan.
