@@ -162,3 +162,14 @@ func isRelayAttemptBudgetExceeded(err error) bool {
 func isProviderAttemptBudgetExceeded(err error) bool {
 	return errors.Is(err, errRelayProviderAttemptsExceeded)
 }
+
+func attemptBudgetFailoverStopReason(err error) (failoverStopReason, bool) {
+	switch {
+	case errors.Is(err, errRelayProviderAttemptsExceeded):
+		return failoverStopProviderAttemptBudget, true
+	case errors.Is(err, errRelayWireAttemptsExceeded):
+		return failoverStopWireAttemptBudget, true
+	default:
+		return "", false
+	}
+}
