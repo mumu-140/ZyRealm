@@ -6,13 +6,13 @@ package relay
 type failoverStopReason string
 
 const (
-	failoverStopDownstreamCommitted  failoverStopReason = "downstream_committed"
-	failoverStopClientCanceled       failoverStopReason = "client_canceled"
-	failoverStopNoAlternative        failoverStopReason = "no_alternative"
-	failoverStopUnknownReplayBudget  failoverStopReason = "unknown_replay_budget"
-	failoverStopWireAttemptBudget    failoverStopReason = "wire_attempt_budget"
+	failoverStopDownstreamCommitted   failoverStopReason = "downstream_committed"
+	failoverStopClientCanceled        failoverStopReason = "client_canceled"
+	failoverStopNoAlternative         failoverStopReason = "no_alternative"
+	failoverStopUnknownReplayBudget   failoverStopReason = "unknown_replay_budget"
+	failoverStopWireAttemptBudget     failoverStopReason = "wire_attempt_budget"
 	failoverStopProviderAttemptBudget failoverStopReason = "provider_attempt_budget"
-	failoverStopCandidateExhausted   failoverStopReason = "candidate_exhausted"
+	failoverStopCandidateExhausted    failoverStopReason = "candidate_exhausted"
 )
 
 func markFailoverStop(result attemptResult, reason failoverStopReason) {
