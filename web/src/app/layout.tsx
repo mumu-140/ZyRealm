@@ -20,7 +20,8 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <meta name="mobile-web-app-status-bar-style" content="black" />
         <meta name="mobile-web-app-title" content="ZyRealm" />
         <link rel="manifest" href="./manifest.json" />
-        <link rel="icon" href="./logo.svg" type="image/svg+xml" />
+        <link rel="icon" href="./logo.svg" type="image/svg+xml" media="(prefers-color-scheme: light)" />
+        <link rel="icon" href="./logo-dark.svg" type="image/svg+xml" media="(prefers-color-scheme: dark)" />
         <title>ZyRealm · 自由界</title>
         <style
           dangerouslySetInnerHTML={{
