@@ -83,7 +83,7 @@ export function LoginForm({ onLoginSuccess }: { onLoginSuccess?: () => void }) {
           </div>
           <div>
             <div className="text-lg font-semibold tracking-tight">ZyRealm</div>
-            <div className="text-xs text-muted-foreground">自由界 · Adaptive LLM Routing Gateway</div>
+            <div className="text-xs text-muted-foreground">自由界</div>
           </div>
         </div>
 

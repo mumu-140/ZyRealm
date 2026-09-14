@@ -41,7 +41,7 @@ export function NavBar() {
                             <span className="truncate text-[15px] font-bold tracking-tight">ZyRealm</span>
                             <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">Live</span>
                         </div>
-                        <div className="truncate text-[11px] text-muted-foreground">自由界 · Routing Fabric</div>
+                        <div className="truncate text-[11px] text-muted-foreground">自由界</div>
                     </div>
                 </div>
 

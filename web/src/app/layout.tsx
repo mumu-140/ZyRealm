@@ -5,6 +5,7 @@ import { LocaleProvider } from "@/provider/locale";
 import QueryProvider from "@/provider/query";
 import { ServiceWorkerRegister } from "@/components/sw-register";
 import { TooltipProvider } from "@/components/animate-ui/components/animate/tooltip";
+import { BrandWatermark } from "@/components/modules/logo/watermark";
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
@@ -20,8 +21,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <meta name="mobile-web-app-status-bar-style" content="black" />
         <meta name="mobile-web-app-title" content="ZyRealm" />
         <link rel="manifest" href="./manifest.json" />
-        <link rel="icon" href="./logo.svg" type="image/svg+xml" media="(prefers-color-scheme: light)" />
-        <link rel="icon" href="./logo-dark.svg" type="image/svg+xml" media="(prefers-color-scheme: dark)" />
+        <link rel="icon" href="./favicon.svg" type="image/svg+xml" media="(prefers-color-scheme: light)" />
+        <link rel="icon" href="./favicon-dark.svg" type="image/svg+xml" media="(prefers-color-scheme: dark)" />
+        <link rel="alternate icon" href="./favicon.ico" />
         <title>ZyRealm · 自由界</title>
         <style
           dangerouslySetInnerHTML={{
@@ -89,6 +91,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         />
       </head>
       <body className="antialiased">
+        <BrandWatermark />
         <div id="initial-loader" role="status" aria-label="Loading ZyRealm">
           <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
             <g className="zy-group">
