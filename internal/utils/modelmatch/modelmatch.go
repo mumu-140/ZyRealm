@@ -1,15 +1,11 @@
 package modelmatch
 
-import (
-	"strings"
-
-	"github.com/dlclark/regexp2"
-)
+import "github.com/dlclark/regexp2"
 
 // Validate checks a model filter pattern using the same regexp dialect as
-// Channel.MatchRegex. Empty or whitespace-only patterns are disabled.
+// Channel.MatchRegex. Only the exact empty string disables filtering.
 func Validate(pattern string) error {
-	if strings.TrimSpace(pattern) == "" {
+	if pattern == "" {
 		return nil
 	}
 	_, err := regexp2.Compile(pattern, regexp2.ECMAScript)
@@ -21,7 +17,7 @@ func Validate(pattern string) error {
 func Filter(models []string, patterns ...string) ([]string, error) {
 	regexps := make([]*regexp2.Regexp, 0, len(patterns))
 	for _, pattern := range patterns {
-		if strings.TrimSpace(pattern) == "" {
+		if pattern == "" {
 			continue
 		}
 		re, err := regexp2.Compile(pattern, regexp2.ECMAScript)
