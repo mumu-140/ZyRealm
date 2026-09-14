@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -124,6 +125,150 @@ func TestFailoverStopReasonNoAlternative(t *testing.T) {
 	if got := attemptFailoverStopReason(t, attempts[0]); got != "no_alternative" {
 		t.Fatalf("failover stop reason = %q, want %q", got, "no_alternative")
 	}
+}
+
+func TestFailoverStopReasonDownstreamCommitted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	availability.Reset()
+	balancer.Reset()
+	defer availability.Reset()
+	defer balancer.Reset()
+
+	c, iterator, request, channel, key, plan := newStopReasonTraceHarness(t, 1301, 1302, 1311)
+	span := iterator.StartAttempt(channel.ID, key.ID, channel.Name)
+	ra := &relayAttempt{relayRequest: request, channel: channel, usedKey: key, plan: plan}
+	result := ra.attachRoutingDecision(span, attemptResult{
+		FirstTokenTimeout: true,
+		Written:           true,
+		Err:               fmt.Errorf("channel %s failed after payload: %w", channel.Name, errFirstTokenTimeout),
+		DispatchState:     dispatchMaybeSent,
+	})
+	span.End(dbmodel.AttemptFailed, 0, result.Err.Error())
+
+	if got := attemptFailoverStopReason(t, iterator.Attempts()[0]); got != "downstream_committed" {
+		t.Fatalf("failover stop reason = %q, want %q", got, "downstream_committed")
+	}
+	_ = c
+}
+
+func TestFailoverStopReasonClientCanceled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	availability.Reset()
+	balancer.Reset()
+	defer availability.Reset()
+	defer balancer.Reset()
+
+	_, iterator, request, channel, key, plan := newStopReasonTraceHarness(t, 1401, 1402, 1411)
+	span := iterator.StartAttempt(channel.ID, key.ID, channel.Name)
+	ra := &relayAttempt{relayRequest: request, channel: channel, usedKey: key, plan: plan}
+	result := ra.attachRoutingDecision(span, attemptResult{
+		Canceled:      true,
+		Err:           context.Canceled,
+		DispatchState: dispatchMaybeSent,
+	})
+	span.End(dbmodel.AttemptFailed, 0, result.Err.Error())
+
+	if got := attemptFailoverStopReason(t, iterator.Attempts()[0]); got != "client_canceled" {
+		t.Fatalf("failover stop reason = %q, want %q", got, "client_canceled")
+	}
+}
+
+func TestFailoverStopReasonWireAttemptBudget(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupRelayTestDB(t)
+	availability.Reset()
+	balancer.Reset()
+	defer availability.Reset()
+	defer balancer.Reset()
+
+	c, iterator, request, channel, key, plan := newStopReasonTraceHarness(t, 1501, 1502, 1511)
+	result := tracedFirstTokenTimeoutResult(t, c, request, iterator, channel, key, plan)
+	iterator.SkipProvider(1501)
+	iterator.SkipProvider(1502)
+	h := &relayHandler{
+		c: c, group: dbmodel.Group{Mode: dbmodel.GroupModeFailover}, iterator: iterator,
+		request: request, metrics: NewRelayMetrics(0, "public-model", nil, nil), heartbeat: &earlyHeartbeat{},
+		lastErr: errRelayWireAttemptsExceeded, lastResult: result,
+	}
+	h.run()
+
+	if got := attemptFailoverStopReason(t, iterator.Attempts()[0]); got != "wire_attempt_budget" {
+		t.Fatalf("failover stop reason = %q, want %q", got, "wire_attempt_budget")
+	}
+}
+
+func TestFailoverStopReasonProviderAttemptBudget(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupRelayTestDB(t)
+	availability.Reset()
+	balancer.Reset()
+	defer availability.Reset()
+	defer balancer.Reset()
+
+	c, iterator, request, channel, key, plan := newStopReasonTraceHarness(t, 1601, 1602, 1611)
+	result := tracedFirstTokenTimeoutResult(t, c, request, iterator, channel, key, plan)
+	iterator.SkipProvider(1601)
+	iterator.SkipProvider(1602)
+	h := &relayHandler{
+		c: c, group: dbmodel.Group{Mode: dbmodel.GroupModeFailover}, iterator: iterator,
+		request: request, metrics: NewRelayMetrics(0, "public-model", nil, nil), heartbeat: &earlyHeartbeat{},
+		lastErr: errRelayProviderAttemptsExceeded, lastResult: result,
+	}
+	h.run()
+
+	if got := attemptFailoverStopReason(t, iterator.Attempts()[0]); got != "provider_attempt_budget" {
+		t.Fatalf("failover stop reason = %q, want %q", got, "provider_attempt_budget")
+	}
+}
+
+func TestFailoverStopReasonCandidateExhausted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupRelayTestDB(t)
+	availability.Reset()
+	balancer.Reset()
+	defer availability.Reset()
+	defer balancer.Reset()
+
+	c, iterator, request, channel, key, plan := newStopReasonTraceHarness(t, 1701, 1702, 1711)
+	result := tracedFirstTokenTimeoutResult(t, c, request, iterator, channel, key, plan)
+	iterator.SkipProvider(1701)
+	iterator.SkipProvider(1702)
+	h := &relayHandler{
+		c: c, group: dbmodel.Group{Mode: dbmodel.GroupModeFailover}, iterator: iterator,
+		request: request, metrics: NewRelayMetrics(0, "public-model", nil, nil), heartbeat: &earlyHeartbeat{},
+		lastErr: result.Err, lastResult: result,
+	}
+	h.run()
+
+	if got := attemptFailoverStopReason(t, iterator.Attempts()[0]); got != "candidate_exhausted" {
+		t.Fatalf("failover stop reason = %q, want %q", got, "candidate_exhausted")
+	}
+}
+
+func newStopReasonTraceHarness(t *testing.T, providerA, providerB, keyA int) (*gin.Context, *balancer.Iterator, *relayRequest, *dbmodel.Channel, dbmodel.ChannelKey, *protocolroute.AttemptPlan) {
+	t.Helper()
+	const modelName = "stop-reason-model"
+	group := dbmodel.Group{
+		Mode: dbmodel.GroupModeFailover,
+		Items: []dbmodel.GroupItem{
+			{ChannelID: providerA, ModelName: modelName, Priority: 1, Weight: 1},
+			{ChannelID: providerB, ModelName: modelName, Priority: 2, Weight: 1},
+		},
+	}
+	iterator := balancer.NewIterator(group, 0, "public-model")
+	if !iterator.Next() || iterator.Item().ChannelID != providerA {
+		t.Fatalf("expected provider %d to be the first candidate", providerA)
+	}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	request := &relayRequest{c: c, iter: iterator, attemptBudget: newRelayAttemptBudget()}
+	channel := &dbmodel.Channel{ID: providerA, Name: fmt.Sprintf("provider-%d", providerA)}
+	key := dbmodel.ChannelKey{ID: keyA}
+	plan := protocolroute.NewAttemptPlan(protocolroute.PlanSpec{
+		ChannelID: providerA, ChannelKeyID: keyA, RequestedModel: "public-model", UpstreamModel: modelName,
+	})
+	return c, iterator, request, channel, key, plan
 }
 
 func tracedFirstTokenTimeoutResult(
