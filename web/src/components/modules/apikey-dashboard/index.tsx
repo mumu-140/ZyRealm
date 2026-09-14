@@ -107,11 +107,15 @@ export function APIKeyDashboard() {
     };
 
     return (
-        <div className="mx-auto max-w-6xl px-3 md:px-6">
-            {/* Header - Consistent with app.tsx */}
-            <header className="my-6 flex items-center gap-2 px-2">
-                <Logo size={48} />
-                <h1 className="ml-2 flex-1 truncate text-2xl font-bold tracking-tight">octopus</h1>
+        <div className="mx-auto max-w-6xl px-3 pb-10 md:px-6">
+            <header className="my-6 flex items-center gap-3 rounded-[24px] border border-border/70 bg-card/55 px-4 py-3 backdrop-blur-xl">
+                <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10">
+                    <Logo size={30} />
+                </div>
+                <div className="min-w-0 flex-1">
+                    <h1 className="truncate text-lg font-semibold tracking-tight">ZyRealm</h1>
+                    <p className="text-xs text-muted-foreground">自由界 · API Key Console</p>
+                </div>
                 <div className="flex items-center gap-2">
                     <Button variant="ghost" size="icon" onClick={toggleTheme} className="rounded-xl hover:bg-accent">
                         <Sun className="size-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
