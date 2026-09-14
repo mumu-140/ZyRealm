@@ -128,5 +128,8 @@ func (ra *relayAttempt) deliveryStarted() bool {
 	if ra.streamWriter != nil {
 		return ra.streamWriter.Written()
 	}
+	if ra.internalRequest != nil && ra.internalRequest.Stream != nil && *ra.internalRequest.Stream {
+		return false
+	}
 	return ra.c != nil && ra.c.Writer.Written()
 }
