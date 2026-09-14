@@ -64,6 +64,12 @@ func (ra *relayAttempt) attachRoutingDecision(span *balancer.AttemptSpan, result
 	if ra.attemptBudget != nil {
 		ra.attemptBudget.bindTraceSpan(span)
 	}
+	switch result.Decision.ReplaySafety {
+	case routingReplayCommitted:
+		markFailoverStop(result, failoverStopDownstreamCommitted)
+	case routingReplayClientCanceled:
+		markFailoverStop(result, failoverStopClientCanceled)
+	}
 	if result.Decision.SkipProvider && !result.Decision.Terminal && ra.iter != nil &&
 		!ra.iter.HasAlternativeProvider(ra.channel.ID) {
 		markFailoverStop(result, failoverStopNoAlternative)
