@@ -8,12 +8,25 @@ import (
 func TestFilterEmptyPatternsPreserveModelsAndOrder(t *testing.T) {
 	models := []string{"gpt-z", "claude-a", "gpt-z"}
 
-	got, err := Filter(models, "", "   ")
+	got, err := Filter(models, "", "")
 	if err != nil {
 		t.Fatalf("Filter() error = %v", err)
 	}
 	if !reflect.DeepEqual(got, models) {
 		t.Fatalf("Filter() = %#v, want %#v", got, models)
+	}
+}
+
+func TestFilterWhitespacePatternRemainsMeaningful(t *testing.T) {
+	models := []string{"gpt-4o", "model with space", "claude-3-5-sonnet"}
+
+	got, err := Filter(models, " ")
+	if err != nil {
+		t.Fatalf("Filter() error = %v", err)
+	}
+	want := []string{"model with space"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Filter() = %#v, want %#v", got, want)
 	}
 }
 
