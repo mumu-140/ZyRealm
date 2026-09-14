@@ -65,7 +65,12 @@ func TestDeliveryStartedPreservesNonStreamingHTTPWriterCommitment(t *testing.T) 
 		c:               c,
 		internalRequest: &transformerModel.InternalLLMRequest{Stream: &stream},
 	}}
-	c.Writer.WriteHeader(http.StatusOK)
+	if _, err := c.Writer.Write([]byte("response")); err != nil {
+		t.Fatalf("write response body: %v", err)
+	}
+	if !c.Writer.Written() {
+		t.Fatal("test setup requires non-streaming HTTP output to commit the writer")
+	}
 
 	if !ra.deliveryStarted() {
 		t.Fatal("non-streaming HTTP writer commitment must remain terminal")
