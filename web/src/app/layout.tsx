@@ -6,28 +6,22 @@ import QueryProvider from "@/provider/query";
 import { ServiceWorkerRegister } from "@/components/sw-register";
 import { TooltipProvider } from "@/components/animate-ui/components/animate/tooltip";
 
-
-
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html suppressHydrationWarning>
       <head>
-        <meta name="theme-color" content="#eae9e3" />
-        <meta name="application-name" content="Octopus" />
+        <meta name="theme-color" content="#0b1220" />
+        <meta name="application-name" content="ZyRealm" />
+        <meta name="description" content="ZyRealm 自由界 — adaptive LLM routing gateway and provider control plane." />
         <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="black" />
-        <meta name="apple-mobile-web-app-title" content="Octopus" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="apple-mobile-web-app-title" content="ZyRealm" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="mobile-web-app-status-bar-style" content="black" />
-        <meta name="mobile-web-app-title" content="Octopus" />
+        <meta name="mobile-web-app-title" content="ZyRealm" />
         <link rel="manifest" href="./manifest.json" />
-        <link rel="icon" href="./favicon.ico" sizes="any" />
-        <link rel="apple-touch-icon" href="./apple-icon.png" />
-        <title>Octopus</title>
+        <link rel="icon" href="./logo.svg" type="image/svg+xml" />
+        <title>ZyRealm · 自由界</title>
         <style
           dangerouslySetInnerHTML={{
             __html: `
@@ -38,51 +32,51 @@ export default function RootLayout({
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                background: hsl(var(--background));
-                color: hsl(var(--primary));
+                background: var(--background);
+                color: var(--primary);
                 transition: opacity 200ms ease;
               }
-              #initial-loader.octo-hide {
+              #initial-loader.zy-hide {
                 opacity: 0;
                 pointer-events: none;
               }
               #initial-loader svg {
-                width: 120px;
-                height: 120px;
+                width: 112px;
+                height: 112px;
               }
-              #initial-loader .octo-group {
-                animation: octoFade 2s ease-in-out infinite;
+              #initial-loader .zy-group {
+                animation: zyFade 1.8s ease-in-out infinite;
               }
               #initial-loader path {
                 fill: none;
                 stroke: currentColor;
-                stroke-width: 6;
+                stroke-width: 5.5;
                 stroke-linecap: round;
+                stroke-linejoin: round;
                 stroke-dasharray: 1;
                 stroke-dashoffset: 1;
                 opacity: 0;
-                animation: octoDraw 2s ease-in-out infinite both;
+                animation: zyDraw 1.8s ease-in-out infinite both;
               }
               #initial-loader path:nth-child(1) { animation-delay: 0s; }
-              #initial-loader path:nth-child(2) { animation-delay: 0.15s; }
-              #initial-loader path:nth-child(3) { animation-delay: 0.30s; }
-              #initial-loader path:nth-child(4) { animation-delay: 0.45s; }
-              #initial-loader path:nth-child(5) { animation-delay: 0.60s; }
+              #initial-loader path:nth-child(2) { animation-delay: 0.12s; }
+              #initial-loader path:nth-child(3) { animation-delay: 0.24s; }
+              #initial-loader path:nth-child(4) { animation-delay: 0.36s; }
 
-              @keyframes octoDraw {
+              @keyframes zyDraw {
                 0%   { stroke-dashoffset: 1; opacity: 0; }
-                5%   { opacity: 1; }
-                40%  { stroke-dashoffset: 0; opacity: 1; }
+                7%   { opacity: 1; }
+                46%  { stroke-dashoffset: 0; opacity: 1; }
                 100% { stroke-dashoffset: 0; opacity: 1; }
               }
-              @keyframes octoFade {
+              @keyframes zyFade {
                 0%   { opacity: 1; }
-                70%  { opacity: 1; }
+                74%  { opacity: 1; }
                 100% { opacity: 0; }
               }
 
               @media (prefers-reduced-motion: reduce) {
-                #initial-loader .octo-group,
+                #initial-loader .zy-group,
                 #initial-loader path {
                   animation: none !important;
                   opacity: 1 !important;
@@ -94,14 +88,13 @@ export default function RootLayout({
         />
       </head>
       <body className="antialiased">
-        <div id="initial-loader" role="status" aria-label="Loading">
+        <div id="initial-loader" role="status" aria-label="Loading ZyRealm">
           <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-            <g className="octo-group">
-              <path pathLength="1" d="M50 15 C70 15 85 30 85 50 C85 65 75 75 70 80 M50 15 C30 15 15 30 15 50 C15 65 25 75 30 80" />
-              <path pathLength="1" d="M30 80 Q30 90 20 90" />
-              <path pathLength="1" d="M43 77 Q43 90 38 90" />
-              <path pathLength="1" d="M57 77 Q57 90 62 90" />
-              <path pathLength="1" d="M70 80 Q70 90 80 90" />
+            <g className="zy-group">
+              <path pathLength="1" d="M50 9 L82 27 V73 L50 91 L18 73 V27 Z" />
+              <path pathLength="1" d="M31 34 H69" />
+              <path pathLength="1" d="M68 34 L32 66" />
+              <path pathLength="1" d="M31 66 H69" />
             </g>
           </svg>
         </div>

@@ -1,79 +1,85 @@
 <div align="center">
 
-<img src="web/public/logo.svg" alt="Octopus Logo" width="120" height="120">
+<img src="web/public/logo.svg" alt="ZyRealm logo" width="108" height="108">
 
-### Octopus
+# ZyRealm · 自由界
 
-**A Simple, Beautiful, and Elegant LLM API Aggregation & Load Balancing Service for Individuals**
+**Adaptive LLM Routing Gateway**
 
- English | [简体中文](README_zh.md) | [Getting Started](USAGE.md)
+A provider control plane for resilient multi-model, multi-credential LLM traffic.
+
+[简体中文](README_zh.md) · [Getting Started](USAGE.md) · [Releases](https://github.com/mumu-140/octopus-concurrency/releases)
 
 </div>
 
-> Forked from [bestruirui/octopus](https://github.com/bestruirui/octopus) — see [Differences from Upstream](#-differences-from-upstream) for what this fork changes.
+> **Origin and attribution**
+>
+> ZyRealm is based on [bestruirui/octopus](https://github.com/bestruirui/octopus) and continues to use its AGPL-3.0 licensed foundation. This repository has evolved substantially in relay routing, provider recovery, credential scheduling, protocol compatibility, observability and operations. Upstream attribution and the original license are intentionally preserved.
 
-> **mumu deployment boundary:** this repository is the only source for the fwq57ys production fork.
-> Do not deploy `hureru/octopus`, `bestruirui/octopus`, `latest`, or an old mumu image by following
-> upstream examples. Operators must read [the production manual](docs/octopus-production.md) and use only the
-> exact image declared by `deploy/fwq57ys/compose.yaml` and `deploy/fwq57ys/production-state.json`.
+## What is ZyRealm?
 
+ZyRealm (自由界) is an adaptive LLM gateway designed to keep client-facing protocols stable while dynamically choosing safe upstream paths. It aggregates providers and credentials behind unified OpenAI/Anthropic-compatible endpoints, then applies runtime eligibility, failure classification, cooldown, replay safety and fair credential scheduling before each wire attempt.
 
-## ✨ Features
+The routing pipeline is conceptually:
 
-- 🔀 **Multi-Channel Aggregation** - Connect multiple LLM provider channels with unified management
-- 🔑 **Multi-Key Support** - Support multiple API keys for a single channel
-- ⚡ **Smart Selection** - Multiple endpoints per channel, smart selection of the endpoint with the shortest delay
-- ⚖️ **Load Balancing** - Automatic request distribution for stable and efficient service
-- 🔄 **Protocol Conversion** - Seamless conversion between OpenAI Chat / OpenAI Responses / Anthropic API formats
-- 💰 **Price Sync** - Automatic model pricing updates
-- 🔃 **Model Sync** - Automatic synchronization of available model lists with channels
-- 📊 **Analytics** - Comprehensive request statistics, token consumption, and cost tracking
-- 🎨 **Elegant UI** - Clean and beautiful web management panel
-- 🗄️ **Multi-Database Support** - Support for SQLite, MySQL, PostgreSQL
-
-> 📖 **First time using Octopus?** Check out the **[Getting Started Guide](USAGE.md)** for a complete walkthrough from deployment to client integration — get up and running in 5 minutes.
-
-
-## 🚀 Quick Start
-
-### Production on fwq57ys
-
-Production is not started from README commands. Read [docs/octopus-production.md](docs/octopus-production.md), verify the
-machine state, and use the managed Compose only during an approved maintenance window. Container lifecycle
-changes must run as a detached background task because Octopus carries the active agent API connection.
-
-### Local development
-
-Use the current source checkout and disposable local data. Do not mount or copy fwq57ys production data.
-Tool versions are pinned by `Dockerfile.build` and `web/package.json`.
-
-```bash
-cd web
-pnpm install --frozen-lockfile
-NEXT_PUBLIC_API_BASE_URL="http://127.0.0.1:8080" pnpm run dev
-
-# In another terminal, from the repository root:
-go run . start
+```text
+Request
+  ↓
+Provider candidates
+  ↓
+Credential eligibility
+  ↓
+Capability eligibility
+  ↓
+Runtime recovery / cooldown
+  ↓
+Fair scheduling
+  ↓
+RoutingDecision
+  ↓
+Upstream wire attempt
 ```
 
-Release binaries and GHCR artifacts belong to this repository's
-[Releases](https://github.com/mumu-140/octopus-concurrency/releases). A Release artifact is not deployment
-authorization; production still uses the exact version in the machine state file.
+## Why this fork exists
 
-### 🔐 Default Credentials
+Octopus provides the original aggregation, protocol conversion and management foundation. ZyRealm keeps that base, while focusing on failure-aware routing for real multi-provider production traffic.
 
-After first launch, visit http://localhost:8080 and log in to the management panel with:
+Major extensions include:
 
-- **Username**: `admin`
-- **Password**: `admin`
+- **Adaptive failure routing** — semantic failure classification, provider/model cooldowns and bounded failover.
+- **Replay safety** — distinguishes requests that were not sent from requests whose upstream execution outcome is unknown.
+- **Credential fairness** — provider-local fair scheduling for multiple credentials without using accounting cost as a scheduler.
+- **Capability negative cache** — temporarily avoids provider/model/protocol combinations known to reject a request shape.
+- **Retry-After recovery** — honors upstream recovery hints with bounded local waiting.
+- **Anthropic compatibility hardening** — malformed HTTP 200 responses and narrow payload-schema incompatibilities can fail over instead of becoming false successes.
+- **Attempt tracing** — each real wire attempt records a routing decision and failure classification.
+- **Configurable request budget** — up to 20 wire attempts per client request, with a separate provider budget and unknown-outcome replay guard.
+- **Site and channel management** — provider/channel resources, synchronized aggregator sites, models, groups and pricing.
+- **OpenAI Chat / Responses / Images and Anthropic relay support**.
 
-> ⚠️ **Security Notice**: Please change the default password immediately after first login.
+## UI
 
-### 📝 Configuration File
+The ZyRealm management panel is organized as a control plane rather than a generic admin dashboard:
 
-The configuration file is located at `data/config.json` by default and is automatically generated on first startup.
+- persistent desktop routing sidebar;
+- responsive mobile navigation;
+- provider/channel/group/model management;
+- runtime reliability settings;
+- request and cost analytics;
+- dark/light themes;
+- user and API-key authentication modes.
 
-**Complete Configuration Example:**
+## Quick start
+
+### Docker / GHCR
+
+Use an immutable release tag rather than `latest`:
+
+```bash
+docker pull ghcr.io/mumu-140/octopus-concurrency:v0.11.0-mumu.2
+```
+
+A minimal local configuration listens on port `8080` and stores SQLite data under `data/`.
 
 ```json
 {
@@ -91,301 +97,56 @@ The configuration file is located at `data/config.json` by default and is automa
 }
 ```
 
-**Configuration Options:**
+Default credentials on a fresh installation are `admin` / `admin`. Change them immediately after first login.
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `server.host` | Listen address | `0.0.0.0` |
-| `server.port` | Server port | `8080` |
-| `database.type` | Database type | `sqlite` |
-| `database.path` | Database connection string | `data/data.db` |
-| `log.level` | Log level | `info` |
+### Local development
 
-**Database Configuration:**
+```bash
+cd web
+pnpm install --frozen-lockfile
+NEXT_PUBLIC_API_BASE_URL="http://127.0.0.1:8080" pnpm run dev
 
-Three database types are supported:
-
-| Type | `database.type` | `database.path` Format |
-|------|-----------------|-----------------------|
-| SQLite | `sqlite` | `data/data.db` |
-| MySQL | `mysql` | `user:password@tcp(host:port)/dbname` |
-| PostgreSQL | `postgres` | `postgresql://user:password@host:port/dbname?sslmode=disable` |
-
-**MySQL Configuration Example:**
-
-```json
-{
-  "database": {
-    "type": "mysql",
-    "path": "root:password@tcp(127.0.0.1:3306)/octopus"
-  }
-}
+# another terminal, repository root
+go run . start
 ```
 
-**PostgreSQL Configuration Example:**
+## Client protocols
 
-```json
-{
-  "database": {
-    "type": "postgres",
-    "path": "postgresql://user:password@localhost:5432/octopus?sslmode=disable"
-  }
-}
-```
+ZyRealm can expose unified model groups to clients using:
 
-> 💡 **Tip**: MySQL and PostgreSQL require manual database creation. The application will automatically create the table structure.
+- OpenAI Chat Completions;
+- OpenAI Responses;
+- OpenAI Images;
+- Anthropic Messages;
+- WebSocket relay paths used by supported tool workflows.
 
-### 🌐 Environment Variables
+The gateway can perform protocol conversion where supported and can route around provider-specific capability failures without changing the client model name.
 
-All configuration options can be overridden via environment variables using the format `OCTOPUS_` + configuration path (joined with `_`):
+## Routing safety model
 
-| Environment Variable | Configuration Option |
-|---------------------|---------------------|
-| `OCTOPUS_SERVER_PORT` | `server.port` |
-| `OCTOPUS_SERVER_HOST` | `server.host` |
-| `OCTOPUS_DATABASE_TYPE` | `database.type` |
-| `OCTOPUS_DATABASE_PATH` | `database.path` |
-| `OCTOPUS_LOG_LEVEL` | `log.level` |
-| `OCTOPUS_GITHUB_PAT` | For rate limiting when getting the latest version (optional) |
-| `OCTOPUS_RELAY_MAX_SSE_EVENT_SIZE` | Maximum SSE event size (optional) |
-| `OCTOPUS_IMAGES_BODY_MEMORY_THRESHOLD_MB` | Images request body in-memory threshold. If exceeded, it will be spooled to a temporary file (optional, default 16) |
-| `OCTOPUS_IMAGES_BODY_MAX_MB` | Images request body maximum size. Requests above this limit are rejected (optional, default 256) |
-| `OCTOPUS_IMAGES_BODY_TMP_DIR` | Images request body temporary directory (optional, default `./cache`) |
-| `OCTOPUS_IMAGES_BODY_TMP_CLEANUP_HOURS` | Startup cleanup threshold for temporary files (optional, default 24) |
+Three limits are deliberately separate:
 
-## 📸 Screenshots
+1. **Provider budget** limits how many distinct providers a single client request can enter.
+2. **Wire-attempt budget** limits real upstream sends and is configurable up to 20.
+3. **Unknown-outcome replay budget** remains tightly bounded to reduce duplicate execution and duplicate billing risk.
 
-### 🖥️ Desktop
+Local skips such as disabled channels, runtime cooldown, concurrency saturation or circuit rejection do not consume a wire attempt because no upstream request was sent.
 
-<div align="center">
-<table>
-<tr>
-<td align="center"><b>Dashboard</b></td>
-<td align="center"><b>Channel Management</b></td>
-<td align="center"><b>Group Management</b></td>
-</tr>
-<tr>
-<td><img src="web/public/screenshot/desktop-home.png" alt="Dashboard" width="400"></td>
-<td><img src="web/public/screenshot/desktop-channel.png" alt="Channel" width="400"></td>
-<td><img src="web/public/screenshot/desktop-group.png" alt="Group" width="400"></td>
-</tr>
-<tr>
-<td align="center"><b>Price Management</b></td>
-<td align="center"><b>Logs</b></td>
-<td align="center"><b>Settings</b></td>
-</tr>
-<tr>
-<td><img src="web/public/screenshot/desktop-price.png" alt="Price Management" width="400"></td>
-<td><img src="web/public/screenshot/desktop-log.png" alt="Logs" width="400"></td>
-<td><img src="web/public/screenshot/desktop-setting.png" alt="Settings" width="400"></td>
-</tr>
-</table>
-</div>
+## Compatibility naming
 
-### 📱 Mobile
+Some internal names still contain `octopus` by design:
 
-<div align="center">
-<table>
-<tr>
-<td align="center"><b>Home</b></td>
-<td align="center"><b>Channel</b></td>
-<td align="center"><b>Group</b></td>
-<td align="center"><b>Price</b></td>
-<td align="center"><b>Logs</b></td>
-<td align="center"><b>Settings</b></td>
-</tr>
-<tr>
-<td><img src="web/public/screenshot/mobile-home.png" alt="Mobile Home" width="140"></td>
-<td><img src="web/public/screenshot/mobile-channel.png" alt="Mobile Channel" width="140"></td>
-<td><img src="web/public/screenshot/mobile-group.png" alt="Mobile Group" width="140"></td>
-<td><img src="web/public/screenshot/mobile-price.png" alt="Mobile Price" width="140"></td>
-<td><img src="web/public/screenshot/mobile-log.png" alt="Mobile Logs" width="140"></td>
-<td><img src="web/public/screenshot/mobile-setting.png" alt="Mobile Settings" width="140"></td>
-</tr>
-</table>
-</div>
+- Go module/import paths inherited from upstream;
+- `OCTOPUS_*` environment variables;
+- database/migration compatibility names;
+- historical protocol examples and migration records where changing the identifier would break compatibility.
 
+These are compatibility surfaces, not the current product identity. The UI and public product name are **ZyRealm / 自由界**.
 
-## 📖 Documentation
+## License and upstream
 
-### 📡 Channel Management
+ZyRealm is distributed under **GNU AGPL-3.0**, following the license of the Octopus codebase it is based on. See [LICENSE](LICENSE).
 
-Channels are the basic configuration units for connecting to LLM providers.
+Original project: [bestruirui/octopus](https://github.com/bestruirui/octopus)
 
-**Base URL Guide:**
-
-The program automatically appends API paths based on channel type. You only need to provide the base URL:
-
-| Channel Type | Auto-appended Path | Base URL | Full Request URL Example |
-|--------------|-------------------|----------|--------------------------|
-| OpenAI Chat | `/chat/completions` | `https://api.openai.com/v1` | `https://api.openai.com/v1/chat/completions` |
-| OpenAI Responses | `/responses` | `https://api.openai.com/v1` | `https://api.openai.com/v1/responses` |
-| OpenAI Images | `/images/generations`, `/images/edits`, `/images/variations` | `https://api.openai.com/v1` | `https://api.openai.com/v1/images/generations` |
-| Anthropic | `/messages` | `https://api.anthropic.com/v1` | `https://api.anthropic.com/v1/messages` |
-| Gemini | `/models/:model:generateContent` | `https://generativelanguage.googleapis.com/v1beta` | `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent` |
-
-> 💡 **Tip**: No need to include specific API endpoint paths in the Base URL - the program handles this automatically.
-
----
-
-### 📁 Group Management
-
-Groups aggregate multiple channels into a unified external model name.
-
-**Core Concepts:**
-
-- **Group name** is the model name exposed by the program
-- When calling the API, set the `model` parameter to the group name
-
-**Load Balancing Modes:**
-
-| Mode | Description |
-|------|-------------|
-| 🔄 **Round Robin** | Cycles through channels sequentially for each request |
-| 🎲 **Random** | Randomly selects an available channel for each request |
-| 🛡️ **Failover** | Prioritizes high-priority channels, switches to lower priority only on failure |
-| ⚖️ **Weighted** | Distributes requests based on configured channel weights |
-| ❤️ **Health First** | Tiers channels by health; rotates within the same healthy tier, stable order across tiers |
-| 📉 **Least Used** | Sorts by in-flight concurrency ascending, favoring idle channels; ties broken by priority |
-| 🎯 **P2C** | Picks two random candidates and selects the one with lower in-flight concurrency |
-| 🃏 **Strict Random** | Draws without replacement per group: no repeat hit until the whole deck is exhausted, then reshuffles |
-
-> 💡 **Example**: Create a group named `gpt-4o`, add multiple providers' GPT-4o channels to it, then access all channels via a unified `model: gpt-4o`.
-
----
-
-### 💰 Price Management
-
-Manage model pricing information in the system.
-
-**Data Sources:**
-
-- The system periodically syncs model pricing data from [models.dev](https://github.com/sst/models.dev)
-- When creating a channel, if the channel contains models not in models.dev, the system automatically creates pricing information for those models on this page, so this page displays models that haven't had their prices fetched from upstream, allowing users to set prices manually
-- Manual creation of models that exist in models.dev is also supported for custom pricing
-
-**Price Priority:**
-
-| Priority | Source | Description |
-|:--------:|--------|-------------|
-| 🥇 High | This Page | Prices set by user in price management page |
-| 🥈 Low | models.dev | Auto-synced default prices |
-
-> 💡 **Tip**: To override a model's default price, simply set a custom price for it in the price management page.
-
----
-
-### ⚙️ Settings
-
-Global system configuration.
-
-**Statistics Save Interval (minutes):**
-
-Since the program handles numerous statistics, writing to the database on every request would impact read/write performance. The program uses this strategy:
-
-- Statistics are first stored in **memory**
-- Periodically **batch-written** to the database at the configured interval
-
-> ⚠️ **Important**: When exiting the program, use proper shutdown methods (like `Ctrl+C` or sending `SIGTERM` signal) to ensure in-memory statistics are correctly written to the database. **Do NOT use `kill -9` or other forced termination methods**, as this may result in statistics data loss.
-
----
-
-## 🔌 Client Integration
-
-### OpenAI SDK
-
-```python
-from openai import OpenAI
-import os
-
-client = OpenAI(   
-    base_url="http://127.0.0.1:8080/v1",   
-    api_key="sk-octopus-123", 
-)
-completion = client.chat.completions.create(
-    model="octopus-openai",  # Use the correct group name
-    messages = [
-        {"role": "user", "content": "Hello"},
-    ],
-)
-print(completion.choices[0].message.content)
-```
-
-### Claude Code
-
-Edit `~/.claude/settings.json`
-
-```json
-{
-  "env": {
-    "ANTHROPIC_BASE_URL": "http://127.0.0.1:8080",
-    "ANTHROPIC_AUTH_TOKEN": "sk-octopus-123",
-    "API_TIMEOUT_MS": "3000000",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-    "ANTHROPIC_MODEL": "octopus-sonnet-4-5",
-    "ANTHROPIC_SMALL_FAST_MODEL": "octopus-haiku-4-5",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "octopus-sonnet-4-5",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "octopus-sonnet-4-5",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "octopus-haiku-4-5"
-  }
-}
-```
-
-### Codex
-
-Edit `~/.codex/config.toml`
-
-```toml
-model = "octopus-codex" # Use the correct group name
-
-model_provider = "octopus"
-
-[model_providers.octopus]
-name = "octopus"
-base_url = "http://127.0.0.1:8080/v1"
-```
-
-Edit `~/.codex/auth.json`
-
-```json
-{
-  "OPENAI_API_KEY": "sk-octopus-123"
-}
-```
-
----
-
-## 🔀 Differences from Upstream
-
-Compatible with [bestruirui/octopus](https://github.com/bestruirui/octopus), ~180 commits ahead on `dev`.
-
-### 🏗️ New subsystems
-
-- **🌐 Site Management & Site Sync** — full new resource layer (backend `sitesync/` + dedicated frontend modules). Manages aggregator-site accounts: scheduled sync, check-in, balance / today's income, per-site pricing, archive/restore, AnyRouter, route probing, `sub2api`, and projected site channels.
-- **🔌 WebSocket relay** — upstream WS connection pool with health backoff, client-facing WS, DB-backed response affinity, and opt-in OpenAI Responses passthrough for Codex tools.
-- **🖼️ OpenAI Images API forwarding** with body cache.
-- **🩹 Transformer overhaul** — native StreamEvent pipeline across all adapters, Anthropic patching layer, role-alternation normalization, plus a long tail of cross-format fidelity fixes.
-
-### 🛠️ Reworked
-
-- **Channel module** — tabbed Site/Manual layout; group editor preserves channel metadata.
-- **Relay core** — route learning, retry, cancel propagation, Responses compact proxy, log filtering by channel ID.
-- **Auth** — JWT secret persisted in DB (rotation-safe), no longer derived from credentials.
-- **Backup**, **logs** (`Item.tsx` rewrite), and **home charts** redesigned.
-
-### 🧬 Misc
-
-- Claude Opus 4.7 adaptive thinking; DB migrations 003–012; new Site Automation panel in Settings.
-
-> Full diff: `git log upstream/dev..HEAD` after adding `https://github.com/bestruirui/octopus` as `upstream`.
-
----
-
-## 🤝 Acknowledgments
-
-- 🙏 [looplj/axonhub](https://github.com/looplj/axonhub) - The LLM API adaptation module in this project is directly derived from this repository
-- 📊 [sst/models.dev](https://github.com/sst/models.dev) - AI model database providing model pricing data
-
-## 🔗 Friend Links
-
-- 🐧 [LinuxDO](https://linux.do) - A community for tech enthusiasts
+This project does not claim authorship of upstream Octopus code. Fork-specific changes and subsequent development are maintained in this repository.

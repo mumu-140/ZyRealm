@@ -1,7 +1,7 @@
 {
-  "name": "Octopus",
-  "short_name": "Octopus",
-  "description": "为个人打造的简单、美观、优雅的 LLM API 聚合与负载均衡服务",
+  "name": "ZyRealm 自由界",
+  "short_name": "ZyRealm",
+  "description": "Adaptive LLM routing gateway and multi-provider control plane",
   "id": "./",
   "start_url": "./",
   "scope": "./",
@@ -9,99 +9,20 @@
   "dir": "ltr",
   "display": "standalone",
   "orientation": "any",
-  "theme_color": "#EAE9E3",
-  "background_color": "#EAE9E3",
-  "categories": [
-    "utilities",
-    "productivity",
-    "developer tools"
-  ],
+  "theme_color": "#0b1220",
+  "background_color": "#0b1220",
+  "categories": ["utilities", "productivity", "developer tools"],
   "icons": [
     {
-      "src": "./web-app-manifest-192x192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "./web-app-manifest-512x512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "./web-app-manifest-512x512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "maskable"
-    }
-  ],
-  "screenshots": [
-    {
-      "src": "./screenshot/desktop-home.png",
-      "sizes": "1437x918",
-      "type": "image/png",
-      "form_factor": "wide",
-      "label": "首页仪表盘"
-    },
-    {
-      "src": "./screenshot/desktop-channel.png",
-      "sizes": "1437x918",
-      "type": "image/png",
-      "form_factor": "wide",
-      "label": "渠道管理"
-    },
-    {
-      "src": "./screenshot/mobile-home.png",
-      "sizes": "1290x2796",
-      "type": "image/png",
-      "form_factor": "narrow",
-      "label": "移动端首页"
-    },
-    {
-      "src": "./screenshot/mobile-channel.png",
-      "sizes": "1290x2796",
-      "type": "image/png",
-      "form_factor": "narrow",
-      "label": "移动端渠道"
+      "src": "./logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
     }
   ],
   "shortcuts": [
-    {
-      "name": "渠道管理",
-      "short_name": "渠道",
-      "url": "./",
-      "icons": [
-        {
-          "src": "./web-app-manifest-192x192.png",
-          "sizes": "192x192",
-          "type": "image/png"
-        }
-      ]
-    },
-    {
-      "name": "模型价格管理",
-      "short_name": "价格",
-      "url": "./",
-      "icons": [
-        {
-          "src": "./web-app-manifest-192x192.png",
-          "sizes": "192x192",
-          "type": "image/png"
-        }
-      ]
-    },
-    {
-      "name": "分组管理",
-      "short_name": "分组",
-      "url": "./",
-      "icons": [
-        {
-          "src": "./web-app-manifest-192x192.png",
-          "sizes": "192x192",
-          "type": "image/png"
-        }
-      ]
-    }
+    { "name": "渠道管理", "short_name": "渠道", "url": "./" },
+    { "name": "模型管理", "short_name": "模型", "url": "./" },
+    { "name": "分组管理", "short_name": "分组", "url": "./" }
   ]
 }

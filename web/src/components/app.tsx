@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
@@ -19,7 +18,7 @@ import { CONTENT_MAP } from '@/route';
 import { apiClient } from '@/api/client';
 import { logger } from '@/lib/logger';
 
-const RETURNING_USER_KEY = 'octopus_visited';
+const RETURNING_USER_KEY = 'zyrealm_visited';
 const RETURNING_LOGO_MS = 300;
 
 export function AppContainer() {
@@ -27,17 +26,13 @@ export function AppContainer() {
     const { activeItem, direction } = useNavStore();
     const t = useTranslations('navbar');
     const queryClient = useQueryClient();
-
-    // Logo 动画完成状态 — 回访用户缩短动画时间
     const [logoAnimationComplete, setLogoAnimationComplete] = useState(false);
     const bootstrapStartedRef = useRef(false);
 
-    // 首屏最早的 server-rendered loader：一旦客户端开始渲染，就淡出移除
     useEffect(() => {
         const el = document.getElementById('initial-loader');
         if (!el) return;
-
-        el.classList.add('octo-hide');
+        el.classList.add('zy-hide');
         const timer = setTimeout(() => el.remove(), 220);
         return () => clearTimeout(timer);
     }, []);
@@ -52,138 +47,65 @@ export function AppContainer() {
         return () => clearTimeout(timer);
     }, []);
 
-    // 后台预取数据 — 不阻塞内容渲染，React Query 缓存就绪后自动触发组件重渲染
     useEffect(() => {
-        if (authLoading) return;
-        if (!isAuthenticated) return;
-
-        if (bootstrapStartedRef.current) return;
+        if (authLoading || !isAuthenticated || bootstrapStartedRef.current) return;
         bootstrapStartedRef.current = true;
 
         const prefetches: Array<Promise<unknown>> = [];
 
-        // API Key 认证模式：预取 dashboard stats
         if (isAPIKeyAuth) {
-            prefetches.push(
-                queryClient.prefetchQuery({
-                    queryKey: ['apikey', 'dashboard', 'stats'],
-                    queryFn: async () => apiClient.get('/api/v1/apikey/stats'),
-                })
-            );
+            prefetches.push(queryClient.prefetchQuery({
+                queryKey: ['apikey', 'dashboard', 'stats'],
+                queryFn: async () => apiClient.get('/api/v1/apikey/stats'),
+            }));
         } else {
-            // 普通用户认证模式：预取对应页面数据
             const component = CONTENT_MAP[activeItem];
-            if (component?.preload) {
-                prefetches.push(component.preload());
-            }
+            if (component?.preload) prefetches.push(component.preload());
 
             switch (activeItem) {
-                case 'home': {
-                    prefetches.push(
-                        queryClient.prefetchQuery({
-                            queryKey: ['stats', 'total'],
-                            queryFn: async () => apiClient.get('/api/v1/stats/total'),
-                        })
-                    );
-                    prefetches.push(
-                        queryClient.prefetchQuery({
-                            queryKey: ['stats', 'daily'],
-                            queryFn: async () => apiClient.get('/api/v1/stats/daily'),
-                        })
-                    );
-                    prefetches.push(
-                        queryClient.prefetchQuery({
-                            queryKey: ['stats', 'hourly'],
-                            queryFn: async () => apiClient.get('/api/v1/stats/hourly'),
-                        })
-                    );
-                    prefetches.push(
-                        queryClient.prefetchQuery({
-                            queryKey: ['stats', 'leaderboard', 'channel', '7'],
-                            queryFn: async () => apiClient.get('/api/v1/stats/leaderboard', {
-                                dimension: 'channel',
-                                window: '7',
-                            }),
-                        })
-                    );
+                case 'home':
+                    prefetches.push(queryClient.prefetchQuery({ queryKey: ['stats', 'total'], queryFn: async () => apiClient.get('/api/v1/stats/total') }));
+                    prefetches.push(queryClient.prefetchQuery({ queryKey: ['stats', 'daily'], queryFn: async () => apiClient.get('/api/v1/stats/daily') }));
+                    prefetches.push(queryClient.prefetchQuery({ queryKey: ['stats', 'hourly'], queryFn: async () => apiClient.get('/api/v1/stats/hourly') }));
+                    prefetches.push(queryClient.prefetchQuery({ queryKey: ['stats', 'leaderboard', 'channel', '7'], queryFn: async () => apiClient.get('/api/v1/stats/leaderboard', { dimension: 'channel', window: '7' }) }));
                     break;
-                }
-                case 'site': {
-                    prefetches.push(
-                        queryClient.prefetchQuery({
-                            queryKey: ['sites', 'list'],
-                            queryFn: async () => apiClient.get('/api/v1/site/list'),
-                        })
-                    );
+                case 'site':
+                    prefetches.push(queryClient.prefetchQuery({ queryKey: ['sites', 'list'], queryFn: async () => apiClient.get('/api/v1/site/list') }));
                     break;
-                }
-                case 'channel': {
-                    prefetches.push(
-                        queryClient.prefetchQuery({
-                            queryKey: ['channels', 'list'],
-                            queryFn: async () => apiClient.get('/api/v1/channel/list'),
-                        })
-                    );
+                case 'channel':
+                    prefetches.push(queryClient.prefetchQuery({ queryKey: ['channels', 'list'], queryFn: async () => apiClient.get('/api/v1/channel/list') }));
                     break;
-                }
-                case 'group': {
-                    prefetches.push(
-                        queryClient.prefetchQuery({
-                            queryKey: ['groups', 'list'],
-                            queryFn: async () => apiClient.get('/api/v1/group/list'),
-                        })
-                    );
-                    prefetches.push(
-                        queryClient.prefetchQuery({
-                            queryKey: ['models', 'channel'],
-                            queryFn: async () => apiClient.get('/api/v1/model/channel'),
-                        })
-                    );
+                case 'group':
+                    prefetches.push(queryClient.prefetchQuery({ queryKey: ['groups', 'list'], queryFn: async () => apiClient.get('/api/v1/group/list') }));
+                    prefetches.push(queryClient.prefetchQuery({ queryKey: ['models', 'channel'], queryFn: async () => apiClient.get('/api/v1/model/channel') }));
                     break;
-                }
-                case 'model': {
-                    prefetches.push(
-                        queryClient.prefetchQuery({
-                            queryKey: ['models', 'list'],
-                            queryFn: async () => apiClient.get('/api/v1/model/list'),
-                        })
-                    );
+                case 'model':
+                    prefetches.push(queryClient.prefetchQuery({ queryKey: ['models', 'list'], queryFn: async () => apiClient.get('/api/v1/model/list') }));
                     break;
-                }
-                case 'setting': {
-                    prefetches.push(
-                        queryClient.prefetchQuery({
-                            queryKey: ['apikeys', 'list'],
-                            queryFn: async () => apiClient.get('/api/v1/apikey/list'),
-                        })
-                    );
+                case 'setting':
+                    prefetches.push(queryClient.prefetchQuery({ queryKey: ['apikeys', 'list'], queryFn: async () => apiClient.get('/api/v1/apikey/list') }));
                     break;
-                }
                 default:
                     break;
             }
         }
 
-        // 后台静默运行，不阻塞渲染
-        Promise.allSettled(prefetches).catch((e) => {
-            logger.warn('bootstrap prefetch failed:', e);
-        });
+        Promise.allSettled(prefetches).catch((e) => logger.warn('bootstrap prefetch failed:', e));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [authLoading, isAuthenticated]);
 
-    // 加载状态 — 仅等待认证和 Logo 动画，不再等待数据预取
     const isLoading = authLoading || !logoAnimationComplete;
 
-    // 加载页面
     if (isLoading) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-background">
-                <Logo size={120} animate />
+            <div className="flex min-h-screen items-center justify-center bg-background">
+                <div className="flex size-32 items-center justify-center rounded-[32px] border border-border/70 bg-card/70 shadow-xl backdrop-blur-xl">
+                    <Logo size={84} animate />
+                </div>
             </div>
         );
     }
 
-    // API Key 认证模式 - 显示 API Key Dashboard
     if (isAPIKeyAuth) {
         return (
             <AnimatePresence mode="wait">
@@ -192,7 +114,6 @@ export function AppContainer() {
         );
     }
 
-    // 登录页面
     if (!isAuthenticated) {
         return (
             <AnimatePresence mode="wait">
@@ -201,66 +122,59 @@ export function AppContainer() {
         );
     }
 
-    // 主界面
     return (
         <motion.div
             key="main-app"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.3 }}
-            className="mx-auto flex h-dvh w-full max-w-[1700px] flex-col overflow-hidden px-3 md:grid md:grid-cols-[auto_1fr] md:gap-6 md:px-6"
+            className="mx-auto h-dvh w-full max-w-[1920px] overflow-hidden p-3 pb-20 md:grid md:grid-cols-[240px_minmax(0,1fr)] md:gap-5 md:p-4"
         >
             <NavBar />
-            <main className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-                <header className="my-6 flex flex-none items-start gap-x-2 px-2">
-                    <Logo size={48} />
-                    <div className="flex-1 overflow-hidden pb-2 sm:pb-0">
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:rounded-[28px] md:border md:border-border/70 md:bg-card/45 md:backdrop-blur-xl">
+                <header className="flex flex-none items-start gap-x-3 px-2 py-4 md:px-6 md:py-5">
+                    <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 md:hidden">
+                        <Logo size={29} />
+                    </div>
+                    <div className="min-w-0 flex-1 overflow-hidden">
+                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-primary">ZyRealm Control Plane</div>
                         <AnimatePresence mode="wait" custom={direction}>
                             <motion.div
                                 key={activeItem}
                                 custom={direction}
                                 variants={{
-                                    initial: (direction: number) => ({
-                                        y: 32 * direction,
-                                        opacity: 0
-                                    }),
-                                    animate: {
-                                        y: 0,
-                                        opacity: 1
-                                    },
-                                    exit: (direction: number) => ({
-                                        y: -32 * direction,
-                                        opacity: 0
-                                    })
+                                    initial: (direction: number) => ({ y: 22 * direction, opacity: 0 }),
+                                    animate: { y: 0, opacity: 1 },
+                                    exit: (direction: number) => ({ y: -22 * direction, opacity: 0 })
                                 }}
                                 initial="initial"
                                 animate="animate"
                                 exit="exit"
-                                transition={{ duration: 0.3 }}
-                                className="flex flex-col sm:flex-row sm:items-baseline gap-2 sm:gap-6"
+                                transition={{ duration: 0.24 }}
+                                className="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:gap-6"
                             >
-                                <span className="text-3xl font-bold mt-1">{t(activeItem)}</span>
+                                <span className="truncate text-2xl font-semibold tracking-tight md:text-3xl">{t(activeItem)}</span>
                                 {activeItem === 'channel' && <ChannelTabSwitcher />}
                             </motion.div>
                         </AnimatePresence>
                     </div>
-                    <div className="ml-auto flex items-center gap-3 relative min-h-[36px]">
+                    <div className="relative ml-auto flex min-h-[36px] items-center gap-3">
                         <Toolbar />
                     </div>
                     <ProxyPoolDialog />
                 </header>
+
+                <div className="mx-2 h-px flex-none bg-border/70 md:mx-6" />
+
                 <AnimatePresence mode="wait" initial={false}>
                     <motion.div
                         key={activeItem}
                         variants={ENTRANCE_VARIANTS.content}
                         initial="initial"
                         animate="animate"
-                        exit={{
-                            opacity: 0,
-                            scale: 0.98,
-                        }}
-                        transition={{ duration: 0.25 }}
-                        className="h-full min-h-0 flex-1"
+                        exit={{ opacity: 0, scale: 0.99 }}
+                        transition={{ duration: 0.22 }}
+                        className="h-full min-h-0 flex-1 px-0 pt-3 md:px-3 md:pb-3"
                     >
                         <ContentLoader activeRoute={activeItem} />
                     </motion.div>
@@ -269,4 +183,3 @@ export function AppContainer() {
         </motion.div>
     );
 }
-
