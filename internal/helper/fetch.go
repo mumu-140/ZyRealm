@@ -10,7 +10,7 @@ import (
 
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/transformer/outbound"
-	"github.com/dlclark/regexp2"
+	"github.com/bestruirui/octopus/internal/utils/modelmatch"
 )
 
 const modelFetchUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
@@ -32,24 +32,11 @@ func FetchModels(ctx context.Context, request model.Channel) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if request.MatchRegex != nil && *request.MatchRegex != "" {
-		matchModel := make([]string, 0)
-		re, err := regexp2.Compile(*request.MatchRegex, regexp2.ECMAScript)
-		if err != nil {
-			return nil, err
-		}
-		for _, model := range fetchModel {
-			matched, err := re.MatchString(model)
-			if err != nil {
-				return nil, err
-			}
-			if matched {
-				matchModel = append(matchModel, model)
-			}
-		}
-		return matchModel, nil
+	matchRegex := ""
+	if request.MatchRegex != nil {
+		matchRegex = *request.MatchRegex
 	}
-	return fetchModel, nil
+	return modelmatch.Filter(fetchModel, matchRegex)
 }
 
 // refer: https://platform.openai.com/docs/api-reference/models/list
