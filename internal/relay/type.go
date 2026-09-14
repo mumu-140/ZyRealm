@@ -74,7 +74,7 @@ type StreamWriter interface {
 
 // UpstreamReader abstracts reading events from upstream (SSE or WebSocket).
 type UpstreamReader interface {
-	// ReadEvent reads the next event data. Returns io.EOF at end of stream.
+	// ReadEvent reads an event data. Returns io.EOF at end of stream.
 	ReadEvent(ctx context.Context) ([]byte, error)
 	// StatusCode returns the HTTP status code (for error handling).
 	StatusCode() int
@@ -97,6 +97,11 @@ type relayRequest struct {
 	groupSessionTTL int
 	iter            *balancer.Iterator
 	attemptBudget   *relayAttemptBudget
+
+	// templateHeaderSource is a sanitized, request-scoped metadata snapshot used
+	// only for rendering {client_header:...} custom-header templates. It must
+	// never be serialized into request bodies or used for ordinary forwarding.
+	templateHeaderSource http.Header
 
 	// rawBody 保存客户端原始请求 body，用于同格式（如 Anthropic→Anthropic）直通转发时
 	// 绕过内部模型来回转换，以保证 beta 字段、内容块顺序、thinking 签名等完全透传。
