@@ -157,8 +157,8 @@ func TestBatchRefreshInvalidGlobalFilterDoesNotMutateChannel(t *testing.T) {
 		MaxConcurrency: &newLimit,
 		RefreshModels:   true,
 	})
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s, want 500 for invalid runtime filter", recorder.Code, recorder.Body.String())
 	}
 	updated, err := op.ChannelGet(channel.ID, ctx)
 	if err != nil {
