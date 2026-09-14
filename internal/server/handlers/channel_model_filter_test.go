@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -103,6 +104,7 @@ func TestBatchRefreshPersistsOnlyGloballyAdmittedModels(t *testing.T) {
 	setupChannelModelFilterHandlerTest(t)
 	setGlobalModelFilterForHandlerTest(t, `^gpt-`)
 	server := newModelListServer(t, "claude-3-5-sonnet", "gpt-4o", "gpt-4.1")
+	ctx := context.Background()
 	channel := &model.Channel{
 		Name:     "batch-filter-channel",
 		Type:     outbound.OutboundTypeOpenAIChat,
@@ -111,7 +113,7 @@ func TestBatchRefreshPersistsOnlyGloballyAdmittedModels(t *testing.T) {
 		Keys:     []model.ChannelKey{{Enabled: true, ChannelKey: "test-key"}},
 		Model:    "old-model",
 	}
-	if err := op.ChannelCreate(channel, nil); err != nil {
+	if err := op.ChannelCreate(channel, ctx); err != nil {
 		t.Fatalf("ChannelCreate failed: %v", err)
 	}
 
@@ -122,7 +124,7 @@ func TestBatchRefreshPersistsOnlyGloballyAdmittedModels(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	updated, err := op.ChannelGet(channel.ID, nil)
+	updated, err := op.ChannelGet(channel.ID, ctx)
 	if err != nil {
 		t.Fatalf("ChannelGet failed: %v", err)
 	}
@@ -135,6 +137,7 @@ func TestBatchRefreshInvalidGlobalFilterDoesNotMutateChannel(t *testing.T) {
 	setupChannelModelFilterHandlerTest(t)
 	setGlobalModelFilterForHandlerTest(t, `(`)
 	server := newModelListServer(t, "gpt-4o")
+	ctx := context.Background()
 	channel := &model.Channel{
 		Name:           "batch-invalid-filter-channel",
 		Type:           outbound.OutboundTypeOpenAIChat,
@@ -144,7 +147,7 @@ func TestBatchRefreshInvalidGlobalFilterDoesNotMutateChannel(t *testing.T) {
 		Keys:           []model.ChannelKey{{Enabled: true, ChannelKey: "test-key"}},
 		Model:          "preserve-me",
 	}
-	if err := op.ChannelCreate(channel, nil); err != nil {
+	if err := op.ChannelCreate(channel, ctx); err != nil {
 		t.Fatalf("ChannelCreate failed: %v", err)
 	}
 	newLimit := 9
@@ -157,7 +160,7 @@ func TestBatchRefreshInvalidGlobalFilterDoesNotMutateChannel(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	updated, err := op.ChannelGet(channel.ID, nil)
+	updated, err := op.ChannelGet(channel.ID, ctx)
 	if err != nil {
 		t.Fatalf("ChannelGet failed: %v", err)
 	}
