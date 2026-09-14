@@ -6,6 +6,7 @@ import (
 
 	dbmodel "github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
+	"github.com/bestruirui/octopus/internal/relay/balancer"
 )
 
 const (
@@ -31,6 +32,7 @@ type relayAttemptBudget struct {
 	providerAttemptNum map[int]int
 	wires              int
 	unknownReplayCount int
+	traceSpan          *balancer.AttemptSpan
 }
 
 func newRelayAttemptBudget() *relayAttemptBudget {
@@ -67,6 +69,20 @@ func newRelayAttemptBudgetWithLimits(maxProviders, maxWires int) *relayAttemptBu
 		providers:          make(map[int]struct{}),
 		providerAttemptNum: make(map[int]int),
 	}
+}
+
+func (b *relayAttemptBudget) bindTraceSpan(span *balancer.AttemptSpan) {
+	if b == nil {
+		return
+	}
+	b.traceSpan = span
+}
+
+func (b *relayAttemptBudget) markStop(reason failoverStopReason) {
+	if b == nil || b.traceSpan == nil || reason == "" {
+		return
+	}
+	b.traceSpan.SetFailoverStopReason(string(reason))
 }
 
 // canUseProvider is a non-mutating preflight used before acquiring local
@@ -114,6 +130,7 @@ func (b *relayAttemptBudget) tryUnknownCrossProviderReplay() bool {
 		return true
 	}
 	if b.unknownReplayCount >= b.maxUnknownReplays {
+		b.markStop(failoverStopUnknownReplayBudget)
 		return false
 	}
 	b.unknownReplayCount++
