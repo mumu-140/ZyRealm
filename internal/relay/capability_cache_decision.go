@@ -83,11 +83,8 @@ func capabilityNegativeDecisionEvent(
 		event.ModelName = rejection.Plan.UpstreamModel()
 		event.Protocol = string(rejection.Plan.UpstreamProtocol())
 	}
-	if rejection.Info.Blocked {
-		event.Detail = compactCapabilityReason(rejection.Info.Reason)
-		if !rejection.Info.ExpiresAt.IsZero() {
-			event.ExpiresAt = rejection.Info.ExpiresAt.Unix()
-		}
+	if rejection.Info.Blocked && !rejection.Info.ExpiresAt.IsZero() {
+		event.ExpiresAt = rejection.Info.ExpiresAt.Unix()
 	}
 	return event
 }
