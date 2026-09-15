@@ -58,7 +58,7 @@ export function RoutingInspector({ logs }: RoutingInspectorProps) {
         ? preferredLogID
         : availableLogs[0]?.id ?? null;
 
-    const explanationQuery = useRoutingExplanation(selectedLogID);
+    const explanationQuery = useRoutingExplanation(expanded ? selectedLogID : null);
     const explanation = explanationQuery.data;
 
     return (
