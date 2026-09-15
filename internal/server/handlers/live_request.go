@@ -5,9 +5,18 @@ import (
 	"strings"
 
 	"github.com/bestruirui/octopus/internal/relay"
+	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
+	"github.com/bestruirui/octopus/internal/server/router"
 	"github.com/gin-gonic/gin"
 )
+
+func init() {
+	router.NewGroupRouter("/api/v1/live-request").
+		Use(middleware.Auth()).
+		Add(http.MethodGet, "/list", listLiveRequests).
+		Add(http.MethodPost, "/:id/interrupt", interruptLiveRequest)
+}
 
 func listLiveRequests(c *gin.Context) {
 	resp.Success(c, gin.H{"requests": relay.ListLiveRequests()})
