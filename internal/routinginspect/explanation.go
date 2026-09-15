@@ -63,9 +63,9 @@ type Explanation struct {
 
 // BuildExplanation derives an immutable explanation exclusively from fields
 // already persisted in RelayLog.Attempts. It intentionally does not inspect
-// current routing state, credentials, request/response bodies, or free-form
-// attempt messages, so a historical explanation cannot mutate or influence the
-// live routing data plane and cannot expose prompt/response payloads.
+// current routing state, credentials, request/response bodies, free-form attempt
+// messages, or free-form decision detail, so a historical explanation cannot
+// mutate or influence the live routing data plane and cannot expose payload text.
 func BuildExplanation(logItem model.RelayLog) Explanation {
 	explanation := Explanation{
 		Version:        ExplanationVersion,
@@ -92,7 +92,7 @@ func BuildExplanation(logItem model.RelayLog) Explanation {
 		}
 
 		for _, event := range attempt.DecisionEvents {
-			explanation.Decisions = append(explanation.Decisions, event)
+			explanation.Decisions = append(explanation.Decisions, sanitizeDecisionEvent(event))
 		}
 
 		if attempt.AttemptKind == "decision_only" {
@@ -121,6 +121,15 @@ func BuildExplanation(logItem model.RelayLog) Explanation {
 
 	explanation.FinalRoute = selectFinalRoute(logItem.Attempts)
 	return explanation
+}
+
+func sanitizeDecisionEvent(event model.RoutingDecisionEvent) model.RoutingDecisionEvent {
+	// Detail is deliberately excluded from the dedicated routing-explanation
+	// contract. It may originate from upstream free-form error text in older
+	// persisted traces; typed reason/identity/protocol/expiry are sufficient for
+	// operator diagnostics without exposing payload-like text.
+	event.Detail = ""
+	return event
 }
 
 func summarizeRoute(attempt model.ChannelAttempt) RouteSummary {
