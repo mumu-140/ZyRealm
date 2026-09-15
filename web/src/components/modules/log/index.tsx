@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLogs, type LogKeywordMode, type LogKeywordScope, type RelayLog } from '@/api/endpoints/log';
 import { LogCard, LogDetailModal } from './Item';
 import { ActiveRequests } from './ActiveRequests';
+import { RoutingInspector } from './RoutingInspector';
 import { Loader2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
@@ -145,6 +146,7 @@ export function Log() {
         <TooltipProvider>
             <div className="flex h-full min-h-0 flex-col gap-3">
                 <ActiveRequests />
+                <RoutingInspector logs={logs} />
                 {warning ? (
                     <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
                         {warning}
