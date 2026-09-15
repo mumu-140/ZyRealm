@@ -1,8 +1,8 @@
 # Octopus Gap Adoption Roadmap
 
-> Status: staged adoption index. P0.1, P0.1H, P0.2, and P0.3 are merged and verified on `main`.
+> Status: staged adoption index. P0.1, P0.1H, P0.2, P0.3, and the historical Routing Inspector (#27) are merged and verified on `main`. P1P passthrough semantic hardening + same-format coverage is the next implementation slice.
 >
-> Current verified runtime baseline: ZyRealm `main@c60ba21cebe5d3b9424d2fffff97964e2b281deb` (2026-09-15), with merged-tree CI run `34960012680` all green. P0.3 was not deployed by this merge workflow.
+> Current verified runtime baseline: ZyRealm `main@1f4b856b350c3941000e1ca9af12c7ed42f67622` (2026-09-16 planning baseline), with merged-tree CI run `35006072380` all green. This roadmap update performs no deployment or production-state change.
 
 ## Planning rule
 
@@ -10,11 +10,12 @@ Adopt upstream ideas one slice at a time.
 
 1. Deep-read the ZyRealm source paths touched by the current slice.
 2. Write a detailed implementation or diagnostic plan for that slice only.
-3. Implement it, run the full relevant regression suite, and merge it cleanly.
+3. Implement it with RED/GREEN evidence, run the full relevant regression suite, and merge it cleanly.
 4. Only then deep-read and plan the next slice.
-5. Do **not** lock P1 schema or architecture while P0 is still moving.
+5. Treat the then-current `main`, repository governance script, CI workflow, and pre-push contract as execution authority; do not invent a parallel validation workflow.
+6. Do **not** lock schema-heavy P1 architecture while the nearer data-plane compatibility/reliability gaps remain unresolved.
 
-This is deliberate: Octopus and ZyRealm now have materially different runtime architectures. We should transfer useful ideas, not copy upstream patches mechanically.
+This is deliberate: Octopus-derived repositories and ZyRealm now have materially different runtime architectures. We should transfer useful ideas, not copy patches mechanically.
 
 ## P0 sequence
 
@@ -174,21 +175,76 @@ Implementation / verification evidence:
 - runtime limitation: registry/cancellation is intentionally process-local and valid for the current single application container; multi-replica distributed cancellation is deferred;
 - deployment status: **not deployed** by this merge workflow.
 
-## P1 — RE-EVALUATE AFTER P0 OPERATIONAL FEEDBACK
+## Post-P0 routing observability baseline — MERGED + VERIFIED
 
-### Credential × model × protocol capability model
+Historical Routing Inspector PR #27 is now part of the runtime baseline and must be treated as a regression dependency for all later relay work.
+
+Verified baseline:
+
+- merge/head commit: `1f4b856b350c3941000e1ca9af12c7ed42f67622`;
+- merged-tree CI run: `35006072380` — success;
+- request-local typed routing-decision ledger is persisted for historical explanation;
+- runtime candidate, credential cooldown, and capability rejection decisions can be explained without placing raw request/response bodies or free-form provider detail into the trace;
+- the Inspector is read-only and must remain data-plane neutral.
+
+P1P therefore cannot be accepted merely because passthrough bytes work. It must also prove that TTFT/failover/replay decisions remain correctly represented by the existing routing trace and Inspector contract.
+
+## P1P — Passthrough semantic hardening + same-format coverage — NEXT
+
+Detailed source-audited plan: [`2026-09-16-p1p-passthrough-hardening-coverage-plan.md`](./2026-09-16-p1p-passthrough-hardening-coverage-plan.md).
+
+Fresh source audit against `main@1f4b856b350c3941000e1ca9af12c7ed42f67622` changes the earlier feature-gap interpretation:
+
+- ZyRealm already has the optional `model.PassthroughCapable` architecture; passthrough is **not missing**;
+- Anthropic Messages -> Anthropic Messages and OpenAI Responses -> OpenAI Responses already use same-format raw HTTP passthrough;
+- Responses WebSocket passthrough/continuation affinity is already more integrated with ZyRealm's runtime than a generic raw proxy;
+- OpenAI Chat Completions still uses the explicit standard-path request struct and JSON reconstruction, so unknown future same-format fields are not guaranteed to survive;
+- P0.1H proves that **ZyRealm-generated heartbeat output** does not count as model payload, but does not prove the same semantic for **upstream raw SSE comments/keepalives** in the passthrough stream path;
+- raw passthrough is therefore a forward-compatibility and stream-commitment hardening problem, not a reason to create another relay subsystem.
+
+Execution order is intentionally ahead of the existing schema-heavy P1 idea:
+
+1. **P1P.1 — RED/GREEN upstream passthrough SSE commitment semantics.** Add a deterministic real-handler regression where provider A flushes an upstream `: keepalive` SSE comment and then stalls past TTFT, while provider B succeeds. Comment-only liveness must not stop TTFT or establish semantic delivery; dispatch remains an existing `unknown_upstream_outcome` replay case.
+2. **P1P.2 — Separate transport write from semantic provider payload.** Keep raw bytes untouched on the wire while using a bounded incremental SSE observer or equivalent classification mechanism. Raw chunks are not SSE records, so a stateless prefix check is explicitly forbidden.
+3. **P1P.3 — Lock replay + Routing Inspector invariants.** Substantive payload remains no-replay; first-token failure scope/cooldown/circuit behavior remains unchanged; route traces stay typed, bounded, non-sensitive, and data-plane neutral.
+4. **P1P.4 — OpenAI Chat -> Chat same-format passthrough.** Reuse the existing `PassthroughCapable` interface, preserve unknown/future fields, minimally rewrite the top-level selected upstream model, retain existing credential-owned header protection, and keep cross-format Chat routes on the standard transformer path.
+5. **P1P.5 — Embeddings/Images source audit only.** Audit whether the same framework is safe for embeddings and the separate image relay/multipart surface. Do not automatically expand the first implementation PR.
+6. **P1C — control-plane conveniences after P1P closure.** Re-audit tri-state parameter/header override semantics and a privileged diagnostic direct-route. Generic HTTP sticky routing remains deferred.
+7. **Only then re-evaluate schema-heavy P1.** Credential × model × protocol capability schema/migration work remains unapproved until fresh post-P1P evidence shows it is still necessary.
+
+### P1P execution and validation gate
+
+Use the repository's existing scripts and CI contract; do not create a parallel harness.
+
+- governance entrypoint: `bash scripts/check-governance.sh --repo`;
+- branch naming remains under accepted prefixes such as `codex/...`;
+- targeted backend tests run on GitHub CI or the approved fixed-version remote environment, never as local Mac build/test work;
+- full backend hard gate remains `go test -buildvcs=false ./...`;
+- existing `go vet ./...` behavior follows repository CI policy;
+- frontend install/lint/test/build remains part of full CI even for backend-only runtime changes;
+- exact PR-head SHA, changed-file boundary, and review-thread state must be audited before merge;
+- merged-tree CI must be green before P1P is marked complete;
+- no production deployment is part of P1P unless separately requested.
+
+The first implementation PR should remain narrow: TTFT semantic hardening + Chat same-format passthrough. Embeddings/Images and P1C become successor slices unless their fresh audits prove they are isolated enough to remain reviewable.
+
+## P1 — Credential × model × protocol capability model — DEFERRED / RE-EVALUATE AFTER P1P
 
 Remembered idea only: Octopus's `ChannelKey` / `ChannelModel` / `ChannelGrant` split is a useful authorization-modeling reference. ZyRealm already has a more advanced runtime credential pool, so any future P1 work must layer capability metadata onto the existing scheduler rather than replace it.
 
-No schema, migration, API, or runtime design is approved here. P0 is now merged and CI-stable; P1 remains unapproved until a fresh source audit and operational-need assessment show that the capability model is still necessary.
+No schema, migration, API, or runtime design is approved here. P1 remains unapproved until P1P is closed and a fresh source audit plus operational-need assessment show that the capability model is still necessary.
 
 ## Explicit non-goals
 
-- No wholesale merge/rebase from Octopus for these features.
-- No P1 database migration without a fresh post-P0 source audit and explicit approval.
-- No replacement of ZyRealm credential fairness, cooldown, circuit breaking, failure-domain classification, protocol fallback, or replay-safety logic with Octopus's simpler routing model.
-- No blanket `if error then switch provider` handling that ignores downstream commitment or client cancellation provenance.
-- No speculative planning of later slices based on today's file layout; each slice must be planned against the then-current `main`.
+- No wholesale merge/rebase from Octopus or octopus-customization for these features.
+- No second passthrough subsystem; same-format coverage must extend the existing `PassthroughCapable` architecture.
+- No P1 database migration without a fresh post-P1P source audit and explicit approval.
+- No replacement of ZyRealm credential fairness, cooldown, circuit breaking, failure-domain classification, protocol fallback, replay-safety, live-request/manual-interrupt, or Routing Inspector logic with a simpler routing model.
+- No blanket `if error then switch provider` handling that ignores dispatch uncertainty or downstream commitment.
+- No broadening of first-token timeout duration, replay allowance, or attempt budgets as part of passthrough hardening.
+- No generic sticky-session or public `channel/model` direct-route syntax in P1P.
+- No dependency addition merely to mimic a reference implementation when existing ZyRealm code can satisfy the contract.
+- No speculative planning of later slices based on today's file layout; each successor slice must be planned against the then-current `main`.
 
 ## Progress checklist
 
@@ -214,4 +270,15 @@ No schema, migration, API, or runtime design is approved here. P0 is now merged 
 - [x] P0.3 implemented with TDD and PR-head full regression verification.
 - [x] P0.3 final implementation diff/review boundary audited; no unresolved review threads at reviewed head.
 - [x] P0.3 merged/stabilized on `main`; squash merge `c60ba21cebe5d3b9424d2fffff97964e2b281deb`, merged-tree CI `34960012680` all green.
-- [ ] Re-evaluate whether P1 is still necessary after P0 operational feedback.
+- [x] Historical Routing Inspector #27 accounted for as current runtime baseline; `main@1f4b856b350c3941000e1ca9af12c7ed42f67622`, CI `35006072380` green.
+- [x] P1P current-main source audit completed across passthrough, TTFT, stream commitment, replay, parameter override, governance, CI, and pre-push paths.
+- [x] P1P detailed implementation plan recorded.
+- [ ] P1P.1 RED proves upstream passthrough SSE comment-only liveness does not satisfy intended first-token semantics on current implementation.
+- [ ] P1P.2 semantic stream-commitment hardening implemented with GREEN + mutation proof.
+- [ ] P1P.3 replay/routing-decision/Inspector invariants verified.
+- [ ] P1P.4 OpenAI Chat same-format raw passthrough implemented with unknown-field and credential-isolation coverage.
+- [ ] P1P final PR-head governance/backend/frontend CI green; diff and review-thread boundaries audited.
+- [ ] P1P merged/stabilized on `main`; merged-tree CI green.
+- [ ] Embeddings/Images passthrough successor audit completed against post-P1P `main`.
+- [ ] Re-evaluate P1C tri-state override/direct-route needs against post-P1P `main`.
+- [ ] Re-evaluate whether schema-heavy P1 capability modeling is still necessary after P1P operational feedback.
