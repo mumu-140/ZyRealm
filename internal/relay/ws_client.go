@@ -36,6 +36,10 @@ type wsRelayResult struct {
 	PublicError       *wsPublicError
 }
 
+func shouldSuppressWSRoundError(ctx context.Context, err error) bool {
+	return isManualInterrupt(ctx, err) || isManualInterrupt(ctx, contextError(ctx))
+}
+
 // HandleWSResponse handles WebSocket upgrade for /v1/responses.
 func HandleWSResponse(c *gin.Context) {
 	requestContext := contextWithClientHeaderTemplateSource(c.Request.Context(), c.Request.Header)
@@ -242,6 +246,9 @@ func processWSResponseCreate(
 
 	req, group, err := newWSRelayRequest(roundCtx, conn, inAdapter, apiKeyID, requestModel, cloneInternalRequest(executionRequest), originalRequest, preferredSticky, bodyBytes)
 	if err != nil {
+		if shouldSuppressWSRoundError(roundCtx, err) {
+			return conversationState
+		}
 		status := 404
 		code := "model_not_found"
 		if err.Error() == "no available channel" {
