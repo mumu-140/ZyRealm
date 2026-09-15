@@ -1,8 +1,8 @@
 # Octopus Gap Adoption Roadmap
 
-> Status: staged adoption index. P0.1, P0.1H, and P0.2 are merged and verified on `main`. P0.3 is implemented and PR-verified on its topic branch; merge and merged-tree stabilization are still pending.
+> Status: staged adoption index. P0.1, P0.1H, P0.2, and P0.3 are merged and verified on `main`.
 >
-> Current verified runtime baseline before P0.3: ZyRealm `main@8c629cddb1b41e28322950736b8089d6c19a6dcf` (2026-09-15).
+> Current verified runtime baseline: ZyRealm `main@c60ba21cebe5d3b9424d2fffff97964e2b281deb` (2026-09-15), with merged-tree CI run `34960012680` all green. P0.3 was not deployed by this merge workflow.
 
 ## Planning rule
 
@@ -131,9 +131,9 @@ Merge/verification evidence:
 - ECMAScript matcher semantics and managed-channel ownership boundaries are present on the verified `main` baseline;
 - no DB migration, relay routing/failover change, automatic bulk resync, P0.3 code, or P1 schema work.
 
-**Execution order:** P0.2 is closed. P0.3 was source-audited and implemented from `main@8c629cddb1b41e28322950736b8089d6c19a6dcf`; it is not yet merged.
+**Execution order:** P0.2 is closed. P0.3 was source-audited and implemented from `main@8c629cddb1b41e28322950736b8089d6c19a6dcf`, then squash-merged and verified on `main@c60ba21cebe5d3b9424d2fffff97964e2b281deb`.
 
-### P0.3 — Live request state + manual interrupt — IMPLEMENTED + PR VERIFIED
+### P0.3 — Live request state + manual interrupt — MERGED + VERIFIED
 
 Fresh source audit showed that `RelayLog` is completion-oriented and gets its durable ID only at log-save time, while HTTP and downstream Responses WebSocket have different context ownership. P0.3 therefore does **not** turn durable logs into a live-control plane. It adds a separate process-local runtime layer:
 
@@ -151,12 +151,14 @@ Detailed source-audited design and implementation plan:
 
 - [`2026-09-15-p0.3-live-request-manual-interrupt-design.md`](./2026-09-15-p0.3-live-request-manual-interrupt-design.md)
 - [`2026-09-15-p0.3-live-request-manual-interrupt-plan.md`](./2026-09-15-p0.3-live-request-manual-interrupt-plan.md)
+- [`2026-09-15-p0.3-merge-verification.md`](./2026-09-15-p0.3-merge-verification.md) — authoritative post-merge closure record.
 
 Implementation / verification evidence:
 
 - branch: `codex/p0.3-live-request-interrupt`;
-- Draft PR: `#24 feat(relay): P0.3 live request state and manual interrupt`;
+- PR: `#24 feat(relay): P0.3 live request state and manual interrupt`;
 - reviewed implementation head before evidence-only docs: `b3edbf65456550a816e3e3e7b5d882d869259f1e`;
+- final topic-branch head: `6507d536b4e56413c382f6876cc03abc6b4d5c1e`;
 - HTTP lifecycle RED: run `34936995852` — missing HTTP control/live snapshot as expected;
 - authenticated route RED/GREEN: runs `34945515796` / `34945890168`;
 - WebSocket round-scope RED/GREEN: runs `34946086827` / `34946690318`;
@@ -164,24 +166,26 @@ Implementation / verification evidence:
 - frontend Active Requests RED/GREEN: runs `34947301822` / `34947564792`;
 - final code-review race RED: run `34948033814` — missing manual-cancel setup-error suppression as expected;
 - reviewed implementation GREEN: run `34948368279` — governance, backend `go vet ./...` + full Go tests, frontend lint/tests/build all success;
-- PR scope audit before evidence-only docs: only P0.3 design/plan, relay runtime/tests, authenticated handler/tests, and Logs-page live-request UI/tests; no DB migration, deploy/compose, dependency, or production-state changes;
-- PR review-thread audit: no unresolved review threads; PR remained mergeable and Draft at the reviewed implementation head;
+- final PR-head CI: run `34949893366` — governance, backend Vet/full tests, and frontend lint/tests/production build all success;
+- PR scope audit: only P0.3 design/plan, relay runtime/tests, authenticated handler/tests, and Logs-page live-request UI/tests; no DB migration, deploy/compose, dependency, or production-state changes;
+- PR review-thread audit: no unresolved review threads before merge;
+- squash merge commit: `c60ba21cebe5d3b9424d2fffff97964e2b281deb`;
+- merged-tree CI: run `34960012680` (`CI #625`) — governance, backend Vet/full tests, and frontend lint/test/build all success;
 - runtime limitation: registry/cancellation is intentionally process-local and valid for the current single application container; multi-replica distributed cancellation is deferred;
-- deployment status: **not deployed**;
-- merge status: **not merged**. Do not label this slice `MERGED + VERIFIED` until PR #24 is merged and the merged-tree CI is green.
+- deployment status: **not deployed** by this merge workflow.
 
-## P1 — DEFERRED UNTIL P0.3 MERGED + STABILIZED
+## P1 — RE-EVALUATE AFTER P0 OPERATIONAL FEEDBACK
 
 ### Credential × model × protocol capability model
 
 Remembered idea only: Octopus's `ChannelKey` / `ChannelModel` / `ChannelGrant` split is a useful authorization-modeling reference. ZyRealm already has a more advanced runtime credential pool, so any future P1 work must layer capability metadata onto the existing scheduler rather than replace it.
 
-No schema, migration, API, or runtime design is approved here. P1 must be source-audited and planned only after P0 is complete and stable.
+No schema, migration, API, or runtime design is approved here. P0 is now merged and CI-stable; P1 remains unapproved until a fresh source audit and operational-need assessment show that the capability model is still necessary.
 
 ## Explicit non-goals
 
 - No wholesale merge/rebase from Octopus for these features.
-- No P1 database migration while P0 is in progress.
+- No P1 database migration without a fresh post-P0 source audit and explicit approval.
 - No replacement of ZyRealm credential fairness, cooldown, circuit breaking, failure-domain classification, protocol fallback, or replay-safety logic with Octopus's simpler routing model.
 - No blanket `if error then switch provider` handling that ignores downstream commitment or client cancellation provenance.
 - No speculative planning of later slices based on today's file layout; each slice must be planned against the then-current `main`.
@@ -209,5 +213,5 @@ No schema, migration, API, or runtime design is approved here. P1 must be source
 - [x] P0.3 source audit + detailed design/plan completed against current `main`.
 - [x] P0.3 implemented with TDD and PR-head full regression verification.
 - [x] P0.3 final implementation diff/review boundary audited; no unresolved review threads at reviewed head.
-- [ ] P0.3 merged/stabilized on `main` with merged-tree CI.
+- [x] P0.3 merged/stabilized on `main`; squash merge `c60ba21cebe5d3b9424d2fffff97964e2b281deb`, merged-tree CI `34960012680` all green.
 - [ ] Re-evaluate whether P1 is still necessary after P0 operational feedback.
