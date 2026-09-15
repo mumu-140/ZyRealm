@@ -244,6 +244,7 @@ func (it *Iterator) Attempts() []model.ChannelAttempt {
 	}
 	out := append([]model.ChannelAttempt(nil), it.attempts...)
 	for i := range out {
+		out[i].DecisionTraceVersion = model.RoutingDecisionTraceVersion
 		out[i].DecisionEvents = cloneDecisionEvents(out[i].DecisionEvents)
 	}
 	if len(it.decisionEvents) == 0 {
@@ -267,7 +268,8 @@ func (it *Iterator) Attempts() []model.ChannelAttempt {
 		Status:       model.AttemptSkipped,
 		AttemptKind:  "decision_only",
 		AttemptRoutingTrace: model.AttemptRoutingTrace{
-			DecisionEvents: events,
+			DecisionTraceVersion: model.RoutingDecisionTraceVersion,
+			DecisionEvents:       events,
 		},
 	}}
 }
