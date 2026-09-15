@@ -38,6 +38,7 @@ func TestBuildExplanationUsesOnlyPersistedHistoricalTrace(t *testing.T) {
 					DecisionEvents: []model.RoutingDecisionEvent{{
 						Sequence: 2, Stage: model.DecisionStageCredential, Outcome: model.DecisionOutcomeRejected,
 						Reason: model.DecisionReasonCredentialCooldown, ChannelID: 10, ChannelKeyID: 100,
+						Detail: "SECRET_DECISION_DETAIL_MUST_NOT_ESCAPE",
 					}},
 				},
 			},
@@ -77,6 +78,9 @@ func TestBuildExplanationUsesOnlyPersistedHistoricalTrace(t *testing.T) {
 	if len(got.Decisions) != 2 || got.Decisions[0].Sequence != 1 || got.Decisions[1].Sequence != 2 {
 		t.Fatalf("decisions are not globally sequence ordered: %#v", got.Decisions)
 	}
+	if got.Decisions[1].Detail != "" {
+		t.Fatalf("explanation must strip free-form decision detail: %#v", got.Decisions[1])
+	}
 	if len(got.Attempts) != 2 || got.Attempts[0].AttemptNum != 1 || got.Attempts[1].AttemptNum != 2 {
 		t.Fatalf("attempt summaries = %#v", got.Attempts)
 	}
@@ -93,6 +97,7 @@ func TestBuildExplanationUsesOnlyPersistedHistoricalTrace(t *testing.T) {
 		"SECRET_RESPONSE_MUST_NOT_ESCAPE",
 		"SECRET_ERROR_MUST_NOT_ESCAPE",
 		"SECRET_ATTEMPT_MESSAGE",
+		"SECRET_DECISION_DETAIL_MUST_NOT_ESCAPE",
 	} {
 		if strings.Contains(string(encoded), secret) {
 			t.Fatalf("explanation leaked sensitive source field %q: %s", secret, encoded)
