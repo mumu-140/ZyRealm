@@ -155,6 +155,33 @@ func TestWSManualInterruptOnlyStopsCurrentResponseCreateRound(t *testing.T) {
 	}
 }
 
+func TestWSRelayRequestContextPreservesScopedReplayChild(t *testing.T) {
+	control := newRelayControl(context.Background(), LiveRequestSnapshot{RequestID: "lr_ws_replay_budget"})
+	replayCtx, cancelReplay := context.WithCancelCause(control.Context())
+	cancelReplay(errLocalRelayBudgetExceeded)
+
+	request := &relayRequest{ctx: replayCtx, control: control}
+	if request.requestContext() != replayCtx {
+		t.Fatal("ws request must prefer its scoped execution child over the round control context")
+	}
+	if !isLocalRelayBudgetExceeded(request.requestContext(), contextError(request.requestContext())) {
+		t.Fatalf("scoped replay budget cause was lost: %v", contextError(request.requestContext()))
+	}
+	if control.Context().Err() != nil {
+		t.Fatalf("local replay budget canceled the parent round control: %v", control.Context().Err())
+	}
+
+	manualControl := newRelayControl(context.Background(), LiveRequestSnapshot{RequestID: "lr_ws_manual_child"})
+	manualChild, cancelManualChild := context.WithCancelCause(manualControl.Context())
+	defer cancelManualChild(nil)
+	manualRequest := &relayRequest{ctx: manualChild, control: manualControl}
+	manualControl.Interrupt()
+	<-manualChild.Done()
+	if !isManualInterrupt(manualRequest.requestContext(), contextError(manualRequest.requestContext())) {
+		t.Fatalf("manual interrupt did not propagate into scoped ws child: %v", contextError(manualRequest.requestContext()))
+	}
+}
+
 func waitForWSManualInterruptSnapshot(t *testing.T, requestedModel string, timeout time.Duration) LiveRequestSnapshot {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
