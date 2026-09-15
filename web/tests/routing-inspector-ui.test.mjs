@@ -32,6 +32,7 @@ test('logs page mounts a dedicated routing inspector without replacing existing 
 
     assert.match(inspector, /Historical routing explanation/);
     assert.match(inspector, /read-only/i);
+    assert.match(inspector, /useRoutingExplanation\(expanded\s*\?\s*selectedLogID\s*:\s*null\)/, 'collapsed inspector must not query historical routing data');
     assert.match(inspector, /final_route/);
     assert.match(inspector, /decisions/);
     assert.match(inspector, /attempts/);
