@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	dbmodel "github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
@@ -21,6 +22,29 @@ func TestHandlerCapabilityNegativeCacheSkipsOnlyMatchingShape(t *testing.T) {
 	ctx := setupRelayTestDB(t)
 	availability.Reset()
 	t.Cleanup(availability.Reset)
+
+	logCh := op.RelayLogSubscribe()
+	t.Cleanup(func() { op.RelayLogUnsubscribe(logCh) })
+	nextLog := func() dbmodel.RelayLog {
+		t.Helper()
+		select {
+		case relayLog := <-logCh:
+			return relayLog
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for relay log")
+			return dbmodel.RelayLog{}
+		}
+	}
+	findCapabilityDecision := func(relayLog dbmodel.RelayLog, channelID int) (dbmodel.RoutingDecisionEvent, bool) {
+		for _, attempt := range relayLog.Attempts {
+			for _, event := range attempt.DecisionEvents {
+				if event.ChannelID == channelID && event.Reason == dbmodel.DecisionReasonCapabilityNegative {
+					return event, true
+				}
+			}
+		}
+		return dbmodel.RoutingDecisionEvent{}, false
+	}
 
 	var incompatibleHits atomic.Int32
 	incompatible := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -90,6 +114,7 @@ func TestHandlerCapabilityNegativeCacheSkipsOnlyMatchingShape(t *testing.T) {
 	if incompatibleHits.Load() != 1 || healthyHits.Load() != 1 {
 		t.Fatalf("first request hits = incompatible:%d healthy:%d, want 1/1", incompatibleHits.Load(), healthyHits.Load())
 	}
+	_ = nextLog()
 
 	second := makeRequest("different prompt", "xhigh")
 	if second.Code != http.StatusOK {
@@ -97,6 +122,20 @@ func TestHandlerCapabilityNegativeCacheSkipsOnlyMatchingShape(t *testing.T) {
 	}
 	if incompatibleHits.Load() != 1 || healthyHits.Load() != 2 {
 		t.Fatalf("matching negative cache must skip incompatible provider before wire; hits=%d/%d", incompatibleHits.Load(), healthyHits.Load())
+	}
+	secondLog := nextLog()
+	event, ok := findCapabilityDecision(secondLog, firstChannel.ID)
+	if !ok {
+		t.Fatalf("persisted route trace missing capability-negative rejection: %#v", secondLog.Attempts)
+	}
+	if event.Stage != dbmodel.DecisionStageProtocol || event.Outcome != dbmodel.DecisionOutcomeRejected {
+		t.Fatalf("persisted capability decision = stage %q outcome %q", event.Stage, event.Outcome)
+	}
+	if event.ModelName != "capability-model" || event.Protocol == "" || event.ChannelKeyID <= 0 || event.ExpiresAt == 0 {
+		t.Fatalf("persisted capability decision lacks typed historical evidence: %#v", event)
+	}
+	if event.Detail != "" {
+		t.Fatalf("persisted capability decision must not contain free-form upstream detail: %#v", event)
 	}
 
 	third := makeRequest("third prompt", "high")
@@ -106,4 +145,5 @@ func TestHandlerCapabilityNegativeCacheSkipsOnlyMatchingShape(t *testing.T) {
 	if incompatibleHits.Load() != 2 || healthyHits.Load() != 3 {
 		t.Fatalf("different reasoning effort must not be overblocked; hits=%d/%d", incompatibleHits.Load(), healthyHits.Load())
 	}
+	_ = nextLog()
 }

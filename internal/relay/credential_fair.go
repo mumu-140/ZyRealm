@@ -34,6 +34,16 @@ func selectFairChannelCredential(
 		}
 		if !availability.CredentialAvailableRevision(channel.ID, key.ID, key.CredentialRevision, now) {
 			options.ExcludeKeyIDs[key.ID] = struct{}{}
+			if iterator != nil {
+				iterator.RecordDecision(dbmodel.RoutingDecisionEvent{
+					Stage:        dbmodel.DecisionStageCredential,
+					Outcome:      dbmodel.DecisionOutcomeRejected,
+					Reason:       dbmodel.DecisionReasonCredentialCooldown,
+					ChannelID:    channel.ID,
+					ChannelKeyID: key.ID,
+					ChannelName:  channel.Name,
+				})
+			}
 			continue
 		}
 		if iterator != nil && iterator.SkipCircuitBreak(channel.ID, key.ID, channel.Name) {
