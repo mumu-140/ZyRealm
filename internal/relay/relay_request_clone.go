@@ -11,6 +11,7 @@ func cloneRelayRequestForAttempt(request *relayRequest) *relayRequest {
 	cloned := &relayRequest{
 		c:                    request.c,
 		ctx:                  request.ctx,
+		control:              request.control,
 		inAdapter:            request.inAdapter,
 		internalRequest:      request.internalRequest,
 		metrics:              request.metrics,

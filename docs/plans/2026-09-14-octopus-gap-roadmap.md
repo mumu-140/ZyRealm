@@ -1,8 +1,8 @@
 # Octopus Gap Adoption Roadmap
 
-> Status: staged adoption index. P0.1, P0.1H, and P0.2 are merged and verified on `main`. P0.3 is now the next eligible slice, but remains source-audit-only until a fresh plan is written against the then-current code.
+> Status: staged adoption index. P0.1, P0.1H, and P0.2 are merged and verified on `main`. P0.3 is implemented and PR-verified on its topic branch; merge and merged-tree stabilization are still pending.
 >
-> Current verified runtime baseline: ZyRealm `main@fe61b4dd7649a5b45de2fec19e2806ad74704830` (2026-09-15).
+> Current verified runtime baseline before P0.3: ZyRealm `main@8c629cddb1b41e28322950736b8089d6c19a6dcf` (2026-09-15).
 
 ## Planning rule
 
@@ -124,25 +124,53 @@ Detailed corrected source audit, implementation record, TDD evidence, and comple
 
 Merge/verification evidence:
 
-- initial docs-only source-audit PR: `#21 docs(plan): source-audit P0.2 global model filter` (superseded by the corrected completion record);
-- implementation PR: `#22 feat(model): add global model discovery filter`;
-- final PR head: `834fec88cf2a24f28b29b0c708913df71d843071`;
-- final PR-triggered CI: `#540`, run `34924619996` — governance, backend Vet/full tests, frontend lint/test/build all success;
-- squash merge commit: `fe61b4dd7649a5b45de2fec19e2806ad74704830`;
-- merged-tree CI: `#541`, run `34926801554` — governance, backend Vet/full tests, frontend lint/test/build all success;
-- no DB migration, dependency change, relay routing/failover change, automatic bulk resync, P0.3 code, or P1 schema work.
+- initial docs-only source-audit PR: `#21 docs(plan): source-audit P0.2 global model filter` (superseded and closed unmerged);
+- final corrected implementation/closure PR: `#23`;
+- squash merge commit: `8c629cddb1b41e28322950736b8089d6c19a6dcf`;
+- merged-tree CI: `#543`, run `34931539402` — governance, backend Vet/full tests, and frontend lint/test/build all success;
+- ECMAScript matcher semantics and managed-channel ownership boundaries are present on the verified `main` baseline;
+- no DB migration, relay routing/failover change, automatic bulk resync, P0.3 code, or P1 schema work.
 
-**Execution order:** P0.2 is closed. P0.3 may now begin only with a fresh source audit against the current `main`; do not implement P0.3 from the remembered scope below.
+**Execution order:** P0.2 is closed. P0.3 was source-audited and implemented from `main@8c629cddb1b41e28322950736b8089d6c19a6dcf`; it is not yet merged.
 
-### P0.3 — Live request state + manual interrupt — QUEUED, SOURCE AUDIT NEXT
+### P0.3 — Live request state + manual interrupt — IMPLEMENTED + PR VERIFIED
 
-Remembered scope only: expose current in-flight routing state and allow a scoped manual interruption of the active attempt/round. ZyRealm should surface its own richer runtime concepts (provider/key/protocol, `RoutingDecision`, `DispatchState`, replay-safety, failure scope) rather than copy Octopus's state object verbatim.
+Fresh source audit showed that `RelayLog` is completion-oriented and gets its durable ID only at log-save time, while HTTP and downstream Responses WebSocket have different context ownership. P0.3 therefore does **not** turn durable logs into a live-control plane. It adds a separate process-local runtime layer:
 
-Exact persistence model, SSE/WS transport, retention, interrupt semantics, authorization, UI placement, and interaction with replay safety are intentionally undecided until a fresh P0.3 source audit is complete.
+- one independent live request ID and `relayControl` per logical HTTP request or executable WebSocket `response.create` round;
+- safe snapshots for transport/model/channel-key IDs/protocol/attempt counters/dispatch state/downstream commitment/phase, with no raw request or response content and no credential values;
+- explicit `errManualInterrupt` cause, classified as request-scoped terminal and health/circuit/outlier neutral;
+- replay-safety remains the existing routing model: pre-dispatch is `not_sent`, MAYBE_SENT is `unknown_upstream_outcome`, and committed delivery is unsafe to replay;
+- HTTP control is parented to ingress context and shared by attempt clones;
+- each WebSocket round has a child control independent of the connection context, so interrupting one turn leaves the downstream WebSocket usable for the next `response.create`;
+- exact-replay local timeout remains a scoped child beneath the round control, preserving the existing 15-second recovery budget;
+- authenticated management API only: `GET /api/v1/live-request/list` and `POST /api/v1/live-request/:id/interrupt` under `middleware.Auth()`;
+- Logs UI gets a separate Active Requests surface backed by `['live-requests']` and 1-second snapshot polling; durable RelayLog SSE/cache remains unchanged.
 
-**Do not implement or write a detailed plan from this paragraph.** Re-read the then-current relay/log/runtime-state code first.
+Detailed source-audited design and implementation plan:
 
-## P1 — DEFERRED UNTIL ALL P0 GATES PASS
+- [`2026-09-15-p0.3-live-request-manual-interrupt-design.md`](./2026-09-15-p0.3-live-request-manual-interrupt-design.md)
+- [`2026-09-15-p0.3-live-request-manual-interrupt-plan.md`](./2026-09-15-p0.3-live-request-manual-interrupt-plan.md)
+
+Implementation / verification evidence:
+
+- branch: `codex/p0.3-live-request-interrupt`;
+- Draft PR: `#24 feat(relay): P0.3 live request state and manual interrupt`;
+- reviewed implementation head before evidence-only docs: `b3edbf65456550a816e3e3e7b5d882d869259f1e`;
+- HTTP lifecycle RED: run `34936995852` — missing HTTP control/live snapshot as expected;
+- authenticated route RED/GREEN: runs `34945515796` / `34945890168`;
+- WebSocket round-scope RED/GREEN: runs `34946086827` / `34946690318`;
+- exact-replay child-context RED/GREEN: runs `34946910561` / `34947110080`;
+- frontend Active Requests RED/GREEN: runs `34947301822` / `34947564792`;
+- final code-review race RED: run `34948033814` — missing manual-cancel setup-error suppression as expected;
+- reviewed implementation GREEN: run `34948368279` — governance, backend `go vet ./...` + full Go tests, frontend lint/tests/build all success;
+- PR scope audit before evidence-only docs: only P0.3 design/plan, relay runtime/tests, authenticated handler/tests, and Logs-page live-request UI/tests; no DB migration, deploy/compose, dependency, or production-state changes;
+- PR review-thread audit: no unresolved review threads; PR remained mergeable and Draft at the reviewed implementation head;
+- runtime limitation: registry/cancellation is intentionally process-local and valid for the current single application container; multi-replica distributed cancellation is deferred;
+- deployment status: **not deployed**;
+- merge status: **not merged**. Do not label this slice `MERGED + VERIFIED` until PR #24 is merged and the merged-tree CI is green.
+
+## P1 — DEFERRED UNTIL P0.3 MERGED + STABILIZED
 
 ### Credential × model × protocol capability model
 
@@ -177,7 +205,9 @@ No schema, migration, API, or runtime design is approved here. P1 must be source
 - [x] P0.2 source audit + detailed plan completed, with pre-implementation ECMAScript correction recorded.
 - [x] P0.2 implemented with RED/GREEN coverage across normal and managed-site discovery paths.
 - [x] P0.2 final PR head passed governance, backend Vet/full tests, and frontend lint/test/build.
-- [x] P0.2 merged/stabilized on `main`; merged-tree CI `34926801554` all green.
-- [ ] P0.3 source audit + detailed plan.
-- [ ] P0.3 implemented and merged with full regression evidence.
+- [x] P0.2 merged/stabilized on `main`; final closure commit `8c629cddb1b41e28322950736b8089d6c19a6dcf`, merged-tree CI `34931539402` all green.
+- [x] P0.3 source audit + detailed design/plan completed against current `main`.
+- [x] P0.3 implemented with TDD and PR-head full regression verification.
+- [x] P0.3 final implementation diff/review boundary audited; no unresolved review threads at reviewed head.
+- [ ] P0.3 merged/stabilized on `main` with merged-tree CI.
 - [ ] Re-evaluate whether P1 is still necessary after P0 operational feedback.

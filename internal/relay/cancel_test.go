@@ -61,6 +61,21 @@ func TestIsClientCancellationIgnoresFirstTokenTimeout(t *testing.T) {
 	}
 }
 
+func TestManualInterruptIsNotClientOrAmbiguousTransportCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(errManualInterrupt)
+
+	if !isManualInterrupt(ctx, context.Canceled) {
+		t.Fatalf("expected manual interrupt cause to be recognized")
+	}
+	if isClientCancellation(ctx, context.Canceled) {
+		t.Fatalf("expected manual interrupt to remain distinct from client cancellation")
+	}
+	if isAmbiguousTransportCancellation(ctx, context.Canceled) {
+		t.Fatalf("expected manual interrupt to remain distinct from ambiguous transport cancellation")
+	}
+}
+
 func TestIsAmbiguousTransportCancellationRequiresLiveOuterContext(t *testing.T) {
 	wrapped := fmt.Errorf("failed to send request: %w", context.Canceled)
 	if !isAmbiguousTransportCancellation(context.Background(), wrapped) {

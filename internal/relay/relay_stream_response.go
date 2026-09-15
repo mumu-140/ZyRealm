@@ -35,6 +35,7 @@ func (ra *relayAttempt) handleStreamResponseV2(ctx context.Context, response *ht
 		OnFirstToken: func() {
 			ra.metrics.SetFirstTokenTime(time.Now())
 			ra.stopFirstTokenTimer()
+			ra.markLiveStreamDelivery()
 		},
 	})
 
@@ -67,6 +68,7 @@ func (ra *relayAttempt) handleStreamResponsePassthroughV2(ctx context.Context, r
 		OnFirstToken: func() {
 			ra.metrics.SetFirstTokenTime(time.Now())
 			ra.stopFirstTokenTimer()
+			ra.markLiveStreamDelivery()
 		},
 		OnFinish: func(ctx context.Context, rawStream []byte) error {
 			if len(rawStream) == 0 {

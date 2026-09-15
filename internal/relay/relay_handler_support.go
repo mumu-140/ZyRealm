@@ -216,9 +216,17 @@ func runProtocolRetries(
 			select {
 			case <-ctx.Done():
 				log.Debugf("request context canceled during retry backoff")
-				return withRoutingDecision(ctx, request, channel.ID, attemptResult{Canceled: true, Err: context.Canceled})
+				err := contextError(ctx)
+				return withRoutingDecision(ctx, request, channel.ID, attemptResult{
+					Canceled: isClientCancellation(ctx, err), Err: err, DispatchState: dispatchNotSent,
+				})
 			case <-time.After(delay):
 			}
+		}
+		if err := contextError(ctx); err != nil {
+			return withRoutingDecision(ctx, request, channel.ID, attemptResult{
+				Canceled: isClientCancellation(ctx, err), Err: err, DispatchState: dispatchNotSent,
+			})
 		}
 
 		attempt, err := newRelayAttempt(request, channel, key, plan, firstTokenTimeout)
@@ -231,14 +239,46 @@ func runProtocolRetries(
 				return withRoutingDecision(ctx, request, channel.ID, attemptResult{Err: err})
 			}
 		}
+		updateLiveRequestAttemptStart(request, channel, key, plan)
 		result = attempt.attempt()
 		result.Plan = plan
+		updateLiveRequestAttemptResult(request, result)
 		result = withRoutingDecision(ctx, request, channel.ID, result)
 		if !result.Decision.RetrySameCredential {
 			break
 		}
 	}
 	return result
+}
+
+func updateLiveRequestAttemptStart(request *relayRequest, channel *dbmodel.Channel, key dbmodel.ChannelKey, plan *protocolroute.AttemptPlan) {
+	if request == nil || request.control == nil || channel == nil || plan == nil {
+		return
+	}
+	providerAttempt, wireAttempt := 0, 0
+	if request.attemptBudget != nil {
+		providerAttempt = request.attemptBudget.providerAttemptIndex(channel.ID)
+		wireAttempt = request.attemptBudget.wireAttemptIndex()
+	}
+	request.control.Update(func(snapshot *LiveRequestSnapshot) {
+		snapshot.ChannelID = channel.ID
+		snapshot.ChannelKeyID = key.ID
+		snapshot.UpstreamProtocol = string(plan.UpstreamProtocol())
+		snapshot.ProviderAttempt = providerAttempt
+		snapshot.WireAttempt = wireAttempt
+		snapshot.DispatchState = dispatchStateString(dispatchNotSent)
+		snapshot.Phase = string(livePhaseAttempting)
+	})
+}
+
+func updateLiveRequestAttemptResult(request *relayRequest, result attemptResult) {
+	if request == nil || request.control == nil {
+		return
+	}
+	request.control.Update(func(snapshot *LiveRequestSnapshot) {
+		snapshot.DispatchState = dispatchStateString(result.DispatchState)
+		snapshot.DownstreamCommitted = result.Written || request.streamPayloadWritten.Load()
+	})
 }
 
 func fallbackStatus(result attemptResult) int {

@@ -110,6 +110,11 @@ func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, error) {
 	// no response is ever observed. From here on the execution outcome is
 	// conservatively MAYBE_SENT for replay-safety decisions.
 	ra.dispatchState = dispatchMaybeSent
+	if ra.relayRequest != nil && ra.relayRequest.control != nil {
+		ra.relayRequest.control.Update(func(snapshot *LiveRequestSnapshot) {
+			snapshot.DispatchState = dispatchStateString(dispatchMaybeSent)
+		})
+	}
 	response, err := httpClient.Do(req)
 	if err != nil {
 		if timeoutErr := ra.firstTokenTimeoutIfNeeded(req.Context(), err); timeoutErr != nil {

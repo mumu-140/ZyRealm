@@ -113,6 +113,27 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		decision.Terminal = true
 		return decision
 	}
+	if isManualInterrupt(ctx, result.Err) {
+		decision.Domain = failureDomainUnknown
+		decision.RuleID = "manual_interrupt"
+		decision.FailureScope = routingScopeRequest
+		decision.Directive = routingDirectiveTerminal
+		decision.RuntimeEffect = routingRuntimeNone
+		decision.OutlierScope = scopeIgnore
+		decision.CircuitEffect = "none"
+		decision.SkipProvider = false
+		decision.RetrySameCredential = false
+		decision.Terminal = true
+		switch {
+		case result.Written || result.ResetConversation:
+			decision.ReplaySafety = routingReplayCommitted
+		case result.DispatchState == dispatchMaybeSent:
+			decision.ReplaySafety = routingReplayUnknownOutcome
+		default:
+			decision.ReplaySafety = routingReplayNotSent
+		}
+		return decision
+	}
 	if result.Canceled {
 		decision.Domain = failureDomainUnknown
 		decision.RuleID = "client_cancel"
