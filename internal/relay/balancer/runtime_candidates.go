@@ -1,27 +1,64 @@
 package balancer
 
 import (
+	"strings"
 	"time"
 
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/relay/availability"
 )
 
-// runtimeOrderedCandidates applies shared runtime eligibility before the
-// configured balancing algorithm. Available and passive-half-open candidates
-// stay in the normal strategy pool so an expired cooldown can eventually
-// recover under real traffic. Suspect candidates are retained as a fallback
-// tier. Active cooldown candidates are excluded entirely.
-func runtimeOrderedCandidates(group model.Group, requestModel string, now time.Time) []model.GroupItem {
+type runtimeCandidateOrder struct {
+	Candidates []model.GroupItem
+	Decisions  []model.RoutingDecisionEvent
+}
+
+func boundedRuntimeDecisionDetail(value string) string {
+	value = strings.TrimSpace(value)
+	const maxBytes = 256
+	if len(value) > maxBytes {
+		return value[:maxBytes]
+	}
+	return value
+}
+
+// runtimeOrderedCandidatesWithDecisions applies the existing runtime
+// eligibility policy and returns observational metadata captured at the same
+// decision point. The decision slice is request-local diagnostics only: it does
+// not acquire a half-open lease or change the candidate sets handed to the
+// configured balancer.
+func runtimeOrderedCandidatesWithDecisions(group model.Group, requestModel string, now time.Time) runtimeCandidateOrder {
 	primary := make([]model.GroupItem, 0, len(group.Items))
 	suspect := make([]model.GroupItem, 0, len(group.Items))
+	decisions := make([]model.RoutingDecisionEvent, 0)
 
 	for _, item := range group.Items {
 		upstreamModel := ItemUpstreamModel(item, requestModel)
-		switch availability.CandidateState(item.ChannelID, upstreamModel, now) {
+		info := availability.CandidateInfo(item.ChannelID, upstreamModel, now)
+		switch info.State {
 		case availability.StateCooldown:
+			event := model.RoutingDecisionEvent{
+				Stage:       model.DecisionStageCandidate,
+				Outcome:     model.DecisionOutcomeRejected,
+				Reason:      model.DecisionReasonRuntimeCooldown,
+				ChannelID:   item.ChannelID,
+				ModelName:   upstreamModel,
+				Detail:      boundedRuntimeDecisionDetail(info.Reason),
+			}
+			if !info.CooldownUntil.IsZero() {
+				event.ExpiresAt = info.CooldownUntil.Unix()
+			}
+			decisions = append(decisions, event)
 			continue
 		case availability.StateSuspect:
+			decisions = append(decisions, model.RoutingDecisionEvent{
+				Stage:       model.DecisionStageCandidate,
+				Outcome:     model.DecisionOutcomeEligible,
+				Reason:      model.DecisionReasonRuntimeSuspect,
+				ChannelID:   item.ChannelID,
+				ModelName:   upstreamModel,
+				Detail:      boundedRuntimeDecisionDetail(info.Reason),
+			})
 			suspect = append(suspect, item)
 		default:
 			// Available and HalfOpen both participate in the configured strategy.
@@ -35,7 +72,11 @@ func runtimeOrderedCandidates(group model.Group, requestModel string, now time.T
 	ordered := make([]model.GroupItem, 0, len(primary)+len(suspect))
 	ordered = append(ordered, b.Candidates(primary)...)
 	ordered = append(ordered, b.Candidates(suspect)...)
-	return ordered
+	return runtimeCandidateOrder{Candidates: ordered, Decisions: decisions}
+}
+
+func runtimeOrderedCandidates(group model.Group, requestModel string, now time.Time) []model.GroupItem {
+	return runtimeOrderedCandidatesWithDecisions(group, requestModel, now).Candidates
 }
 
 func runtimeStickyEligible(item model.GroupItem, requestModel string, now time.Time) bool {

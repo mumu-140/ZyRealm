@@ -35,7 +35,8 @@ func NewIterator(group model.Group, apiKeyID int, requestModel string) *Iterator
 // AVAILABLE 候选中生效，不能把 SUSPECT/HALF_OPEN/COOLDOWN 通道提到首位。
 func NewIteratorWithPreference(group model.Group, apiKeyID int, requestModel string, preferred *SessionEntry) *Iterator {
 	now := time.Now()
-	candidates := runtimeOrderedCandidates(group, requestModel, now)
+	order := runtimeOrderedCandidatesWithDecisions(group, requestModel, now)
+	candidates := order.Candidates
 
 	stickyIdx := -1
 	stickyKeyID := 0
@@ -72,7 +73,7 @@ func NewIteratorWithPreference(group model.Group, apiKeyID int, requestModel str
 		}
 	}
 
-	return &Iterator{
+	iterator := &Iterator{
 		candidates:       candidates,
 		index:            -1,
 		stickyIdx:        stickyIdx,
@@ -80,6 +81,10 @@ func NewIteratorWithPreference(group model.Group, apiKeyID int, requestModel str
 		modelName:        requestModel,
 		skippedProviders: make(map[int]struct{}),
 	}
+	for _, decision := range order.Decisions {
+		iterator.RecordDecision(decision)
+	}
+	return iterator
 }
 
 // Next 移动到下一个未被当前请求跳过的候选，返回 false 表示遍历完成。
