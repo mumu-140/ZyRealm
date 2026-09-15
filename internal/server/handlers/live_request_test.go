@@ -2,10 +2,12 @@ package handlers
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/bestruirui/octopus/internal/server/resp"
+	"github.com/bestruirui/octopus/internal/server/router"
 	"github.com/gin-gonic/gin"
 )
 
@@ -66,5 +68,31 @@ func TestInterruptLiveRequestRejectsBlankID(t *testing.T) {
 
 	if recorder.Code != 400 {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestLiveRequestRoutesRequireAdminAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	if err := router.RegisterAll(engine); err != nil {
+		t.Fatalf("register routes: %v", err)
+	}
+
+	tests := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/api/v1/live-request/list"},
+		{method: http.MethodPost, path: "/api/v1/live-request/lr_test/interrupt"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(tt.method, tt.path, nil)
+			engine.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("status=%d body=%s, want admin-auth 401", recorder.Code, recorder.Body.String())
+			}
+		})
 	}
 }
