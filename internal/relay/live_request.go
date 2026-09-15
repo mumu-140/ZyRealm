@@ -125,6 +125,20 @@ func (c *relayControl) Interrupt() bool {
 	return true
 }
 
+func (ra *relayAttempt) markLiveStreamDelivery() {
+	if ra == nil {
+		return
+	}
+	ra.streamPayloadWritten.Store(true)
+	if ra.relayRequest == nil || ra.relayRequest.control == nil {
+		return
+	}
+	ra.relayRequest.control.Update(func(snapshot *LiveRequestSnapshot) {
+		snapshot.Phase = string(livePhaseStreaming)
+		snapshot.DownstreamCommitted = true
+	})
+}
+
 func registerLiveRequest(control *relayControl) {
 	if control == nil {
 		return
