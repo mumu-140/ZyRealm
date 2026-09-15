@@ -116,7 +116,10 @@ func TestHTTPManualInterruptInFlightStopsWithoutProviderFailover(t *testing.T) {
 		case firstStarted <- struct{}{}:
 		default:
 		}
-		<-r.Context().Done()
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
 	}))
 	defer first.Close()
 	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
