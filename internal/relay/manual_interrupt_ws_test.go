@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -179,6 +180,15 @@ func TestWSRelayRequestContextPreservesScopedReplayChild(t *testing.T) {
 	<-manualChild.Done()
 	if !isManualInterrupt(manualRequest.requestContext(), contextError(manualRequest.requestContext())) {
 		t.Fatalf("manual interrupt did not propagate into scoped ws child: %v", contextError(manualRequest.requestContext()))
+	}
+}
+
+func TestWSManualInterruptSuppressesRoundSetupPublicError(t *testing.T) {
+	control := newRelayControl(context.Background(), LiveRequestSnapshot{RequestID: "lr_ws_setup_interrupt"})
+	control.Interrupt()
+
+	if !shouldSuppressWSRoundError(control.Context(), errors.New("model not found")) {
+		t.Fatal("manual interruption during round setup must not emit a misleading public setup error")
 	}
 }
 
