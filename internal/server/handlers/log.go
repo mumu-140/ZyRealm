@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/bestruirui/octopus/internal/op"
+	"github.com/bestruirui/octopus/internal/routinginspect"
 	"github.com/bestruirui/octopus/internal/server/middleware"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
@@ -26,6 +27,10 @@ func init() {
 		AddRoute(
 			router.NewRoute("/site-action-targets", http.MethodGet).
 				Handle(getLogSiteActionTargets),
+		).
+		AddRoute(
+			router.NewRoute("/:id/routing", http.MethodGet).
+				Handle(getLogRoutingExplanation),
 		).
 		AddRoute(
 			router.NewRoute("/:id", http.MethodGet).
@@ -250,6 +255,24 @@ func getLog(c *gin.Context) {
 		return
 	}
 	resp.Success(c, logItem)
+}
+
+func getLogRoutingExplanation(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		resp.InvalidParam(c)
+		return
+	}
+	logItem, err := op.RelayLogGet(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			resp.NotFound(c)
+			return
+		}
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	resp.Success(c, routinginspect.BuildExplanation(*logItem))
 }
 
 func clearLog(c *gin.Context) {
