@@ -18,8 +18,10 @@ type Iterator struct {
 	skippedProviders map[int]struct{}
 
 	// 内嵌追踪
-	attempts []model.ChannelAttempt
-	count    int
+	attempts         []model.ChannelAttempt
+	count            int
+	decisionEvents   []model.RoutingDecisionEvent
+	decisionSequence int
 }
 
 // NewIterator 创建负载均衡迭代器
@@ -134,6 +136,18 @@ func (it *Iterator) Index() int {
 	return it.index
 }
 
+// RecordDecision stores observational routing metadata without participating in
+// candidate selection or attempt accounting. Sequence is request-local and is
+// assigned here so callers cannot accidentally create unstable ordering.
+func (it *Iterator) RecordDecision(event model.RoutingDecisionEvent) {
+	if it == nil {
+		return
+	}
+	it.decisionSequence++
+	event.Sequence = it.decisionSequence
+	it.decisionEvents = append(it.decisionEvents, event)
+}
+
 // Skip 记录当前通道被跳过（通道禁用、无Key、类型不兼容等）
 func (it *Iterator) Skip(channelID, channelKeyID int, channelName, msg string) {
 	it.count++
@@ -209,9 +223,48 @@ func (it *Iterator) StartAttempt(channelID, channelKeyID int, channelName string
 	}
 }
 
-// Attempts 返回所有决策记录（交给日志模块持久化）
+func cloneDecisionEvents(events []model.RoutingDecisionEvent) []model.RoutingDecisionEvent {
+	if len(events) == 0 {
+		return nil
+	}
+	return append([]model.RoutingDecisionEvent(nil), events...)
+}
+
+// Attempts returns a detached persistence snapshot. Decision events are
+// materialized only here, so explanation data cannot feed back into scheduling,
+// attempt numbering, fairness, health, retry, or failover control flow.
 func (it *Iterator) Attempts() []model.ChannelAttempt {
-	return it.attempts
+	if it == nil {
+		return nil
+	}
+	out := append([]model.ChannelAttempt(nil), it.attempts...)
+	for i := range out {
+		out[i].DecisionEvents = cloneDecisionEvents(out[i].DecisionEvents)
+	}
+	if len(it.decisionEvents) == 0 {
+		return out
+	}
+	events := cloneDecisionEvents(it.decisionEvents)
+	if len(out) > 0 {
+		// One deterministic envelope keeps top-level attempt cardinality and
+		// AttemptNum semantics unchanged while preserving request-wide ordering.
+		out[0].DecisionEvents = append(events, out[0].DecisionEvents...)
+		return out
+	}
+
+	first := events[0]
+	return []model.ChannelAttempt{{
+		ChannelID:    first.ChannelID,
+		ChannelKeyID: first.ChannelKeyID,
+		ChannelName:  first.ChannelName,
+		ModelName:    first.ModelName,
+		AttemptNum:   0,
+		Status:       model.AttemptSkipped,
+		AttemptKind:  "decision_only",
+		AttemptRoutingTrace: model.AttemptRoutingTrace{
+			DecisionEvents: events,
+		},
+	}}
 }
 
 // AttemptSpan 管理单次通道尝试的生命周期（计时、状态、结果）
