@@ -549,7 +549,7 @@
         "deleted": "预设已删除",
         "deleteFailed": "删除失败",
         "updated": "预设已更新",
-        "updateFailed": "更新失败"
+        "updateFailed": "预设更新失败"
       }
     },
     "create": {
