@@ -131,8 +131,11 @@ func TestHandlerCapabilityNegativeCacheSkipsOnlyMatchingShape(t *testing.T) {
 	if event.Stage != dbmodel.DecisionStageProtocol || event.Outcome != dbmodel.DecisionOutcomeRejected {
 		t.Fatalf("persisted capability decision = stage %q outcome %q", event.Stage, event.Outcome)
 	}
-	if event.ModelName != "capability-model" || event.Detail == "" || event.ExpiresAt == 0 {
-		t.Fatalf("persisted capability decision lacks historical evidence: %#v", event)
+	if event.ModelName != "capability-model" || event.Protocol == "" || event.ChannelKeyID <= 0 || event.ExpiresAt == 0 {
+		t.Fatalf("persisted capability decision lacks typed historical evidence: %#v", event)
+	}
+	if event.Detail != "" {
+		t.Fatalf("persisted capability decision must not contain free-form upstream detail: %#v", event)
 	}
 
 	third := makeRequest("third prompt", "high")
