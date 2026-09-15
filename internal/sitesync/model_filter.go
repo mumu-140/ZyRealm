@@ -38,32 +38,6 @@ func applyGlobalModelFilterToSiteFetchResult(result siteModelFetchResult, patter
 	return result, nil
 }
 
-// syncSiteModelsByGroupWithGlobalFilter is the explicit testable boundary for
-// site-discovery admission. Production SyncAccount injects the same pattern
-// into the operation context before entering platform-specific sync code.
-func syncSiteModelsByGroupWithGlobalFilter(
-	ctx context.Context,
-	siteRecord *model.Site,
-	account *model.SiteAccount,
-	accessToken string,
-	groupTokens []model.SiteToken,
-	platformUserID int,
-	source string,
-	globalFilter string,
-	fetcher func(token model.SiteToken, allowGlobalFallback bool) (siteModelFetchResult, error),
-) ([]model.SiteModel, []siteGroupSyncResult) {
-	return syncSiteModelsByGroup(
-		withGlobalModelFilter(ctx, globalFilter),
-		siteRecord,
-		account,
-		accessToken,
-		groupTokens,
-		platformUserID,
-		source,
-		fetcher,
-	)
-}
-
 // applyGlobalModelFilterToSnapshot is a final admission guard for direct-token
 // sync paths that do not pass through syncSiteModelsByGroup. Grouped paths are
 // already filtered earlier; applying the same regex twice is idempotent.
@@ -73,11 +47,8 @@ func applyGlobalModelFilterToSnapshot(snapshot *syncSnapshot, pattern string) er
 	}
 
 	names := make([]string, 0, len(snapshot.models))
-	byName := make(map[string][]model.SiteModel, len(snapshot.models))
 	for _, item := range snapshot.models {
-		name := strings.TrimSpace(item.ModelName)
-		names = append(names, name)
-		byName[name] = append(byName[name], item)
+		names = append(names, strings.TrimSpace(item.ModelName))
 	}
 	filteredNames, err := modelmatch.Filter(names, pattern)
 	if err != nil {
