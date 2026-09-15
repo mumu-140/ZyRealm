@@ -42,6 +42,7 @@ export const SettingKey = {
     OutlierCFRecoverMinutes: 'outlier_cf_recover_minutes',
     CompressMasterEnabled: 'compress_master_enabled',
     ApiBaseUrl: 'api_base_url',
+    ModelFilterRegex: 'model_filter_regex',
 } as const;
 
 /**
