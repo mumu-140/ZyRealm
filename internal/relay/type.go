@@ -118,11 +118,15 @@ type relayRequest struct {
 	responseCollected    atomic.Bool
 }
 
-// requestContext returns the logical relay execution context. When a request
-// control is attached, its child context is authoritative so operator
-// interruption can stop this logical request without canceling the ingress
-// parent or the WebSocket connection context.
+// requestContext returns the logical relay execution context. WebSocket mode
+// may layer a stricter execution child (for example the exact-replay budget)
+// over the round control context; that child remains parented to the control so
+// a manual interrupt still propagates. HTTP requests keep the control context
+// authoritative over the ingress parent.
 func (r *relayRequest) requestContext() context.Context {
+	if r != nil && r.c == nil && r.ctx != nil {
+		return r.ctx
+	}
 	if r != nil && r.control != nil {
 		return r.control.Context()
 	}
