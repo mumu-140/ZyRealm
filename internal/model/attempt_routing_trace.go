@@ -4,6 +4,7 @@ package model
 // routing observability inside the existing serialized attempts avoids a schema
 // migration while making one routing decision inspectable end-to-end.
 type AttemptRoutingTrace struct {
+	DecisionTraceVersion string                 `json:"decision_trace_version,omitempty"`
 	CredentialRevision   int                    `json:"credential_revision,omitempty"`
 	FailureDomain        string                 `json:"failure_domain,omitempty"`
 	FailureScope         string                 `json:"failure_scope,omitempty"`
