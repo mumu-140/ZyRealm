@@ -130,12 +130,15 @@ func selectChannelAttempt(input channelAttemptInput) (dbmodel.ChannelKey, []*pro
 			Request: input.request, LegacyEligible: input.legacyEligible,
 		})
 		if len(plans) > 0 {
-			filtered, nearest, blocked := filterCapabilityNegativePlans(input.channel, input.request, plans, time.Now())
-			if len(filtered) > 0 {
-				return usedKey, filtered
+			filterResult := filterCapabilityNegativePlansDetailed(input.channel, input.request, plans, time.Now())
+			for _, rejection := range filterResult.Rejected {
+				input.iterator.RecordDecision(capabilityNegativeDecisionEvent(input.channel, usedKey, rejection))
 			}
-			if blocked {
-				input.iterator.Skip(input.channel.ID, usedKey.ID, input.channel.Name, capabilityNegativeCacheSkipReason(nearest))
+			if len(filterResult.Filtered) > 0 {
+				return usedKey, filterResult.Filtered
+			}
+			if filterResult.BlockedAny {
+				input.iterator.Skip(input.channel.ID, usedKey.ID, input.channel.Name, capabilityNegativeCacheSkipReason(filterResult.Nearest))
 				return dbmodel.ChannelKey{}, nil
 			}
 		}
