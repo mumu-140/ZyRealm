@@ -549,7 +549,7 @@
         "deleted": "Preset deleted",
         "deleteFailed": "Delete failed",
         "updated": "Preset updated",
-        "updateFailed": "Update failed"
+        "updateFailed": "Preset update failed"
       }
     },
     "create": {
@@ -718,9 +718,9 @@
         "running": "Running..."
       },
       "toast": {
-        "saved": "Auto grouping configuration saved",
-        "savedAndRun": "Auto grouping configuration saved and run",
-        "saveFailed": "Failed to save auto grouping configuration",
+        "saved": "Auto group configuration saved",
+        "savedAndRun": "Auto group configuration saved and run",
+        "saveFailed": "Failed to save auto group configuration",
         "runSuccess": "Auto grouping has run",
         "runFailed": "Failed to run auto grouping"
       }
@@ -879,7 +879,7 @@
         "keys": "Keys"
       },
       "noBaseUrls": "No Base URLs",
-      "noKeys": "No keys",
+      "noKeys": "No Keys",
       "metrics": {
         "totalRequests": "Total Requests",
         "totalToken": "Total Tokens",
@@ -999,7 +999,7 @@
       "unrecognizedAllAPIHub": "No All API Hub export data was recognized. Make sure you selected the correct exported JSON.",
       "unrecognizedMetapi": "No Metapi account export data was recognized. Make sure you selected the correct exported JSON.",
       "noImportableAllAPIHub": "No importable All API Hub site account data was found.",
-      "noImportableMetapi": "No importable Metapi account export data was found."
+      "noImportableMetapi": "No importable Metapi site account data was found."
     }
   },
   "siteSync": {
