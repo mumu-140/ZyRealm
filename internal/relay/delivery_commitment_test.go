@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -51,6 +52,27 @@ func TestDeliveryStartedTreatsHTTPStreamModelPayloadAsCommitted(t *testing.T) {
 
 	if !ra.deliveryStarted() {
 		t.Fatal("real HTTP streaming model payload must count as committed delivery")
+	}
+}
+
+func TestLiveRequestMarksStreamingOnlyWithModelPayloadCommitment(t *testing.T) {
+	control := newRelayControl(context.Background(), LiveRequestSnapshot{
+		RequestID: "lr_stream_commit",
+		Phase:     string(livePhaseAttempting),
+	})
+	ra := &relayAttempt{relayRequest: &relayRequest{control: control}}
+
+	ra.markLiveStreamDelivery()
+
+	if !ra.streamPayloadWritten.Load() {
+		t.Fatal("stream model payload must update the existing delivery commitment flag")
+	}
+	snapshot := control.Snapshot()
+	if snapshot.Phase != string(livePhaseStreaming) {
+		t.Fatalf("phase=%q, want streaming", snapshot.Phase)
+	}
+	if !snapshot.DownstreamCommitted {
+		t.Fatal("first model payload must mark live downstream commitment")
 	}
 }
 
