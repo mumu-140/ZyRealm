@@ -69,7 +69,7 @@ func TestCapabilityNegativeDecisionEventUsesPersistedSafeMetadata(t *testing.T) 
 		Plan: plan,
 		Info: availability.CapabilitySnapshot{
 			Blocked:   true,
-			Reason:    "unsupported response protocol",
+			Reason:    "SECRET_UPSTREAM_ERROR_TEXT_MUST_NOT_PERSIST",
 			ExpiresAt: now.Add(30 * time.Minute),
 		},
 	}
@@ -87,7 +87,10 @@ func TestCapabilityNegativeDecisionEventUsesPersistedSafeMetadata(t *testing.T) 
 	if event.ModelName != plan.UpstreamModel() || event.Protocol != string(plan.UpstreamProtocol()) {
 		t.Fatalf("capability event route metadata = %#v", event)
 	}
-	if event.ExpiresAt != rejection.Info.ExpiresAt.Unix() || event.Detail != rejection.Info.Reason {
-		t.Fatalf("capability event evidence = %#v", event)
+	if event.ExpiresAt != rejection.Info.ExpiresAt.Unix() {
+		t.Fatalf("capability event expiry = %#v", event)
+	}
+	if event.Detail != "" {
+		t.Fatalf("capability event must not persist free-form upstream detail: %#v", event)
 	}
 }
