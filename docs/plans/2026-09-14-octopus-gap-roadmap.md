@@ -1,8 +1,8 @@
 # Octopus Gap Adoption Roadmap
 
-> Status: staged adoption index. P0.1 and P0.1H are both merged and verified on `main`. P0.2 is now the next eligible slice, but remains source-audit-only until a fresh plan is written against the then-current code.
+> Status: staged adoption index. P0.1, P0.1H, and P0.2 are merged and verified on `main`. P0.3 is now the next eligible slice, but remains source-audit-only until a fresh plan is written against the then-current code.
 >
-> P0.1H runtime merge baseline: ZyRealm `main@12b3a6952739fac85f678002f0d0e8c77190e446` (2026-09-14).
+> Current verified runtime baseline: ZyRealm `main@fe61b4dd7649a5b45de2fec19e2806ad74704830` (2026-09-15).
 
 ## Planning rule
 
@@ -90,21 +90,55 @@ Merge/verification evidence:
 
 The audited `INTERNAL_ERROR` samples were post-payload failures, so P0.1H deliberately did **not** add a broad peer-error substring classifier. Any future pre-output peer-stream case remains evidence-driven.
 
-**Execution order:** P0.1H is closed. P0.2 may now begin with a fresh source audit against the current `main`; do not implement P0.2 from the remembered scope alone.
-
-### P0.2 — Global model filter — QUEUED, SOURCE AUDIT NEXT
-
-Remembered scope only: add a system-level model-discovery filter that composes with channel-level filtering (intended semantics: both must pass). Exact configuration ownership, regex engine, managed-channel behavior, cache invalidation, API shape, and tests are intentionally undecided until the fresh P0.2 source audit is complete.
+### P0.2 — Global model filter — MERGED + VERIFIED
 
 Upstream reference: Octopus commit `d5a893ff124ca1cb56f2eb25e14380347d247ae9`.
 
-**Do not implement or write a detailed plan from this paragraph.** Re-read the then-current ZyRealm model discovery/sync code first.
+The useful upstream semantic contract was retained: a system-level `model_filter_regex` composes with channel-level `MatchRegex` as an intersection. ZyRealm could not copy the upstream handler patch verbatim because discovery also flows through batch refresh, scheduled sync, managed-site grouped discovery, session/site fallbacks, and direct-token paths.
 
-### P0.3 — Live request state + manual interrupt — QUEUED, NOT YET SOURCE-AUDITED
+Fresh source audit corrected two assumptions from the initial docs-only plan:
+
+1. existing ZyRealm channel filtering and the referenced Octopus implementation use `regexp2.ECMAScript`, not `regexp2.RE2`; P0.2 therefore preserves the existing ECMAScript dialect;
+2. managed-channel ownership is path-specific: scheduled sync continues to rely on the existing `ChannelUpdate` managed read-only guard, batch refresh retains its existing `BypassManagedCheck` behavior, and site sync continues to own site projection. P0.2 did not broaden or redesign those ownership semantics.
+
+The implementation adds a shared dependency-light `internal/utils/modelmatch` matcher, backend validation for `model_filter_regex`, and enforcement across audited discovery/sync paths:
+
+- manual model fetch;
+- batch model refresh;
+- scheduled model sync;
+- managed-site grouped primary/fallback discovery;
+- direct-token/site snapshot admission.
+
+Policy semantics:
+
+- empty global regex = disabled;
+- global + channel regex = intersection;
+- provider model order remains stable;
+- saving the setting does not immediately rewrite existing channel models or launch a global resync;
+- valid regex with zero matches is an authoritative policy result when the upstream discovery was authoritative;
+- invalid runtime regex is an error/non-authoritative result and must not erase historical models or fail open.
+
+The Sync Tasks UI exposes the setting with English, Simplified Chinese, and Traditional Chinese copy. Backend validation remains authoritative; no browser-side regex engine became policy authority.
+
+Detailed corrected source audit, implementation record, TDD evidence, and completion record: [`2026-09-14-global-model-filter-plan.md`](./2026-09-14-global-model-filter-plan.md).
+
+Merge/verification evidence:
+
+- initial docs-only source-audit PR: `#21 docs(plan): source-audit P0.2 global model filter` (superseded by the corrected completion record);
+- implementation PR: `#22 feat(model): add global model discovery filter`;
+- final PR head: `834fec88cf2a24f28b29b0c708913df71d843071`;
+- final PR-triggered CI: `#540`, run `34924619996` — governance, backend Vet/full tests, frontend lint/test/build all success;
+- squash merge commit: `fe61b4dd7649a5b45de2fec19e2806ad74704830`;
+- merged-tree CI: `#541`, run `34926801554` — governance, backend Vet/full tests, frontend lint/test/build all success;
+- no DB migration, dependency change, relay routing/failover change, automatic bulk resync, P0.3 code, or P1 schema work.
+
+**Execution order:** P0.2 is closed. P0.3 may now begin only with a fresh source audit against the current `main`; do not implement P0.3 from the remembered scope below.
+
+### P0.3 — Live request state + manual interrupt — QUEUED, SOURCE AUDIT NEXT
 
 Remembered scope only: expose current in-flight routing state and allow a scoped manual interruption of the active attempt/round. ZyRealm should surface its own richer runtime concepts (provider/key/protocol, `RoutingDecision`, `DispatchState`, replay-safety, failure scope) rather than copy Octopus's state object verbatim.
 
-Exact persistence model, SSE/WS transport, retention, interrupt semantics, authorization, UI placement, and interaction with replay safety are intentionally undecided until P0.2 is complete.
+Exact persistence model, SSE/WS transport, retention, interrupt semantics, authorization, UI placement, and interaction with replay safety are intentionally undecided until a fresh P0.3 source audit is complete.
 
 **Do not implement or write a detailed plan from this paragraph.** Re-read the then-current relay/log/runtime-state code first.
 
@@ -140,8 +174,10 @@ No schema, migration, API, or runtime design is approved here. P1 must be source
 - [x] P0.1H final PR head passed governance, backend Vet/full tests, and frontend lint/test/build.
 - [x] P0.1H final diff/review boundary audited.
 - [x] P0.1H merged/stabilized on `main`; merged-tree CI `34860648315` all green.
-- [ ] P0.2 source audit + detailed plan.
-- [ ] P0.2 implemented and merged with full regression evidence.
+- [x] P0.2 source audit + detailed plan completed, with pre-implementation ECMAScript correction recorded.
+- [x] P0.2 implemented with RED/GREEN coverage across normal and managed-site discovery paths.
+- [x] P0.2 final PR head passed governance, backend Vet/full tests, and frontend lint/test/build.
+- [x] P0.2 merged/stabilized on `main`; merged-tree CI `34926801554` all green.
 - [ ] P0.3 source audit + detailed plan.
 - [ ] P0.3 implemented and merged with full regression evidence.
 - [ ] Re-evaluate whether P1 is still necessary after P0 operational feedback.
