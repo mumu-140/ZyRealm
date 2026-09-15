@@ -21,12 +21,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const manualInterruptHTTPStatus = 499
+
 func Handler(inboundType inbound.InboundType, c *gin.Context) {
 	handler, ok := newRelayHandler(inboundType, c)
 	if !ok {
 		return
 	}
 	defer handler.heartbeat.Stop()
+	if handler.request != nil && handler.request.control != nil {
+		requestID := handler.request.control.Snapshot().RequestID
+		registerLiveRequest(handler.request.control)
+		defer unregisterLiveRequest(requestID)
+	}
 	handler.run()
 }
 
@@ -103,8 +110,16 @@ func buildRelayHandler(
 		metrics.SetWSMode(dbmodel.RelayLogWSModeReplay)
 		metrics.SetWSRecovery(dbmodel.RelayLogWSRecoveryReplay)
 	}
+	control := newRelayControl(c.Request.Context(), LiveRequestSnapshot{
+		StartedAt:       time.Now().UnixMilli(),
+		Transport:       "http",
+		APIKeyID:        apiKeyID,
+		RequestedModel:  request.Model,
+		IngressProtocol: string(protocol.FromAPIFormat(request.RawAPIFormat)),
+		Phase:           string(livePhaseRouting),
+	})
 	requestContext := &relayRequest{
-		c: c, inAdapter: inAdapter, internalRequest: request, metrics: metrics,
+		c: c, control: control, inAdapter: inAdapter, internalRequest: request, metrics: metrics,
 		apiKeyID: apiKeyID, requestModel: request.Model, groupID: group.ID,
 		groupSessionTTL: group.SessionKeepTime, iter: iterator, rawBody: rawBody, heartbeat: heartbeat,
 		attemptBudget: newRelayAttemptBudget(),
@@ -119,15 +134,22 @@ func buildRelayHandler(
 }
 
 func (h *relayHandler) run() {
+	ctx := h.request.requestContext()
 	for h.iterator.Next() {
 		if h.request.attemptBudget != nil && h.request.attemptBudget.wireExhausted() {
 			h.lastErr = errRelayWireAttemptsExceeded
 			break
 		}
-		if h.c.Request.Context().Err() != nil {
+		if err := contextError(ctx); err != nil {
+			if isManualInterrupt(ctx, err) {
+				log.Debugf("manual interrupt requested, stopping relay")
+				h.metrics.SaveWithChannelStats(ctx, false, err, h.iterator.Attempts(), false)
+				h.heartbeat.FlushOrError(h.c, manualInterruptHTTPStatus, "request interrupted")
+				return
+			}
 			log.Debugf("request context canceled, stopping retry")
 			h.markFailoverStop(failoverStopClientCanceled)
-			h.metrics.SaveWithChannelStats(h.c.Request.Context(), false, context.Canceled, h.iterator.Attempts(), false)
+			h.metrics.SaveWithChannelStats(ctx, false, err, h.iterator.Attempts(), false)
 			return
 		}
 		if h.processCandidate() {
@@ -168,8 +190,9 @@ func (h *relayHandler) markExhaustedFailoverStop() {
 }
 
 func (h *relayHandler) processCandidate() bool {
+	ctx := h.request.requestContext()
 	item := h.iterator.Item()
-	channel, err := op.ChannelGet(item.ChannelID, h.c.Request.Context())
+	channel, err := op.ChannelGet(item.ChannelID, ctx)
 	if err != nil {
 		log.Warnf("failed to get channel %d: %v", item.ChannelID, err)
 		h.iterator.Skip(item.ChannelID, 0, fmt.Sprintf("channel_%d", item.ChannelID), fmt.Sprintf("channel not found: %v", err))
@@ -220,7 +243,7 @@ func (h *relayHandler) processCandidate() bool {
 		if !h.acquireCandidate(channel, key) {
 			return false
 		}
-		result := runSameChannelAttempts(h.c.Request.Context(), h.request, channel, key, plans,
+		result := runSameChannelAttempts(ctx, h.request, channel, key, plans,
 			h.group.FirstTokenTimeOut, h.maxRetries)
 		usedPlan := plans[0]
 		if result.Plan != nil {
@@ -276,15 +299,27 @@ func (h *relayHandler) acquireCandidate(channel *dbmodel.Channel, key dbmodel.Ch
 }
 
 func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel.ChannelKey, plan *protocolroute.AttemptPlan, result attemptResult) bool {
+	ctx := h.request.requestContext()
 	now := time.Now()
-	result = withRoutingDecision(h.c.Request.Context(), h.request, channel.ID, result)
-	recordRuntimeAvailabilityEvidence(h.c.Request.Context(), channel.ID, plan.UpstreamModel(), result, now)
+	result = withRoutingDecision(ctx, h.request, channel.ID, result)
+	recordRuntimeAvailabilityEvidence(ctx, channel.ID, plan.UpstreamModel(), result, now)
 
 	decision := result.Decision
+	manualInterrupt := decision.RuleID == "manual_interrupt"
 	ambiguousCancellation := decision.RuleID == "ambiguous_transport_cancel"
 	budgetExceeded := isRelayAttemptBudgetExceeded(result.Err)
 	failureDomain := decision.Domain
 	explicitContentPolicy := decision.ContentPolicy
+
+	if manualInterrupt {
+		h.lastErr = result.Err
+		h.lastResult = result
+		h.metrics.SaveWithChannelStats(ctx, false, result.Err, h.iterator.Attempts(), false)
+		if !result.Written && !h.c.Writer.Written() {
+			h.heartbeat.FlushOrError(h.c, manualInterruptHTTPStatus, "request interrupted")
+		}
+		return true
+	}
 
 	// Any MAYBE_SENT failure whose upstream outcome is unknown spends the single
 	// balanced cross-provider replay allowance before another provider is tried.
@@ -298,7 +333,7 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 			// Balanced replay policy: once an unknown upstream outcome has already
 			// been replayed across providers, terminate rather than risk another
 			// duplicate execution/billing event.
-			h.metrics.SaveWithChannelStats(h.c.Request.Context(), false, result.Err, h.iterator.Attempts(), false)
+			h.metrics.SaveWithChannelStats(ctx, false, result.Err, h.iterator.Attempts(), false)
 			h.heartbeat.FlushOrError(h.c, http.StatusBadGateway, "channel failed")
 			return true
 		}
@@ -327,17 +362,17 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 		failureKind := circuitFailureKind(h.group.RetryEnabled, result.StatusCode)
 		balancer.RecordFailure(channel.ID, key.ID, plan.UpstreamModel(), failureKind)
 		if failureKind == balancer.FailureHard {
-			maybeLearnManagedRoute(h.c.Request.Context(), channel.ID, plan.UpstreamModel(), h.inboundType, result.Err)
+			maybeLearnManagedRoute(ctx, channel.ID, plan.UpstreamModel(), h.inboundType, result.Err)
 		}
 	}
 	switch classifyAttemptResult(result) {
 	case attemptActionSuccess:
 		return h.handleSuccessfulAttempt(channel, key, plan, result)
 	case attemptActionCanceled:
-		h.metrics.SaveWithChannelStats(h.c.Request.Context(), false, result.Err, h.iterator.Attempts(), false)
+		h.metrics.SaveWithChannelStats(ctx, false, result.Err, h.iterator.Attempts(), false)
 		return true
 	case attemptActionResetConversation:
-		h.metrics.SaveWithChannelStats(h.c.Request.Context(), false, result.Err, h.iterator.Attempts(), false)
+		h.metrics.SaveWithChannelStats(ctx, false, result.Err, h.iterator.Attempts(), false)
 		if publicErr, ok := classifyWSPublicError(result.Err, result.StatusCode); ok {
 			h.heartbeat.FlushOrError(h.c, publicErr.Status, publicErr.Message)
 		} else {
@@ -345,11 +380,11 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 		}
 		return true
 	case attemptActionWritten:
-		h.metrics.SaveWithChannelStats(h.c.Request.Context(), false, result.Err, h.iterator.Attempts(), false)
+		h.metrics.SaveWithChannelStats(ctx, false, result.Err, h.iterator.Attempts(), false)
 		return true
 	}
 	if explicitContentPolicy {
-		h.metrics.SaveWithChannelStats(h.c.Request.Context(), false, result.Err, h.iterator.Attempts(), false)
+		h.metrics.SaveWithChannelStats(ctx, false, result.Err, h.iterator.Attempts(), false)
 		statusCode := result.StatusCode
 		if statusCode <= 0 {
 			statusCode = http.StatusBadRequest
