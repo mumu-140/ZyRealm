@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Activity, ChevronDown, Route } from 'lucide-react';
 import type { RelayLog } from '@/api/endpoints/log';
 import {
@@ -52,18 +52,11 @@ function TraceValue({ label, value }: { label: string; value?: string | number |
 
 export function RoutingInspector({ logs }: RoutingInspectorProps) {
     const availableLogs = useMemo(() => logs.filter((item) => item.id > 0), [logs]);
-    const [selectedLogID, setSelectedLogID] = useState<number | null>(availableLogs[0]?.id ?? null);
+    const [preferredLogID, setPreferredLogID] = useState<number | null>(null);
     const [expanded, setExpanded] = useState(false);
-
-    useEffect(() => {
-        if (availableLogs.length === 0) {
-            setSelectedLogID(null);
-            return;
-        }
-        if (selectedLogID == null || !availableLogs.some((item) => item.id === selectedLogID)) {
-            setSelectedLogID(availableLogs[0].id);
-        }
-    }, [availableLogs, selectedLogID]);
+    const selectedLogID = preferredLogID != null && availableLogs.some((item) => item.id === preferredLogID)
+        ? preferredLogID
+        : availableLogs[0]?.id ?? null;
 
     const explanationQuery = useRoutingExplanation(selectedLogID);
     const explanation = explanationQuery.data;
@@ -100,7 +93,7 @@ export function RoutingInspector({ logs }: RoutingInspectorProps) {
                     aria-label="Select completed request"
                     className="h-9 min-w-0 rounded-md border bg-background px-2 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring sm:max-w-[360px]"
                     value={selectedLogID ?? ''}
-                    onChange={(event) => setSelectedLogID(Number(event.target.value) || null)}
+                    onChange={(event) => setPreferredLogID(Number(event.target.value) || null)}
                     disabled={availableLogs.length === 0}
                 >
                     {availableLogs.length === 0 ? <option value="">No completed requests</option> : null}
