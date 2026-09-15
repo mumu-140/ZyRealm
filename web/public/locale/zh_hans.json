@@ -461,6 +461,11 @@
       "intervalPlaceholder": "间隔（小时）",
       "last": "上次",
       "never": "从未执行",
+      "modelFilter": {
+        "label": "全局模型过滤（正则）",
+        "placeholder": "留空 = 禁用，例如 ^(gpt|claude)-",
+        "description": "应用于后续的模型获取、刷新和同步；若渠道也配置了 Match Regex，模型必须同时满足全局和渠道正则。保存不会立即删除现有模型，规则会在下一次同步时生效。"
+      },
       "llmSync": {
         "label": "渠道同步",
         "button": "立即同步",
@@ -544,7 +549,7 @@
         "deleted": "预设已删除",
         "deleteFailed": "删除失败",
         "updated": "预设已更新",
-        "updateFailed": "预设更新失败"
+        "updateFailed": "更新失败"
       }
     },
     "create": {
