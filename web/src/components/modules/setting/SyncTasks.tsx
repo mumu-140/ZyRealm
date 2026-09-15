@@ -11,7 +11,7 @@ import { useCheckinAllSites, useSiteLastCheckinTime, useSiteLastSyncTime, useSyn
 import { toast } from '@/components/common/Toast';
 import { useSettingStore } from '@/stores/setting';
 import { translateSiteMessage } from '@/components/modules/site/site-message';
-import { SettingCard, useSettingField } from './shared';
+import { SettingCard, SettingRow, useSettingField } from './shared';
 
 function getErrorMessage(error: unknown, fallback: string) {
     if (error instanceof Error && error.message.trim()) {
@@ -76,6 +76,7 @@ export function SettingSyncTasks() {
     const tAll = useTranslations();
     const locale = useSettingStore((state) => state.locale);
 
+    const modelFilter = useSettingField(SettingKey.ModelFilterRegex);
     const syncChannel = useSyncChannel();
     const { data: lastSyncTime } = useLastSyncTime();
     const updatePrice = useUpdateModelPrice();
@@ -95,6 +96,20 @@ export function SettingSyncTasks() {
 
     return (
         <SettingCard icon={CalendarSync} title={t('syncTasks.title')}>
+            <SettingRow
+                label={t('syncTasks.modelFilter.label')}
+                tooltip={t('syncTasks.modelFilter.description')}
+            >
+                <Input
+                    type="text"
+                    value={modelFilter.value}
+                    onChange={(e) => modelFilter.setValue(e.target.value)}
+                    onBlur={modelFilter.save}
+                    placeholder={t('syncTasks.modelFilter.placeholder')}
+                    className="w-72 rounded-xl font-mono"
+                />
+            </SettingRow>
+
             {/* 渠道同步 */}
             <TaskRow
                 icon={RefreshCw}

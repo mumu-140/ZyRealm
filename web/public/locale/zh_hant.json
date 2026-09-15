@@ -461,6 +461,11 @@
       "intervalPlaceholder": "間隔（小時）",
       "last": "上次",
       "never": "從未執行",
+      "modelFilter": {
+        "label": "全域模型過濾（正規表示式）",
+        "placeholder": "留空 = 停用，例如 ^(gpt|claude)-",
+        "description": "套用於後續的模型取得、重新整理與同步；若供應源也設定 Match Regex，模型必須同時符合全域與供應源正規表示式。儲存後不會立即刪除既有模型，規則會在下一次同步時生效。"
+      },
       "llmSync": {
         "label": "供應源同步",
         "button": "立即同步",

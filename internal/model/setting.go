@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+
+	"github.com/bestruirui/octopus/internal/utils/modelmatch"
 )
 
 type SettingKey string
@@ -43,6 +45,7 @@ const (
 	SettingKeyOutlierCFRecoverMinutes          SettingKey = "outlier_cf_recover_minutes"           // POR CF 退役渠道恢复探活冷却(分钟)
 	SettingKeyApiBaseUrl                       SettingKey = "api_base_url"                         // 对外服务基础地址，用于一键导出客户端配置，为空时不显示导出入口
 	SettingKeyCompressMasterEnabled            SettingKey = "compress_master_enabled"              // 请求压缩全局急停开关(分组 compress_config 生效的前提)
+	SettingKeyModelFilterRegex                 SettingKey = "model_filter_regex"                   // 模型发现/同步的全局正则过滤；空串表示禁用
 )
 
 type Setting struct {
@@ -86,6 +89,7 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyOutlierCFRecoverMinutes, Value: "30"}, // CF 退役渠道 30 分钟后才探活恢复
 		{Key: SettingKeyApiBaseUrl, Value: ""},                // 默认为空，不显示客户端导出入口
 		{Key: SettingKeyCompressMasterEnabled, Value: "false"}, // 压缩默认关闭，显式开启
+		{Key: SettingKeyModelFilterRegex, Value: ""},          // 默认不过滤模型
 	}
 }
 
@@ -139,6 +143,11 @@ func (s *Setting) Validate() error {
 		default:
 			return fmt.Errorf("setting value must be one of off, transform, passthrough")
 		}
+	case SettingKeyModelFilterRegex:
+		if err := modelmatch.Validate(s.Value); err != nil {
+			return fmt.Errorf("model filter regex is invalid: %w", err)
+		}
+		return nil
 	case SettingKeyProxyURL:
 		if s.Value == "" {
 			return nil

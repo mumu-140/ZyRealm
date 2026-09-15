@@ -461,6 +461,11 @@
       "intervalPlaceholder": "Interval (hours)",
       "last": "Last",
       "never": "Never",
+      "modelFilter": {
+        "label": "Global model filter (regex)",
+        "placeholder": "Empty = disabled, e.g. ^(gpt|claude)-",
+        "description": "Applied to future model fetch, refresh, and sync operations. When a channel also has Match Regex, a model must match both filters. Saving does not immediately remove existing models; the policy takes effect on the next sync."
+      },
       "llmSync": {
         "label": "Channel sync",
         "button": "Sync Now",

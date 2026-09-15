@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/bestruirui/octopus/internal/server/resp"
 	"github.com/bestruirui/octopus/internal/server/router"
 	"github.com/bestruirui/octopus/internal/task"
+	"github.com/bestruirui/octopus/internal/utils/modelmatch"
 	"github.com/bestruirui/octopus/internal/utils/safe"
 	"github.com/gin-gonic/gin"
 )
@@ -193,13 +195,33 @@ func deleteChannel(c *gin.Context) {
 	}
 	resp.Success(c, nil)
 }
+
+func loadGlobalModelFilterRegex() (string, error) {
+	pattern, err := op.SettingGetString(model.SettingKeyModelFilterRegex)
+	if err != nil {
+		return "", fmt.Errorf("load global model filter: %w", err)
+	}
+	if err := modelmatch.Validate(pattern); err != nil {
+		return "", fmt.Errorf("invalid global model filter: %w", err)
+	}
+	return pattern, nil
+}
+
 func fetchModel(c *gin.Context) {
 	var request model.Channel
 	if err := c.ShouldBindJSON(&request); err != nil {
 		resp.InvalidJSON(c)
 		return
 	}
+	globalFilter, err := loadGlobalModelFilterRegex()
+	if err != nil {
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
 	models, err := helper.FetchModels(c.Request.Context(), request)
+	if err == nil {
+		models, err = modelmatch.Filter(models, globalFilter)
+	}
 	if err != nil {
 		resp.ErrorWithAppError(c, http.StatusInternalServerError, channelError(codeChannelFetchModelsFailed, "channel fetch models failed", err))
 		return
