@@ -461,6 +461,11 @@
       "intervalPlaceholder": "Interval (hours)",
       "last": "Last",
       "never": "Never",
+      "modelFilter": {
+        "label": "Global model filter (regex)",
+        "placeholder": "Empty = disabled, e.g. ^(gpt|claude)-",
+        "description": "Applied to future model fetch, refresh, and sync operations. When a channel also has Match Regex, a model must match both filters. Saving does not immediately remove existing models; the policy takes effect on the next sync."
+      },
       "llmSync": {
         "label": "Channel sync",
         "button": "Sync Now",
@@ -544,7 +549,7 @@
         "deleted": "Preset deleted",
         "deleteFailed": "Delete failed",
         "updated": "Preset updated",
-        "updateFailed": "Preset update failed"
+        "updateFailed": "Update failed"
       }
     },
     "create": {
@@ -713,9 +718,9 @@
         "running": "Running..."
       },
       "toast": {
-        "saved": "Auto group configuration saved",
-        "savedAndRun": "Auto group configuration saved and run",
-        "saveFailed": "Failed to save auto group configuration",
+        "saved": "Auto grouping configuration saved",
+        "savedAndRun": "Auto grouping configuration saved and run",
+        "saveFailed": "Failed to save auto grouping configuration",
         "runSuccess": "Auto grouping has run",
         "runFailed": "Failed to run auto grouping"
       }
@@ -874,7 +879,7 @@
         "keys": "Keys"
       },
       "noBaseUrls": "No Base URLs",
-      "noKeys": "No Keys",
+      "noKeys": "No keys",
       "metrics": {
         "totalRequests": "Total Requests",
         "totalToken": "Total Tokens",
@@ -994,7 +999,7 @@
       "unrecognizedAllAPIHub": "No All API Hub export data was recognized. Make sure you selected the correct exported JSON.",
       "unrecognizedMetapi": "No Metapi account export data was recognized. Make sure you selected the correct exported JSON.",
       "noImportableAllAPIHub": "No importable All API Hub site account data was found.",
-      "noImportableMetapi": "No importable Metapi site account data was found."
+      "noImportableMetapi": "No importable Metapi account export data was found."
     }
   },
   "siteSync": {
