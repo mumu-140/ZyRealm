@@ -549,7 +549,7 @@
         "deleted": "預設已刪除",
         "deleteFailed": "刪除失敗",
         "updated": "預設已更新",
-        "updateFailed": "更新失敗"
+        "updateFailed": "預設更新失敗"
       }
     },
     "create": {
