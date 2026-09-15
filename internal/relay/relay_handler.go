@@ -1,7 +1,6 @@
 package relay
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"time"
