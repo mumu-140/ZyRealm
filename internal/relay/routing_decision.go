@@ -195,6 +195,9 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 			decision.ReplaySafety = routingReplayCommitted
 			decision.CircuitEffect = "none"
 		} else if result.DispatchState == dispatchMaybeSent {
+			// The request may already be executing upstream even though no first
+			// token arrived. Treat cross-provider failover as an unknown-outcome
+			// replay so the request-level replay budget bounds duplicate execution.
 			decision.ReplaySafety = routingReplayUnknownOutcome
 		} else {
 			decision.ReplaySafety = routingReplayNotSent
@@ -202,6 +205,9 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		return decision
 	}
 
+	// Once downstream delivery or a conversation reset has committed, routing
+	// must stop. Keep the raw failure scope only for slow outlier evidence, which
+	// intentionally still observes stream/reset failures.
 	if result.Written || result.ResetConversation {
 		decision.Domain = failureDomainUnknown
 		decision.RuleID = "downstream_committed"
@@ -378,70 +384,80 @@ func dispatchStateString(state dispatchState) string {
 	return "not_sent"
 }
 
-func routingTraceOuterContextState(ctx context.Context) string {
+func outerContextState(ctx context.Context) string {
 	if ctx == nil {
+		return "unknown"
+	}
+	if ctx.Err() == nil {
+		return "active"
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return "canceled"
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "deadline_exceeded"
+	}
+	return "done"
+}
+
+func outboundContextCause(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "context_canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	default:
+		return ""
+	}
+}
+
+func routingAttemptTrace(ctx context.Context, result attemptResult, decision RoutingDecision, credentialRevision, providerAttempt, wireAttempt int) dbmodel.AttemptRoutingTrace {
+	return dbmodel.AttemptRoutingTrace{
+		CredentialRevision:   credentialRevision,
+		FailureDomain:        routingDomainString(decision.Domain),
+		FailureScope:         string(decision.FailureScope),
+		RuleID:               decision.RuleID,
+		RetryDirective:       string(decision.Directive),
+		RuntimeEffect:        string(decision.RuntimeEffect),
+		CircuitEffect:        decision.CircuitEffect,
+		OutlierEffect:        outlierEffectString(decision.OutlierScope),
+		ReplaySafety:         string(decision.ReplaySafety),
+		DispatchState:        dispatchStateString(result.DispatchState),
+		DownstreamCommitted:  result.Written || result.ResetConversation,
+		OuterContextState:    outerContextState(ctx),
+		OutboundContextCause: outboundContextCause(result.Err),
+		ProviderAttempt:      providerAttempt,
+		WireAttempt:          wireAttempt,
+	}
+}
+
+func outlierEffectString(scope failureScope) string {
+	switch scope {
+	case scopeChannel:
+		return "provider_failure"
+	case scopeModel:
+		return "model_failure"
+	default:
 		return "none"
 	}
-	if err := ctx.Err(); err != nil {
-		return err.Error()
-	}
-	return "active"
 }
 
-func routingAttemptTrace(
-	ctx context.Context,
-	result attemptResult,
-	decision RoutingDecision,
-	credentialRevision int64,
-	providerAttempt int,
-	wireAttempt int,
-) dbmodel.AttemptRoutingTrace {
-	trace := dbmodel.AttemptRoutingTrace{
-		RuleID:             decision.RuleID,
-		FailureDomain:      routingDomainString(decision.Domain),
-		FailureScope:       string(decision.FailureScope),
-		Directive:          string(decision.Directive),
-		RuntimeEffect:      string(decision.RuntimeEffect),
-		OutlierScope:       decision.OutlierScope.String(),
-		CircuitEffect:      decision.CircuitEffect,
-		ReplaySafety:       string(decision.ReplaySafety),
-		DispatchState:      dispatchStateString(result.DispatchState),
-		OuterContextState:  routingTraceOuterContextState(ctx),
-		CredentialRevision: credentialRevision,
-		ProviderAttempt:    providerAttempt,
-		WireAttempt:        wireAttempt,
-		SkipProvider:       decision.SkipProvider,
-		Terminal:           decision.Terminal,
+func runtimeStateString(state int) string {
+	switch state {
+	case 1:
+		return "suspect"
+	case 2:
+		return "cooldown"
+	case 3:
+		return "half_open"
+	default:
+		return "available"
 	}
-	if result.Plan != nil {
-		trace.UpstreamProtocol = string(result.Plan.UpstreamProtocol())
-		trace.AttemptKind = string(result.Plan.AttemptKind())
-		trace.ProtocolMode = string(result.Plan.GroupProtocolMode())
-		trace.FallbackReason = result.Plan.FallbackReason()
-	}
-	return trace
 }
 
-func recordRoutingDecision(
-	ctx context.Context,
-	request *relayRequest,
-	channel *dbmodel.Channel,
-	key dbmodel.ChannelKey,
-	result attemptResult,
-) attemptResult {
-	if channel == nil {
-		return result
+func unixMillisOrZero(value time.Time) int64 {
+	if value.IsZero() {
+		return 0
 	}
-	result = withRoutingDecision(ctx, request, channel.ID, result)
-	if request != nil && request.attemptBudget != nil && result.traceSpan != nil {
-		request.attemptBudget.bindTraceSpan(result.traceSpan)
-	}
-	return result
-}
-
-func routingDecisionExpires(now time.Time, delay time.Duration) time.Time {
-	if delay <= 0 {
-		return time.Time{}
-	}
-	return now.Add(delay)
+	return value.UnixMilli()
 }
