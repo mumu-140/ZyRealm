@@ -14,8 +14,8 @@ import (
 func init() {
 	router.NewGroupRouter("/api/v1/live-request").
 		Use(middleware.Auth()).
-		Add(http.MethodGet, "/list", listLiveRequests).
-		Add(http.MethodPost, "/:id/interrupt", interruptLiveRequest)
+		AddRoute(router.NewRoute("/list", http.MethodGet).Handle(listLiveRequests)).
+		AddRoute(router.NewRoute("/:id/interrupt", http.MethodPost).Handle(interruptLiveRequest))
 }
 
 func listLiveRequests(c *gin.Context) {
