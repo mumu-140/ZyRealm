@@ -11,6 +11,7 @@ import (
 	dbmodel "github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/outlierwindow"
+	"github.com/bestruirui/octopus/internal/protocol"
 	"github.com/bestruirui/octopus/internal/relay/balancer"
 	"github.com/bestruirui/octopus/internal/transformer/inbound"
 	transformerModel "github.com/bestruirui/octopus/internal/transformer/model"
@@ -224,7 +225,22 @@ func processWSResponseCreate(
 	}
 
 	requestModel = executionRequest.Model
-	req, group, err := newWSRelayRequest(ctx, conn, inAdapter, apiKeyID, requestModel, cloneInternalRequest(executionRequest), originalRequest, preferredSticky, bodyBytes)
+	roundControl := newRelayControl(ctx, LiveRequestSnapshot{
+		Transport:       "ws",
+		APIKeyID:        apiKeyID,
+		RequestedModel:  requestModel,
+		IngressProtocol: string(protocol.FromAPIFormat(executionRequest.RawAPIFormat)),
+		Phase:           string(livePhaseRouting),
+	})
+	registerLiveRequest(roundControl)
+	roundID := roundControl.Snapshot().RequestID
+	defer func() {
+		unregisterLiveRequest(roundID)
+		roundControl.cancel(nil)
+	}()
+	roundCtx := roundControl.Context()
+
+	req, group, err := newWSRelayRequest(roundCtx, conn, inAdapter, apiKeyID, requestModel, cloneInternalRequest(executionRequest), originalRequest, preferredSticky, bodyBytes)
 	if err != nil {
 		status := 404
 		code := "model_not_found"
@@ -235,6 +251,7 @@ func processWSResponseCreate(
 		writeWSError(ctx, conn, status, code, err.Error())
 		return conversationState
 	}
+	req.control = roundControl
 
 	autoRestart := conversationState != nil && continuationRequested && conversationState.CanAutoRestart(originalRequest)
 	failedPreviousResponseID := currentPreviousResponseID(originalRequest)
@@ -252,23 +269,24 @@ func processWSResponseCreate(
 			}
 			return preferredSticky.ChannelKeyID
 		}())
-	result := runWSRelay(ctx, req, group)
+	result := runWSRelay(roundCtx, req, group)
 	if result.ResetConversation && autoRestart && !req.streamWriter.Written() {
 		log.Debugf("ws relay switching to replay (apikey=%d, request_model=%s, failed_previous_response_id=%s, reset_conversation=%t)",
 			apiKeyID, requestModel, failedPreviousResponseID, result.ResetConversation)
 		balancer.DeleteSticky(apiKeyID, requestModel)
 		replayedRequest := conversationState.BuildReplayRequest(originalRequest)
-		replayReq, replayGroup, replayErr := newWSRelayRequest(ctx, conn, inAdapter, apiKeyID, requestModel, replayedRequest, originalRequest, preferredSticky, bodyBytes)
+		replayReq, replayGroup, replayErr := newWSRelayRequest(roundCtx, conn, inAdapter, apiKeyID, requestModel, replayedRequest, originalRequest, preferredSticky, bodyBytes)
 		if replayErr == nil {
+			replayReq.control = roundControl
 			replayReq.metrics.SetWSMode(dbmodel.RelayLogWSModeReplay)
 			replayReq.metrics.SetWSRecovery(dbmodel.RelayLogWSRecoveryReplay)
 			req = replayReq
 			group = replayGroup
-			result = runWSRelay(ctx, req, group)
+			result = runWSRelay(roundCtx, req, group)
 		}
 	}
 
-	result = finalizeWSRelay(ctx, conn, req, result)
+	result = finalizeWSRelay(roundCtx, conn, req, result)
 	if result.Success {
 		if conversationState == nil {
 			conversationState = &wsConversationState{DownstreamSessionID: downstreamSessionID}
@@ -493,7 +511,7 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 				}
 				return wsRelayResult{Err: contextError(relayCtx), PublicError: &publicErr}
 			}
-			return wsRelayResult{Canceled: true, Err: relayCtx.Err()}
+			return wsRelayResult{Canceled: true, Err: contextError(relayCtx)}
 		default:
 		}
 
@@ -564,7 +582,7 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 						}
 						return wsRelayResult{Err: contextError(relayCtx), PublicError: &publicErr}
 					}
-					return wsRelayResult{Canceled: true, Err: relayCtx.Err()}
+					return wsRelayResult{Canceled: true, Err: contextError(relayCtx)}
 				case <-time.After(delay):
 				}
 			}
@@ -579,6 +597,9 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 			}
 
 			result = ra.attempt()
+			if isManualInterrupt(req.requestContext(), result.Err) {
+				return wsRelayResult{Canceled: true, Err: contextError(req.requestContext())}
+			}
 			if result.Success || result.Written || result.Canceled || result.ResetConversation || !isRetryableStatus(result.StatusCode) {
 				break
 			}
