@@ -57,8 +57,14 @@ type StreamConfig struct {
 	HeartbeatInterval time.Duration // 0 to disable
 
 	// Callbacks
-	OnFirstToken func()                                            // Called when first payload written
+	OnFirstToken func()                                            // Called when first semantic payload is written
 	OnFinish     func(ctx context.Context, rawStream []byte) error // Called on stream end
+
+	// PayloadObserver optionally separates raw transport writes from semantic
+	// delivery commitment. It receives the exact bytes about to be written and
+	// returns true only when those bytes complete a provider payload. When nil,
+	// every successful non-empty write keeps the historical behavior.
+	PayloadObserver func(data []byte) bool
 
 	// Passthrough-specific
 	BufferRawStream bool                // Enable raw stream buffering for metrics
@@ -218,11 +224,18 @@ func (p *StreamProcessor) processEvent(data []byte) error {
 		output = data // Passthrough
 	}
 
+	semanticPayload := true
+	if p.config.PayloadObserver != nil {
+		semanticPayload = p.config.PayloadObserver(output)
+	}
+
 	if _, err := p.config.Writer.Write(output); err != nil {
 		return fmt.Errorf("write error: %w", err)
 	}
 
-	p.payloadWritten = true
+	if semanticPayload {
+		p.payloadWritten = true
+	}
 	p.config.Writer.Flush()
 	return nil
 }
@@ -284,7 +297,9 @@ func (p *StreamProcessor) finalize() error {
 	return nil
 }
 
-// PayloadWritten returns whether any payload has been written to the client.
+// PayloadWritten reports whether semantic provider payload has been written to
+// the client. Infrastructure comments/heartbeats can be written without making
+// this true when a PayloadObserver is configured.
 func (p *StreamProcessor) PayloadWritten() bool {
 	return p.payloadWritten
 }

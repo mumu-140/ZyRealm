@@ -56,6 +56,7 @@ func (ra *relayAttempt) handleStreamResponsePassthroughV2(ctx context.Context, r
 	}
 	ra.heartbeat.Hand()
 	var rawStreamBuf bytes.Buffer
+	payloadObserver := stream.NewSSEPayloadObserver()
 	processor := stream.NewStreamProcessor(stream.StreamConfig{
 		Source:            stream.NewRawSource(response.Body, 32*1024),
 		Transform:         nil, // Passthrough: no transformation
@@ -63,6 +64,7 @@ func (ra *relayAttempt) handleStreamResponsePassthroughV2(ctx context.Context, r
 		Context:           ctx,
 		FirstTokenTimeout: ra.streamFirstTokenTimeout(),
 		HeartbeatInterval: streamHeartbeatInterval(),
+		PayloadObserver:   payloadObserver.Observe,
 		BufferRawStream:   true,
 		TerminalEvents:    cfg.TerminalEvents,
 		OnFirstToken: func() {
