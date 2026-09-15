@@ -88,6 +88,7 @@ type UpstreamReader interface {
 type relayRequest struct {
 	c               *gin.Context
 	ctx             context.Context // used when c is nil (WebSocket mode)
+	control         *relayControl
 	inAdapter       model.Inbound
 	internalRequest *model.InternalLLMRequest
 	metrics         *RelayMetrics
@@ -117,12 +118,21 @@ type relayRequest struct {
 	responseCollected    atomic.Bool
 }
 
-// requestContext returns the request context from gin or the standalone context.
+// requestContext returns the logical relay execution context. When a request
+// control is attached, its child context is authoritative so operator
+// interruption can stop this logical request without canceling the ingress
+// parent or the WebSocket connection context.
 func (r *relayRequest) requestContext() context.Context {
-	if r.c != nil {
+	if r != nil && r.control != nil {
+		return r.control.Context()
+	}
+	if r != nil && r.c != nil && r.c.Request != nil {
 		return r.c.Request.Context()
 	}
-	return r.ctx
+	if r != nil && r.ctx != nil {
+		return r.ctx
+	}
+	return context.Background()
 }
 
 type dispatchState uint8
