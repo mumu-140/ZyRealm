@@ -105,7 +105,10 @@ func TestChatOutboundTransformRequestRawRewritesOnlyTopLevelModel(t *testing.T) 
 
 func TestChatOutboundTransformRequestRawNormalizesDuplicateTopLevelModels(t *testing.T) {
 	pt := chatPassthroughCapable(t)
-	raw := []byte(`{"nested":{"model":"inner-model"},"model":"ambiguous-first","messages":[{"role":"user","content":"hi"}],"model":"gpt-5.6","future_field":true}`)
+	// The first top-level model already matches the selected upstream model, while
+	// a later duplicate disagrees. A first-match-only rewriter would incorrectly
+	// return the raw body unchanged and leave parser-dependent routing ambiguity.
+	raw := []byte(`{"nested":{"model":"inner-model"},"model":"gpt-5.6","messages":[{"role":"user","content":"hi"}],"model":"ambiguous-last","future_field":true}`)
 
 	req, err := pt.TransformRequestRaw(context.Background(), raw, "gpt-5.6", "https://example.test/v1", "key", nil)
 	if err != nil {
