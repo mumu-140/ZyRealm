@@ -1,9 +1,10 @@
 package relay
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -88,13 +89,18 @@ func TestHandlerSaturatedCandidateDoesNotChargeCredentialFairness(t *testing.T) 
 	}
 	t.Cleanup(func() { balancer.ReleaseChannel(saturated.ID) })
 
+	body, err := json.Marshal(map[string]any{
+		"model": "admission-chat-group",
+		"messages": []map[string]string{{
+			"role": "user", "content": "hello",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("marshal chat request: %v", err)
+	}
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(
-		http.MethodPost,
-		"/v1/chat/completions",
-		strings.NewReader(`{"model":"admission-chat-group","messages":[{"role":"user","content":"hello"}]}`),
-	)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 	Handler(inbound.InboundTypeOpenAIChat, c)
 
@@ -155,9 +161,16 @@ func TestImagesHandlerSaturatedCandidateDoesNotChargeCredentialFairness(t *testi
 	}
 	t.Cleanup(func() { balancer.ReleaseChannel(saturated.ID) })
 
+	body, err := json.Marshal(map[string]string{
+		"model":  "admission-image-group",
+		"prompt": "draw",
+	})
+	if err != nil {
+		t.Fatalf("marshal image request: %v", err)
+	}
 	recorder, c := newImagesTestContext(
 		"/v1/images/generations",
-		[]byte(`{"model":"admission-image-group","prompt":"draw"}`),
+		body,
 		"application/json",
 	)
 	c.Set("api_key_id", 2001)
@@ -199,5 +212,18 @@ func lowestEligibleCredentialID(keys []dbmodel.ChannelKey) int {
 
 func writeChatAdmissionSuccess(w http.ResponseWriter, modelName string) {
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(`{"id":"resp_ok","object":"chat.completion","created":1,"model":"` + modelName + `","choices":[{"index":0,"message":{"role":"assistant","content":"ok"}}]}`))
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"id":      "resp_ok",
+		"object":  "chat.completion",
+		"created": 1,
+		"model":   modelName,
+		"choices": []map[string]any{{
+			"index": 0,
+			"message": map[string]string{
+				"role": "assistant", "content": "ok",
+			},
+		}},
+	}); err != nil {
+		return
+	}
 }
