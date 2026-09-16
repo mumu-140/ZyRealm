@@ -69,10 +69,18 @@ func (o *ChatOutbound) PassthroughConfig() model.PassthroughConfig {
 	return model.PassthroughConfig{CollectMetrics: true}
 }
 
-// rewriteRawChatRequestModel changes only the top-level JSON string field
-// "model". When the selected model already matches the client value, the
-// original byte slice is returned unchanged so field order and whitespace stay
-// stable. Nested fields named "model" are never selected.
+type topLevelJSONFieldSpan struct {
+	start int
+	end   int
+}
+
+// rewriteRawChatRequestModel changes every top-level JSON field named "model"
+// to the selected upstream model. With one unambiguous string-valued model that
+// already matches, it returns the original bytes unchanged so field order and
+// whitespace stay stable. Duplicate top-level model keys are deliberately
+// normalized because leaving parser-dependent model values would let the wire
+// request diverge from the model already selected by ZyRealm's control plane.
+// Nested fields named "model" are never selected.
 func rewriteRawChatRequestModel(rawBody []byte, modelName string) ([]byte, error) {
 	modelName = strings.TrimSpace(modelName)
 	if modelName == "" {
@@ -82,93 +90,100 @@ func rewriteRawChatRequestModel(rawBody []byte, modelName string) ([]byte, error
 		return nil, fmt.Errorf("failed to decode raw chat request: invalid JSON")
 	}
 
-	valueStart, valueEnd, currentModel, ok := findTopLevelJSONStringField(rawBody, "model")
-	if !ok {
-		return nil, fmt.Errorf("raw chat request is missing top-level string model")
+	spans, ok := findTopLevelJSONFieldSpans(rawBody, "model")
+	if !ok || len(spans) == 0 {
+		return nil, fmt.Errorf("raw chat request is missing top-level model")
 	}
-	if currentModel == modelName {
-		return rawBody, nil
+
+	if len(spans) == 1 {
+		span := spans[0]
+		var currentModel string
+		if err := json.Unmarshal(rawBody[span.start:span.end], &currentModel); err == nil && currentModel == modelName {
+			return rawBody, nil
+		}
 	}
 
 	encodedModel, err := json.Marshal(modelName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode raw chat model: %w", err)
 	}
-	result := make([]byte, 0, len(rawBody)-(valueEnd-valueStart)+len(encodedModel))
-	result = append(result, rawBody[:valueStart]...)
-	result = append(result, encodedModel...)
-	result = append(result, rawBody[valueEnd:]...)
+
+	extraPerReplacement := len(encodedModel)
+	capacity := len(rawBody) + len(spans)*extraPerReplacement
+	result := make([]byte, 0, capacity)
+	cursor := 0
+	for _, span := range spans {
+		result = append(result, rawBody[cursor:span.start]...)
+		result = append(result, encodedModel...)
+		cursor = span.end
+	}
+	result = append(result, rawBody[cursor:]...)
 	return result, nil
 }
 
-// findTopLevelJSONStringField returns the exact byte range of a top-level JSON
-// string value plus its decoded value. The scanner only uses JSON-valid input
-// and tracks strings/nesting so arrays or nested objects before the target field
-// cannot confuse top-level field selection.
-func findTopLevelJSONStringField(raw []byte, field string) (valueStart, valueEnd int, value string, ok bool) {
+// findTopLevelJSONFieldSpans returns the exact byte ranges of every top-level
+// value for field. The scanner operates only on JSON-valid input and tracks
+// strings/nesting so arrays or nested objects cannot be mistaken for top-level
+// fields. Whitespace surrounding a value is intentionally left outside spans.
+func findTopLevelJSONFieldSpans(raw []byte, field string) ([]topLevelJSONFieldSpan, bool) {
 	i := skipJSONWhitespace(raw, 0)
 	if i >= len(raw) || raw[i] != '{' {
-		return 0, 0, "", false
+		return nil, false
 	}
 	i++
+	spans := make([]topLevelJSONFieldSpan, 0, 1)
 
 	for {
 		i = skipJSONWhitespace(raw, i)
-		if i >= len(raw) || raw[i] == '}' {
-			return 0, 0, "", false
+		if i >= len(raw) {
+			return nil, false
+		}
+		if raw[i] == '}' {
+			return spans, true
 		}
 		if raw[i] != '"' {
-			return 0, 0, "", false
+			return nil, false
 		}
 
 		keyStart := i
 		keyEnd, valid := scanJSONStringEnd(raw, keyStart)
 		if !valid {
-			return 0, 0, "", false
+			return nil, false
 		}
 		var key string
 		if err := json.Unmarshal(raw[keyStart:keyEnd], &key); err != nil {
-			return 0, 0, "", false
+			return nil, false
 		}
 
 		i = skipJSONWhitespace(raw, keyEnd)
 		if i >= len(raw) || raw[i] != ':' {
-			return 0, 0, "", false
+			return nil, false
 		}
 		i = skipJSONWhitespace(raw, i+1)
 		if i >= len(raw) {
-			return 0, 0, "", false
+			return nil, false
 		}
 
-		start := i
-		end, delimiter, valid := scanTopLevelJSONValueEnd(raw, start)
+		valueStart := i
+		valueEnd, delimiter, valid := scanTopLevelJSONValueEnd(raw, valueStart)
 		if !valid {
-			return 0, 0, "", false
+			return nil, false
 		}
-
+		trimmedEnd := valueEnd
+		for trimmedEnd > valueStart && isJSONWhitespace(raw[trimmedEnd-1]) {
+			trimmedEnd--
+		}
+		if trimmedEnd <= valueStart {
+			return nil, false
+		}
 		if key == field {
-			trimmedEnd := end
-			for trimmedEnd > start && isJSONWhitespace(raw[trimmedEnd-1]) {
-				trimmedEnd--
-			}
-			if start >= trimmedEnd || raw[start] != '"' {
-				return 0, 0, "", false
-			}
-			stringEnd, valid := scanJSONStringEnd(raw, start)
-			if !valid || stringEnd != trimmedEnd {
-				return 0, 0, "", false
-			}
-			var decoded string
-			if err := json.Unmarshal(raw[start:trimmedEnd], &decoded); err != nil {
-				return 0, 0, "", false
-			}
-			return start, trimmedEnd, decoded, true
+			spans = append(spans, topLevelJSONFieldSpan{start: valueStart, end: trimmedEnd})
 		}
 
 		if delimiter == '}' {
-			return 0, 0, "", false
+			return spans, true
 		}
-		i = end + 1
+		i = valueEnd + 1
 	}
 }
 
