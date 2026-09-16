@@ -178,39 +178,74 @@ func (b *Weighted) Candidates(items []model.GroupItem) []model.GroupItem {
 	return result
 }
 
-// LeastUsed 最少使用：按在途并发升序，优先空闲通道；并发相同按 Priority 升序。
-// 移植自 omniroute sortTargetsByUsage（octopus 用实时在途并发替代历史请求数，意图等价、数据更贴当前负载）。
+type concurrencyLoadEntry struct {
+	item     model.GroupItem
+	inflight int64
+}
+
+// snapshotConcurrencyLoad reads each fast-moving in-flight counter once for a
+// single ordering decision. This snapshot is only a soft scheduling hint; the
+// atomic TryAcquireChannel reservation remains the hard concurrency gate.
+func snapshotConcurrencyLoad(items []model.GroupItem) []concurrencyLoadEntry {
+	entries := make([]concurrencyLoadEntry, len(items))
+	for i, item := range items {
+		entries[i] = concurrencyLoadEntry{
+			item:     item,
+			inflight: CurrentChannelConcurrency(item.ChannelID),
+		}
+	}
+	return entries
+}
+
+func compareConcurrencyLoad(a, b concurrencyLoadEntry) int {
+	if a.item.RuntimeMaxConcurrency > 0 && b.item.RuntimeMaxConcurrency > 0 {
+		aUtilization := float64(a.inflight) / float64(a.item.RuntimeMaxConcurrency)
+		bUtilization := float64(b.inflight) / float64(b.item.RuntimeMaxConcurrency)
+		if aUtilization < bUtilization {
+			return -1
+		}
+		if aUtilization > bUtilization {
+			return 1
+		}
+	}
+	// Unlimited channels and callers without a runtime capacity hint retain the
+	// previous absolute-inflight ordering. The same tie-break also preserves
+	// deterministic behavior when finite-capacity utilization is equal.
+	if a.inflight < b.inflight {
+		return -1
+	}
+	if a.inflight > b.inflight {
+		return 1
+	}
+	return 0
+}
+
+// LeastUsed 最少使用：对有并发上限的通道按实时利用率升序，优先保留更多 headroom；
+// 无上限/无运行时容量提示时退化为原有的在途并发升序，并发负载相同按 Priority 升序。
+// 利用率只是当前排序 hint；最终并发准入仍由 TryAcquireChannel 原子判定。
 type LeastUsed struct{}
 
 func (b *LeastUsed) Candidates(items []model.GroupItem) []model.GroupItem {
-	n := len(items)
-	if n == 0 {
+	if len(items) == 0 {
 		return nil
 	}
-	type luEntry struct {
-		item model.GroupItem
-		conc int64
-	}
-	es := make([]luEntry, n)
-	for i, item := range items {
-		es[i] = luEntry{item: item, conc: CurrentChannelConcurrency(item.ChannelID)}
-	}
-	sort.SliceStable(es, func(i, j int) bool {
-		if es[i].conc != es[j].conc {
-			return es[i].conc < es[j].conc
+	entries := snapshotConcurrencyLoad(items)
+	sort.SliceStable(entries, func(i, j int) bool {
+		if cmp := compareConcurrencyLoad(entries[i], entries[j]); cmp != 0 {
+			return cmp < 0
 		}
-		return es[i].item.Priority < es[j].item.Priority
+		return entries[i].item.Priority < entries[j].item.Priority
 	})
-	result := make([]model.GroupItem, n)
-	for i := range es {
-		result[i] = es[i].item
+	result := make([]model.GroupItem, len(entries))
+	for i := range entries {
+		result[i] = entries[i].item
 	}
 	return result
 }
 
-// P2C 二选一（Power of Two Choices）：随机取两个候选，选在途并发较低者置首；
-// 余下按并发升序作 fallback 尾部。n<2 退化为按并发升序。
-// 移植自 omniroute orderTargetsByPowerOfTwoChoices。
+// P2C 二选一（Power of Two Choices）：随机取两个候选，优先当前并发利用率较低者；
+// 无上限/无运行时容量提示时退化为绝对在途并发。余下候选按同一负载规则排序。
+// 快照只用于本次排序，最终并发准入仍由 TryAcquireChannel 原子判定。
 type P2C struct{}
 
 func (b *P2C) Candidates(items []model.GroupItem) []model.GroupItem {
@@ -223,37 +258,37 @@ func (b *P2C) Candidates(items []model.GroupItem) []model.GroupItem {
 		out[0] = items[0]
 		return out
 	}
+	entries := snapshotConcurrencyLoad(items)
 	i := rand.Intn(n)
 	j := rand.Intn(n)
 	for j == i {
 		j = rand.Intn(n)
 	}
-	// 二选一：选并发较低者作为 primary；primaryIdx 跟踪胜者索引以便从 rest 中排除
 	primaryIdx := i
-	if CurrentChannelConcurrency(items[j].ChannelID) < CurrentChannelConcurrency(items[i].ChannelID) {
+	if compareConcurrencyLoad(entries[j], entries[i]) < 0 {
 		primaryIdx = j
 	}
-	primary := items[primaryIdx]
+	primary := entries[primaryIdx].item
 
-	// 余下（不含 primary）按并发升序、Priority tie-break
-	rest := make([]model.GroupItem, 0, n-1)
-	for k, it := range items {
+	rest := make([]concurrencyLoadEntry, 0, n-1)
+	for k, entry := range entries {
 		if k == primaryIdx {
 			continue
 		}
-		rest = append(rest, it)
+		rest = append(rest, entry)
 	}
 	sort.SliceStable(rest, func(a, bb int) bool {
-		ca, cb := CurrentChannelConcurrency(rest[a].ChannelID), CurrentChannelConcurrency(rest[bb].ChannelID)
-		if ca != cb {
-			return ca < cb
+		if cmp := compareConcurrencyLoad(rest[a], rest[bb]); cmp != 0 {
+			return cmp < 0
 		}
-		return rest[a].Priority < rest[bb].Priority
+		return rest[a].item.Priority < rest[bb].item.Priority
 	})
 
 	result := make([]model.GroupItem, 0, n)
 	result = append(result, primary)
-	result = append(result, rest...)
+	for _, entry := range rest {
+		result = append(result, entry.item)
+	}
 	return result
 }
 

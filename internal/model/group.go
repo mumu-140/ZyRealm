@@ -42,6 +42,10 @@ type GroupItem struct {
 	ModelName string `json:"model_name" gorm:"not null;index:idx_group_channel_model,unique"`
 	Priority  int    `json:"priority"`
 	Weight    int    `json:"weight"`
+
+	// RuntimeMaxConcurrency is a request-local scheduling hint populated from
+	// the channel cache. It is never persisted or exposed through the API.
+	RuntimeMaxConcurrency int `json:"-" gorm:"-"`
 }
 
 // GroupPreset 分组的路由配置预设（命名快照）

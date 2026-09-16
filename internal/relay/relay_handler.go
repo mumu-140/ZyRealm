@@ -223,8 +223,15 @@ func (h *relayHandler) processCandidate() bool {
 
 	excludedKeyIDs := make(map[int]struct{}, defaultMaxCredentialsPerProvider)
 	for credentialAttempt := 0; credentialAttempt < defaultMaxCredentialsPerProvider; credentialAttempt++ {
+		// Capacity is reserved before fair credential selection. A saturated
+		// provider therefore cannot consume credential scheduling progress.
+		if !h.reserveCandidateCapacity(channel) {
+			return false
+		}
+
 		key, plans := h.selectCandidateAttempt(channel, upstreamModel, legacyEligible, excludedKeyIDs)
 		if key.ChannelKey == "" || len(plans) == 0 {
+			balancer.ReleaseChannel(channel.ID)
 			if key.ChannelKey != "" {
 				h.iterator.Skip(channel.ID, key.ID, channel.Name, reason)
 			}
@@ -239,7 +246,7 @@ func (h *relayHandler) processCandidate() bool {
 			}
 		}
 
-		if !h.acquireCandidate(channel, key) {
+		if !h.consumeCandidateRPM(channel, key) {
 			return false
 		}
 		result := runSameChannelAttempts(ctx, h.request, channel, key, plans,
@@ -280,13 +287,17 @@ func (h *relayHandler) selectCandidateAttempt(channel *dbmodel.Channel, upstream
 	})
 }
 
-func (h *relayHandler) acquireCandidate(channel *dbmodel.Channel, key dbmodel.ChannelKey) bool {
-	if !balancer.TryAcquireChannel(channel.ID, channel.MaxConcurrency) {
-		h.capacitySkipped = true
-		h.iterator.SkipCapacity(channel.ID, key.ID, channel.Name,
-			fmt.Sprintf("channel at max concurrency (%d)", channel.MaxConcurrency))
-		return false
+func (h *relayHandler) reserveCandidateCapacity(channel *dbmodel.Channel) bool {
+	if balancer.TryAcquireChannel(channel.ID, channel.MaxConcurrency) {
+		return true
 	}
+	h.capacitySkipped = true
+	h.iterator.SkipCapacity(channel.ID, 0, channel.Name,
+		fmt.Sprintf("channel at max concurrency (%d)", channel.MaxConcurrency))
+	return false
+}
+
+func (h *relayHandler) consumeCandidateRPM(channel *dbmodel.Channel, key dbmodel.ChannelKey) bool {
 	if balancer.TryConsumeChannelRPM(channel.ID, channel.MaxRPM, time.Now()) {
 		return true
 	}
