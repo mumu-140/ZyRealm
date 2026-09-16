@@ -54,6 +54,9 @@ func GroupGetEnabledMap(name string, ctx context.Context) (model.Group, error) {
 		if !ok || !channel.Enabled {
 			continue
 		}
+		// The configured ceiling is copied into this request-local GroupItem only
+		// as a soft scheduling hint. Atomic admission still happens at dispatch.
+		item.RuntimeMaxConcurrency = channel.MaxConcurrency
 		enabledItems = append(enabledItems, item)
 	}
 	group.Items = enabledItems
