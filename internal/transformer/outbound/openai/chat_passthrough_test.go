@@ -102,3 +102,22 @@ func TestChatOutboundTransformRequestRawRewritesOnlyTopLevelModel(t *testing.T) 
 		t.Fatalf("model alias rewrite must touch only the top-level model value:\n got: %s\nwant: %s", body, want)
 	}
 }
+
+func TestChatOutboundTransformRequestRawNormalizesDuplicateTopLevelModels(t *testing.T) {
+	pt := chatPassthroughCapable(t)
+	raw := []byte(`{"nested":{"model":"inner-model"},"model":"ambiguous-first","messages":[{"role":"user","content":"hi"}],"model":"gpt-5.6","future_field":true}`)
+
+	req, err := pt.TransformRequestRaw(context.Background(), raw, "gpt-5.6", "https://example.test/v1", "key", nil)
+	if err != nil {
+		t.Fatalf("TransformRequestRaw: %v", err)
+	}
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("read request body: %v", err)
+	}
+
+	want := []byte(`{"nested":{"model":"inner-model"},"model":"gpt-5.6","messages":[{"role":"user","content":"hi"}],"model":"gpt-5.6","future_field":true}`)
+	if !bytes.Equal(body, want) {
+		t.Fatalf("duplicate top-level model keys must be normalized to the selected upstream model without touching nested model fields:\n got: %s\nwant: %s", body, want)
+	}
+}
