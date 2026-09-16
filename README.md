@@ -147,8 +147,6 @@ These are compatibility surfaces, not the current product identity. The UI and p
 
 ## License and upstream
 
-ZyRealm is distributed under **GNU AGPL-3.0**, following the license of the Octopus codebase it is based on. See [LICENSE](LICENSE).
+This project continues development based on the upstream project [bestruirui/octopus](https://github.com/bestruirui/octopus), and remains licensed under **GNU AGPL-3.0**. See [LICENSE](LICENSE) for the full license terms.
 
-Original project: [bestruirui/octopus](https://github.com/bestruirui/octopus)
-
-This project does not claim authorship of upstream Octopus code. Fork-specific changes and subsequent development are maintained in this repository.
+Special thanks to the **[Linux.do](https://linux.do/)** community for your support and feedback.
