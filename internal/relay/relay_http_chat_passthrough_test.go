@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	dbmodel "github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
@@ -86,7 +87,12 @@ func TestHandlerOpenAIChatSameFormatUsesRawPassthrough(t *testing.T) {
 	c.Request.Header.Set("Authorization", "Bearer client-must-not-reach-upstream")
 	Handler(inbound.InboundTypeOpenAIChat, c)
 
-	got := <-captured
+	var got capturedChatPassthroughRequest
+	select {
+	case got = <-captured:
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream did not receive Chat request; passthrough/routing path did not dispatch")
+	}
 	if got.body != rawRequest {
 		t.Fatalf("same-format Chat request was rebuilt instead of raw-passthrough:\n got: %s\nwant: %s", got.body, rawRequest)
 	}
