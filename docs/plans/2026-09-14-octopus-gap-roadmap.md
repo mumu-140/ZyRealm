@@ -1,8 +1,8 @@
 # Octopus Gap Adoption Roadmap
 
-> Status: staged adoption index. P0.1, P0.1H, P0.2, P0.3, and the historical Routing Inspector (#27) are merged and verified on `main`. P1P passthrough semantic hardening + same-format coverage is the next implementation slice.
+> Status: staged adoption index. P0.1, P0.1H, P0.2, P0.3, the historical Routing Inspector (#27), and P1P passthrough semantic hardening + OpenAI Chat same-format coverage are merged and verified on `main`. The next work is a fresh post-P1P Embeddings/Images source audit before any broader passthrough or schema-heavy P1 change.
 >
-> Current verified runtime baseline: ZyRealm `main@1f4b856b350c3941000e1ca9af12c7ed42f67622` (2026-09-16 planning baseline), with merged-tree CI run `35006072380` all green. This roadmap update performs no deployment or production-state change.
+> Current verified runtime baseline: ZyRealm `main@5b773f13f84734eb222ad99e35b5840c69d2f188`, with merged-tree CI run `35051237424` all green. This roadmap closeout performs no deployment or production-state change.
 
 ## Planning rule
 
@@ -13,7 +13,7 @@ Adopt upstream ideas one slice at a time.
 3. Implement it with RED/GREEN evidence, run the full relevant regression suite, and merge it cleanly.
 4. Only then deep-read and plan the next slice.
 5. Treat the then-current `main`, repository governance script, CI workflow, and pre-push contract as execution authority; do not invent a parallel validation workflow.
-6. Do **not** lock schema-heavy P1 architecture while the nearer data-plane compatibility/reliability gaps remain unresolved.
+6. Do **not** lock schema-heavy P1 architecture while nearer data-plane compatibility/reliability questions remain unresolved.
 
 This is deliberate: Octopus-derived repositories and ZyRealm now have materially different runtime architectures. We should transfer useful ideas, not copy patches mechanically.
 
@@ -177,7 +177,7 @@ Implementation / verification evidence:
 
 ## Post-P0 routing observability baseline — MERGED + VERIFIED
 
-Historical Routing Inspector PR #27 is now part of the runtime baseline and must be treated as a regression dependency for all later relay work.
+Historical Routing Inspector PR #27 is part of the runtime baseline and remains a regression dependency for later relay work.
 
 Verified baseline:
 
@@ -187,64 +187,82 @@ Verified baseline:
 - runtime candidate, credential cooldown, and capability rejection decisions can be explained without placing raw request/response bodies or free-form provider detail into the trace;
 - the Inspector is read-only and must remain data-plane neutral.
 
-P1P therefore cannot be accepted merely because passthrough bytes work. It must also prove that TTFT/failover/replay decisions remain correctly represented by the existing routing trace and Inspector contract.
+P1P was therefore accepted only after its TTFT/failover/replay changes and Chat passthrough coverage remained compatible with this routing trace and Inspector contract.
 
-## P1P — Passthrough semantic hardening + same-format coverage — NEXT
+## P1P — Passthrough semantic hardening + same-format coverage — MERGED + VERIFIED
 
-Detailed source-audited plan: [`2026-09-16-p1p-passthrough-hardening-coverage-plan.md`](./2026-09-16-p1p-passthrough-hardening-coverage-plan.md).
+Detailed source-audited implementation and closure plan: [`2026-09-16-p1p-passthrough-hardening-coverage-plan.md`](./2026-09-16-p1p-passthrough-hardening-coverage-plan.md).
 
-Fresh source audit against `main@1f4b856b350c3941000e1ca9af12c7ed42f67622` changes the earlier feature-gap interpretation:
+The source audit against the pre-P1P baseline corrected the earlier feature-gap interpretation:
 
-- ZyRealm already has the optional `model.PassthroughCapable` architecture; passthrough is **not missing**;
-- Anthropic Messages -> Anthropic Messages and OpenAI Responses -> OpenAI Responses already use same-format raw HTTP passthrough;
-- Responses WebSocket passthrough/continuation affinity is already more integrated with ZyRealm's runtime than a generic raw proxy;
-- OpenAI Chat Completions still uses the explicit standard-path request struct and JSON reconstruction, so unknown future same-format fields are not guaranteed to survive;
-- P0.1H proves that **ZyRealm-generated heartbeat output** does not count as model payload, but does not prove the same semantic for **upstream raw SSE comments/keepalives** in the passthrough stream path;
-- raw passthrough is therefore a forward-compatibility and stream-commitment hardening problem, not a reason to create another relay subsystem.
+- ZyRealm already had the optional `model.PassthroughCapable` architecture; passthrough was **not missing**;
+- Anthropic Messages -> Anthropic Messages and OpenAI Responses -> OpenAI Responses already used same-format raw HTTP passthrough;
+- Responses WebSocket passthrough/continuation affinity was already more integrated with ZyRealm's runtime than a generic raw proxy;
+- the real gaps were upstream raw SSE liveness/commitment semantics and incomplete same-format coverage for OpenAI Chat Completions.
 
-Execution order is intentionally ahead of the existing schema-heavy P1 idea:
+P1P was deliberately implemented in two narrow runtime PRs rather than as a broad proxy rewrite.
 
-1. **P1P.1 — RED/GREEN upstream passthrough SSE commitment semantics.** Add a deterministic real-handler regression where provider A flushes an upstream `: keepalive` SSE comment and then stalls past TTFT, while provider B succeeds. Comment-only liveness must not stop TTFT or establish semantic delivery; dispatch remains an existing `unknown_upstream_outcome` replay case.
-2. **P1P.2 — Separate transport write from semantic provider payload.** Keep raw bytes untouched on the wire while using a bounded incremental SSE observer or equivalent classification mechanism. Raw chunks are not SSE records, so a stateless prefix check is explicitly forbidden.
-3. **P1P.3 — Lock replay + Routing Inspector invariants.** Substantive payload remains no-replay; first-token failure scope/cooldown/circuit behavior remains unchanged; route traces stay typed, bounded, non-sensitive, and data-plane neutral.
-4. **P1P.4 — OpenAI Chat -> Chat same-format passthrough.** Reuse the existing `PassthroughCapable` interface, preserve unknown/future fields, minimally rewrite the top-level selected upstream model, retain existing credential-owned header protection, and keep cross-format Chat routes on the standard transformer path.
-5. **P1P.5 — Embeddings/Images source audit only.** Audit whether the same framework is safe for embeddings and the separate image relay/multipart surface. Do not automatically expand the first implementation PR.
-6. **P1C — control-plane conveniences after P1P closure.** Re-audit tri-state parameter/header override semantics and a privileged diagnostic direct-route. Generic HTTP sticky routing remains deferred.
-7. **Only then re-evaluate schema-heavy P1.** Credential × model × protocol capability schema/migration work remains unapproved until fresh post-P1P evidence shows it is still necessary.
+### P1P.1–P1P.3 — SSE commitment hardening via PR #30
 
-### P1P execution and validation gate
+PR #30 separated raw transport activity from semantic provider payload while preserving raw bytes and the existing routing/replay model:
 
-Use the repository's existing scripts and CI contract; do not create a parallel harness.
+- a deterministic RED proved upstream `: keepalive` comments could previously satisfy the wrong commitment signal: CI `35036654522`;
+- implementation added the bounded incremental `SSEPayloadObserver` / payload-observer path rather than a stateless raw-chunk prefix check;
+- comment-only liveness no longer stops TTFT or establishes semantic delivery;
+- substantive `data:` events establish semantic delivery;
+- replay safety, failure scope/cooldown/circuit behavior, typed routing decisions, and the historical Inspector remain unchanged;
+- final PR-head GREEN: CI `35037353441`;
+- squash merge commit: `9002439d76ec178d539c0ec77d41803761672544`;
+- merged-tree CI: `35037506819` — governance, backend Vet/full tests, and frontend lint/test/build all success.
 
-- governance entrypoint: `bash scripts/check-governance.sh --repo`;
-- branch naming remains under accepted prefixes such as `codex/...`;
-- targeted backend tests run on GitHub CI or the approved fixed-version remote environment, never as local Mac build/test work;
-- full backend hard gate remains `go test -buildvcs=false ./...`;
-- existing `go vet ./...` behavior follows repository CI policy;
-- frontend install/lint/test/build remains part of full CI even for backend-only runtime changes;
-- exact PR-head SHA, changed-file boundary, and review-thread state must be audited before merge;
-- merged-tree CI must be green before P1P is marked complete;
-- no production deployment is part of P1P unless separately requested.
+### P1P.4 — OpenAI Chat -> Chat same-format passthrough via PR #31
 
-The first implementation PR should remain narrow: TTFT semantic hardening + Chat same-format passthrough. Embeddings/Images and P1C become successor slices unless their fresh audits prove they are isolated enough to remain reviewable.
+PR #31 extended the existing `PassthroughCapable` execution mode rather than adding a second relay subsystem:
 
-## P1 — Credential × model × protocol capability model — DEFERRED / RE-EVALUATE AFTER P1P
+- initial RED `35047865171` proved `ChatOutbound` lacked the optional passthrough capability;
+- first GREEN `35048039449` established same-format raw forwarding;
+- duplicate-model RED `35048544996` exposed a parser-dependent ambiguity when a later duplicate top-level `model` disagreed with the control-plane-selected model;
+- final implementation normalizes all top-level `model` values when needed while never touching nested `model` fields;
+- with one unambiguous top-level `model` already equal to the selected upstream model, raw request bytes remain byte-identical;
+- unknown/future request and response fields survive the same-format relay;
+- query parameters, `ContentLength`, `GetBody`, credential-owned upstream authorization, header policy, routing, replay, metrics, and Inspector remain on existing ZyRealm machinery;
+- cross-format Chat routes remain on the standard transformer path;
+- final PR head: `130a4c71ee5ea1140a58d7989e1fafd2421e15aa`;
+- final PR-head CI: `35048893875` — governance, backend Vet/full tests, and frontend lint/test/build all success;
+- scope audit: exactly four files changed — the P1P plan, one relay acceptance test, one Chat passthrough implementation file, and one adapter test file;
+- no DB migration, dependency, routing schema, timeout/replay-policy, frontend runtime, deploy/compose, or production-state change;
+- review audit: no inline review threads and no submitted reviews at the final head;
+- squash merge commit: `5b773f13f84734eb222ad99e35b5840c69d2f188`;
+- merged-tree CI: `35051237424` — governance, backend Vet/full tests, and frontend lint/test/build all success;
+- deployment status: **not deployed** by this merge workflow.
+
+P1P is therefore closed on the verified runtime baseline `main@5b773f13f84734eb222ad99e35b5840c69d2f188`.
+
+### Post-P1P execution order
+
+1. **Embeddings/Images passthrough source audit — NEXT.** Audit OpenAI embedding paths and the separate image relay/multipart surface against post-P1P `main`; do not automatically copy the reference endpoint matrix.
+2. **P1C — control-plane conveniences.** Re-audit tri-state parameter/header override semantics and a privileged diagnostic direct-route. Generic HTTP sticky routing remains deferred.
+3. **Only then re-evaluate schema-heavy P1.** Credential × model × protocol capability schema/migration work remains unapproved until fresh post-P1P evidence shows it is still necessary.
+
+Use the repository's existing governance and CI contract for every successor slice. No production deployment is implied by this roadmap.
+
+## P1 — Credential × model × protocol capability model — DEFERRED / RE-EVALUATE AFTER POST-P1P AUDITS
 
 Remembered idea only: Octopus's `ChannelKey` / `ChannelModel` / `ChannelGrant` split is a useful authorization-modeling reference. ZyRealm already has a more advanced runtime credential pool, so any future P1 work must layer capability metadata onto the existing scheduler rather than replace it.
 
-No schema, migration, API, or runtime design is approved here. P1 remains unapproved until P1P is closed and a fresh source audit plus operational-need assessment show that the capability model is still necessary.
+No schema, migration, API, or runtime design is approved here. P1 remains unapproved until the Embeddings/Images and P1C successor audits plus an operational-need assessment show that capability modeling is still necessary.
 
 ## Explicit non-goals
 
 - No wholesale merge/rebase from Octopus or octopus-customization for these features.
-- No second passthrough subsystem; same-format coverage must extend the existing `PassthroughCapable` architecture.
+- No second passthrough subsystem; same-format coverage extends the existing `PassthroughCapable` architecture.
 - No P1 database migration without a fresh post-P1P source audit and explicit approval.
 - No replacement of ZyRealm credential fairness, cooldown, circuit breaking, failure-domain classification, protocol fallback, replay-safety, live-request/manual-interrupt, or Routing Inspector logic with a simpler routing model.
 - No blanket `if error then switch provider` handling that ignores dispatch uncertainty or downstream commitment.
 - No broadening of first-token timeout duration, replay allowance, or attempt budgets as part of passthrough hardening.
 - No generic sticky-session or public `channel/model` direct-route syntax in P1P.
 - No dependency addition merely to mimic a reference implementation when existing ZyRealm code can satisfy the contract.
-- No speculative planning of later slices based on today's file layout; each successor slice must be planned against the then-current `main`.
+- No speculative planning of later slices based on an old file layout; each successor slice must be planned against the then-current `main`.
 
 ## Progress checklist
 
@@ -270,15 +288,15 @@ No schema, migration, API, or runtime design is approved here. P1 remains unappr
 - [x] P0.3 implemented with TDD and PR-head full regression verification.
 - [x] P0.3 final implementation diff/review boundary audited; no unresolved review threads at reviewed head.
 - [x] P0.3 merged/stabilized on `main`; squash merge `c60ba21cebe5d3b9424d2fffff97964e2b281deb`, merged-tree CI `34960012680` all green.
-- [x] Historical Routing Inspector #27 accounted for as current runtime baseline; `main@1f4b856b350c3941000e1ca9af12c7ed42f67622`, CI `35006072380` green.
-- [x] P1P current-main source audit completed across passthrough, TTFT, stream commitment, replay, parameter override, governance, CI, and pre-push paths.
+- [x] Historical Routing Inspector #27 accounted for as runtime baseline; `main@1f4b856b350c3941000e1ca9af12c7ed42f67622`, CI `35006072380` green.
+- [x] P1P source audit completed across passthrough, TTFT, stream commitment, replay, parameter override, governance, CI, and pre-push paths.
 - [x] P1P detailed implementation plan recorded.
-- [ ] P1P.1 RED proves upstream passthrough SSE comment-only liveness does not satisfy intended first-token semantics on current implementation.
-- [ ] P1P.2 semantic stream-commitment hardening implemented with GREEN + mutation proof.
-- [ ] P1P.3 replay/routing-decision/Inspector invariants verified.
-- [ ] P1P.4 OpenAI Chat same-format raw passthrough implemented with unknown-field and credential-isolation coverage.
-- [ ] P1P final PR-head governance/backend/frontend CI green; diff and review-thread boundaries audited.
-- [ ] P1P merged/stabilized on `main`; merged-tree CI green.
+- [x] P1P.1 RED reproduced upstream passthrough SSE comment-only liveness incorrectly satisfying first-token semantics; CI `35036654522`.
+- [x] P1P.2 semantic stream-commitment hardening implemented with GREEN; PR #30 final CI `35037353441`, merge `9002439d76ec178d539c0ec77d41803761672544`, merged-tree CI `35037506819`.
+- [x] P1P.3 replay/routing-decision/Inspector invariants verified under full repository CI and merged-tree validation.
+- [x] P1P.4 OpenAI Chat same-format raw passthrough implemented with unknown-field, duplicate-model, replay-metadata, query, and credential-isolation coverage.
+- [x] P1P final implementation PR head `130a4c71ee5ea1140a58d7989e1fafd2421e15aa` passed governance/backend/frontend CI `35048893875`; four-file scope and review-thread boundary audited.
+- [x] P1P merged/stabilized on `main@5b773f13f84734eb222ad99e35b5840c69d2f188`; merged-tree CI `35051237424` all green.
 - [ ] Embeddings/Images passthrough successor audit completed against post-P1P `main`.
 - [ ] Re-evaluate P1C tri-state override/direct-route needs against post-P1P `main`.
-- [ ] Re-evaluate whether schema-heavy P1 capability modeling is still necessary after P1P operational feedback.
+- [ ] Re-evaluate whether schema-heavy P1 capability modeling is still necessary after post-P1P operational evidence.
