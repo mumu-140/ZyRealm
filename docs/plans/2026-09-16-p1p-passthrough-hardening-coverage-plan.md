@@ -2,9 +2,21 @@
 
 > **For ChatGPT:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to execute this plan task-by-task. Use superpowers:test-driven-development before runtime changes and superpowers:verification-before-completion before claiming a slice complete.
 >
-> Status: source-audited implementation plan only. No runtime code is approved by this document until each task reaches its own RED/GREEN gate.
+> Status: **ACTIVE IMPLEMENTATION**. Tasks 1–3 (passthrough SSE semantic hardening and invariant verification) are `MERGED + VERIFIED`; Task 4 (OpenAI Chat -> Chat same-format raw passthrough) is `IN PROGRESS`.
 >
-> Audit baseline: `main@1f4b856b350c3941000e1ca9af12c7ed42f67622` (2026-09-16 planning baseline), after historical Routing Inspector PR #27. Main CI run `35006072380` is green.
+> Current implementation baseline: `main@9002439d76ec178d539c0ec77d41803761672544` after PR #30. Merged-tree CI run `35037506819` completed successfully.
+
+## Progress ledger
+
+- **Tasks 1–3 — MERGED + VERIFIED** via PR #30, merge `9002439d76ec178d539c0ec77d41803761672544`.
+  - RED evidence: CI `35036654522` reproduced the upstream SSE comment/TTFT bug.
+  - Final PR-head GREEN: CI `35037353441` passed governance, backend vet/full tests, and frontend lint/test/build.
+  - Merged-tree GREEN: CI `35037506819` passed on `main`.
+  - Result: raw passthrough now separates transport liveness from semantic payload commitment with a bounded incremental SSE observer; raw bytes remain unchanged for classification.
+- **Task 4 — IN PROGRESS** on `codex/p1p-chat-passthrough`, based directly on `main@9002439d...`.
+  - Primary acceptance criterion: same-format Chat preserves unknown/future request fields while remaining inside the existing `PassthroughCapable` relay path.
+  - Additional fidelity invariant: if the selected upstream model already equals the client top-level `model`, raw request bytes remain byte-identical; if alias rewrite is required, only the top-level `model` may change and nested `model` keys must remain untouched.
+  - No new dependency, DB migration, routing schema, replay-policy change, or production operation is allowed in this slice.
 
 ## Goal
 
@@ -22,14 +34,12 @@ Current `main` already has:
 - Responses WebSocket passthrough and continuation affinity;
 - first-token timeout integrated with dispatch state, replay budget, provider/model failure handling, and downstream commitment;
 - P0.1H regression coverage proving that **ZyRealm-generated heartbeat output** is not model payload;
-- P1A.1 typed routing-decision persistence and the historical Routing Inspector.
+- P1A.1 typed routing-decision persistence and the historical Routing Inspector;
+- passthrough SSE semantic hardening from PR #30, so upstream comment/keepalive liveness no longer establishes first-token commitment.
 
-The fresh source audit found two narrower gaps that should be resolved before schema-heavy P1 work:
+The remaining P1P compatibility gap is OpenAI Chat Completions same-format traffic: it still traverses the explicit `ChatCompletionsRequest` whitelist and JSON rebuild, so unknown/future top-level fields are not guaranteed to survive a same-format relay.
 
-1. raw passthrough streaming currently reads arbitrary non-empty byte chunks through `stream.RawSource`; the stream processor marks a raw write as `payloadWritten`, so an **upstream SSE comment/keepalive** may satisfy first-token/commitment semantics even though no substantive provider event has arrived;
-2. OpenAI Chat Completions same-format traffic still traverses the explicit `ChatCompletionsRequest` whitelist and JSON rebuild, so unknown/future top-level fields are not guaranteed to survive a same-format relay.
-
-These are data-plane compatibility/reliability gaps in an already-shipped architecture, so they take precedence over speculative capability-schema expansion.
+This is a data-plane forward-compatibility gap in an already-shipped architecture, so it takes precedence over speculative capability-schema expansion.
 
 ## Architectural contract
 
@@ -66,15 +76,15 @@ For P1P, define first-token/stream commitment as:
 
 > the first **substantive provider protocol payload** forwarded downstream, not infrastructure liveness bytes.
 
-The first slice only needs to distinguish SSE comment-only liveness from substantive events. It does **not** need a provider-specific parser for “first visible natural-language token”. A non-comment SSE event is sufficient to establish semantic delivery for this stage.
+The first slice distinguishes SSE comment-only liveness from substantive data-bearing events. It does **not** attempt provider-specific parsing of the “first visible natural-language token”. A completed non-empty `data:` event is sufficient to establish semantic delivery for this stage.
 
 Important consequences:
 
 - ZyRealm's own heartbeat remains non-committing, preserving P0.1H;
-- an upstream `: keepalive\n\n` comment may still be forwarded byte-for-byte to the client, but must not stop TTFT or mark downstream semantic commitment;
+- an upstream `: keepalive\n\n` comment may still be forwarded byte-for-byte to the client, but does not stop TTFT or mark downstream semantic commitment;
 - if the upstream sends only comments and then stalls past TTFT, the existing first-token timeout path remains eligible to fail over subject to the existing unknown-outcome replay budget;
 - once a substantive provider event is forwarded, transparent replay/failover remains forbidden under the existing commitment rules;
-- `dispatchMaybeSent` remains an unknown upstream outcome. P1P must not reinterpret a TTFT as “definitely not sent”.
+- `dispatchMaybeSent` remains an unknown upstream outcome. P1P does not reinterpret a TTFT as “definitely not sent”.
 
 ### Raw fidelity semantic
 
@@ -83,6 +93,12 @@ Do not overclaim unconditional byte identity.
 Raw passthrough should preserve unknown fields and raw structure whenever ZyRealm has no intentional body mutation. Exact byte identity can legitimately change when ZyRealm must rewrite the selected upstream model or apply an explicit request override. Compression remains a hard gate out of raw passthrough because it mutates the internal request while the original raw body is no longer authoritative.
 
 Forward compatibility — especially survival of unknown future protocol fields — is the primary acceptance criterion for OpenAI Chat passthrough.
+
+For Chat Task 4 specifically:
+
+- when the selected upstream model equals the client top-level `model`, `TransformRequestRaw` should return the original raw body unchanged;
+- when model aliasing is required, rewrite only the top-level `model` while preserving all other fields, including unknown fields and nested keys also named `model`;
+- request query parameters, `ContentLength`, and `GetBody` must remain correct for existing replay machinery.
 
 ## Audited source map
 
@@ -119,7 +135,7 @@ Reference only, never cherry-pick mechanically:
 
 The reference project demonstrates broader same-format passthrough coverage. ZyRealm must retain its own routing/replay/control-plane architecture.
 
-## Task 1 — RED: prove upstream passthrough comments do not count as first token
+## Task 1 — RED: prove upstream passthrough comments do not count as first token — ✅ MERGED + VERIFIED
 
 **Files:**
 
@@ -132,69 +148,32 @@ Write a real-handler regression with two candidates:
 - provider A returns HTTP 200 `text/event-stream`, immediately flushes `: keepalive\n\n`, then stalls beyond configured first-token timeout;
 - provider B returns a valid same-format streaming response with substantive model payload.
 
-The test must assert all of the following:
+Required behavior is now locked by PR #30 and merged-tree CI `35037506819`.
 
-1. provider A is attempted once;
-2. provider B is attempted after A's first-token timeout;
-3. B's substantive payload reaches the client;
-4. A's comment may appear in raw downstream bytes, but does not mark semantic delivery/commitment;
-5. the A attempt is traced as the existing first-token-timeout/failover path rather than `downstream_committed`;
-6. replay continues to use the existing `unknown_upstream_outcome` budget semantics after dispatch;
-7. `TestHandlerFirstTokenTimeoutFailsOverAfterEarlyHeartbeat` remains a separate passing regression because it covers local heartbeat, not upstream comment liveness.
+## Task 2 — GREEN: separate transport writes from semantic stream commitment — ✅ MERGED + VERIFIED
 
-**RED requirement:** run the targeted test in GitHub CI or the approved fixed-version remote environment and preserve evidence that current `main` fails the new assertion for the expected semantic reason. Do not weaken the assertion to fit current behavior.
+Implemented by PR #30 with:
 
-## Task 2 — GREEN: separate transport writes from semantic stream commitment
+- `StreamConfig.PayloadObserver` as an optional semantic-delivery hook;
+- bounded `SSEPayloadObserver` state across arbitrary raw chunk / CRLF boundaries;
+- raw bytes forwarded unchanged;
+- comment-only liveness excluded from `OnFirstToken` and semantic commitment;
+- completed non-empty `data:` events establishing semantic delivery.
 
-**Likely files:**
+No timeout duration, routing policy, replay budget, or standard transform behavior was changed.
 
-- Modify: `internal/relay/stream/processor.go`
-- Modify: `internal/relay/relay_stream_response.go`
-- Possibly create: `internal/relay/stream/sse_payload_observer.go`
-- Add/modify tests under `internal/relay/stream/`
-- Complete `internal/relay/passthrough_first_token_semantics_test.go`
+## Task 3 — Lock replay, routing trace, and Inspector invariants — ✅ VERIFIED
 
-The concrete implementation may change after the fresh implementation-time source audit, but it must satisfy these invariants:
-
-1. raw passthrough bytes sent to the client are not reserialized or normalized merely to classify commitment;
-2. transport activity and semantic provider payload are tracked separately;
-3. `OnFirstToken`, first-token metrics, and `markLiveStreamDelivery()` fire only on substantive provider payload;
-4. an upstream SSE comment/keepalive does not stop first-token timeout;
-5. comment-only EOF is not promoted to a successful semantic response; preserve/extend existing empty-stream failover semantics;
-6. a substantive event followed by an error is still committed and must not transparently replay;
-7. local ZyRealm heartbeat continues to be non-committing.
-
-### Implementation warning: raw chunks are not SSE events
-
-`RawSource` reads arbitrary fixed-size byte chunks. A chunk can split a comment line or SSE event across reads. Therefore **do not** implement this as a stateless `strings.HasPrefix(chunk, ":")` check.
-
-Use a bounded incremental/stateful observer or equivalent sidecar classification that can recognize complete SSE records while leaving raw bytes unchanged on the wire. The observer may buffer only the minimal classification state; it must not turn passthrough into the normal transform/reserialize path.
-
-**Mutation proof:** after GREEN, temporarily revert/bypass the semantic classifier and confirm the new regression fails again for the expected reason. Restore the correct implementation before continuing.
-
-## Task 3 — Lock replay, routing trace, and Inspector invariants
-
-**Files to exercise:**
-
-- `internal/relay/delivery_commitment_test.go`
-- `internal/relay/committed_stream_no_replay_test.go`
-- `internal/relay/routing_replay_safety_test.go`
-- `internal/relay/routing_decision_test.go`
-- `internal/relay/routing_inspector_metrics_test.go`
-- `internal/relay/empty_stream_failover_test.go`
-
-Add assertions only where the new passthrough semantic needs coverage. Do not broaden the routing model.
-
-Required invariants:
+The P1P SSE change did not broaden the routing model. Existing repository coverage plus the real-handler passthrough failover regression remained green under full backend CI before merge and on the merged tree. Required invariants remain:
 
 - comment-only pre-semantic timeout can continue only when existing attempt/replay budgets allow it;
 - substantive payload remains terminal for transparent replay;
 - failure scope/cooldown/circuit classification for first-token timeout is unchanged;
 - candidate ordering, credential fairness, and protocol fallback are unchanged;
-- persisted routing decisions remain typed and bounded; do not add raw SSE/comment text, headers, bodies, credentials, or free-form provider detail to Inspector records;
+- persisted routing decisions remain typed and bounded; raw SSE/comment text, headers, bodies, credentials, or free-form provider detail are not added to Inspector records;
 - P1A.1's read-only Inspector remains data-plane neutral.
 
-## Task 4 — RED/GREEN: OpenAI Chat -> Chat same-format raw passthrough
+## Task 4 — RED/GREEN: OpenAI Chat -> Chat same-format raw passthrough — 🚧 IN PROGRESS
 
 **Files:**
 
@@ -209,16 +188,17 @@ Required invariants:
 Lock these contracts before adding `PassthroughCapable` to `ChatOutbound`:
 
 1. a same-format Chat request containing an unknown/future top-level field reaches the upstream with that field intact;
-2. selected upstream model alias rewrite changes only the top-level `model`; nested objects containing a field named `model` are untouched;
-3. query parameters survive;
-4. `ContentLength` / `GetBody` allow safe request replay by the existing HTTP machinery;
-5. upstream auth remains credential-owned and client `Authorization` cannot replace the selected upstream credential;
-6. allowed client headers continue through the existing header-copy/template policy rather than creating a second header policy;
-7. streaming raw response bytes remain passthrough while the Task 2 semantic observer controls first-token commitment;
-8. non-stream same-format Chat uses raw request forwarding without bypassing normal response/error/routing metrics;
-9. cross-format routes (for example Chat -> Responses or Chat -> Anthropic) remain on the standard transformer path;
-10. compression still disables raw-body authority and therefore raw passthrough;
-11. explicit parameter override remains an intentional body mutation. Tests should require semantic override behavior and unknown-field survival, not impossible byte identity after an override.
+2. when the upstream model equals the request model, the request body remains byte-identical;
+3. selected upstream model alias rewrite changes only the top-level `model`; nested objects containing a field named `model` are untouched;
+4. query parameters survive;
+5. `ContentLength` / `GetBody` allow safe request replay by the existing HTTP machinery;
+6. upstream auth remains credential-owned and client `Authorization` cannot replace the selected upstream credential;
+7. allowed client headers continue through the existing header-copy/template policy rather than creating a second header policy;
+8. streaming raw response bytes remain passthrough while the Task 2 semantic observer controls first-token commitment;
+9. non-stream same-format Chat uses raw request forwarding without bypassing normal response/error/routing metrics;
+10. cross-format routes (for example Chat -> Responses or Chat -> Anthropic) remain on the standard transformer path;
+11. compression still disables raw-body authority and therefore raw passthrough;
+12. explicit parameter override remains an intentional body mutation. Tests should require semantic override behavior and unknown-field survival, not impossible byte identity after an override.
 
 ### GREEN implementation
 
@@ -275,7 +255,7 @@ Adjust exact test regexes to the final names; do not skip the corresponding pack
 Use the existing CI workflow as authority:
 
 - governance: `bash scripts/check-governance.sh --repo`;
-- backend: `go vet ./...` remains informational for the repository's known copylock exception, while `go test -buildvcs=false ./...` is a hard gate;
+- backend: repository CI must pass `go vet ./...` and `go test -buildvcs=false ./...`;
 - frontend: existing pnpm install/lint/test/build jobs must remain green even if this slice has no frontend changes.
 
 Before merge:
