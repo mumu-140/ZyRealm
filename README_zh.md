@@ -149,4 +149,3 @@ Disabled、runtime cooldown、并发已满、RPM 已满、circuit 不可用等�
 ## 许可证与上游
 本项目基于上游项目继续开发：[bestruirui/octopus](https://github.com/bestruirui/octopus)，继续采用 **GNU AGPL-3.0**。完整条款见 [LICENSE](LICENSE)。
 
-Special thanks to the **[Linux.do](https://linux.do/)** community for your support and feedback.
