@@ -197,6 +197,119 @@ func TestImagesHandlerSaturatedCandidateDoesNotChargeCredentialFairness(t *testi
 	}
 }
 
+func TestLoadAwareModesPreferCapacityHeadroomOverLowerAbsoluteInflight(t *testing.T) {
+	modes := []struct {
+		name string
+		mode dbmodel.GroupMode
+	}{
+		{name: "least-used", mode: dbmodel.GroupModeLeastUsed},
+		{name: "p2c", mode: dbmodel.GroupModeP2C},
+	}
+
+	for _, tc := range modes {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			ctx := setupRelayTestDB(t)
+			availability.Reset()
+			t.Cleanup(availability.Reset)
+
+			var tightHits atomic.Int32
+			tightUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				tightHits.Add(1)
+				writeChatAdmissionSuccess(w, "headroom-model")
+			}))
+			defer tightUpstream.Close()
+
+			var roomyHits atomic.Int32
+			roomyUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				roomyHits.Add(1)
+				writeChatAdmissionSuccess(w, "headroom-model")
+			}))
+			defer roomyUpstream.Close()
+
+			tight := &dbmodel.Channel{
+				Name:           "headroom-tight-" + tc.name,
+				Type:           outbound.OutboundTypeOpenAIChat,
+				Enabled:        true,
+				BaseUrls:       []dbmodel.BaseUrl{{URL: tightUpstream.URL + "/v1"}},
+				Model:          "headroom-model",
+				MaxConcurrency: 3,
+				Keys:           []dbmodel.ChannelKey{{Enabled: true, ChannelKey: "headroom-tight-key"}},
+			}
+			roomy := &dbmodel.Channel{
+				Name:           "headroom-roomy-" + tc.name,
+				Type:           outbound.OutboundTypeOpenAIChat,
+				Enabled:        true,
+				BaseUrls:       []dbmodel.BaseUrl{{URL: roomyUpstream.URL + "/v1"}},
+				Model:          "headroom-model",
+				MaxConcurrency: 10,
+				Keys:           []dbmodel.ChannelKey{{Enabled: true, ChannelKey: "headroom-roomy-key"}},
+			}
+			if err := op.ChannelCreate(tight, ctx); err != nil {
+				t.Fatalf("create tight channel: %v", err)
+			}
+			if err := op.ChannelCreate(roomy, ctx); err != nil {
+				t.Fatalf("create roomy channel: %v", err)
+			}
+
+			groupName := "headroom-group-" + tc.name
+			group := &dbmodel.Group{Name: groupName, Mode: tc.mode}
+			if err := op.GroupCreate(group, ctx); err != nil {
+				t.Fatalf("create group: %v", err)
+			}
+			for _, channelID := range []int{tight.ID, roomy.ID} {
+				if err := op.GroupItemAdd(&dbmodel.GroupItem{
+					GroupID: group.ID, ChannelID: channelID, ModelName: "headroom-model", Priority: 1, Weight: 1,
+				}, ctx); err != nil {
+					t.Fatalf("add group item: %v", err)
+				}
+			}
+
+			reserveChannelSlots(t, tight.ID, tight.MaxConcurrency, 2)
+			reserveChannelSlots(t, roomy.ID, roomy.MaxConcurrency, 4)
+
+			body, err := json.Marshal(map[string]any{
+				"model": groupName,
+				"messages": []map[string]string{{
+					"role": "user", "content": "hello",
+				}},
+			})
+			if err != nil {
+				t.Fatalf("marshal request: %v", err)
+			}
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			Handler(inbound.InboundTypeOpenAIChat, c)
+
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+			}
+			if got := tightHits.Load(); got != 0 {
+				t.Fatalf("tight channel hits = %d, want 0; 2/3 utilization must rank behind 4/10", got)
+			}
+			if got := roomyHits.Load(); got != 1 {
+				t.Fatalf("roomy channel hits = %d, want 1; 4/10 utilization should win", got)
+			}
+		})
+	}
+}
+
+func reserveChannelSlots(t *testing.T, channelID, maxConcurrency, count int) {
+	t.Helper()
+	for i := 0; i < count; i++ {
+		if !balancer.TryAcquireChannel(channelID, maxConcurrency) {
+			t.Fatalf("reserve channel %d slot %d/%d", channelID, i+1, count)
+		}
+	}
+	t.Cleanup(func() {
+		for i := 0; i < count; i++ {
+			balancer.ReleaseChannel(channelID)
+		}
+	})
+}
+
 func lowestEligibleCredentialID(keys []dbmodel.ChannelKey) int {
 	lowest := 0
 	for _, key := range keys {
