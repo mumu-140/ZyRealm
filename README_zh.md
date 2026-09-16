@@ -9,7 +9,7 @@
 面向多供应商、多凭据与多协议流量的稳定控制平面。
 
 [English](README.md) · [快速开始](USAGE_zh.md) · [Releases](https://github.com/mumu-140/ZyRealm/releases)
-
+本项目基于上游项目继续开发：[bestruirui/octopus](https://github.com/bestruirui/octopus)
 </div>
 
 > **项目来源与归属说明**
@@ -150,6 +150,4 @@ Disabled、runtime cooldown、并发已满、RPM 已满、circuit 不可用等�
 
 ZyRealm 基于 Octopus 开发，继续采用 **GNU AGPL-3.0**。完整条款见 [LICENSE](LICENSE)。
 
-上游项目：[bestruirui/octopus](https://github.com/bestruirui/octopus)
-
-本项目不会把上游 Octopus 代码声明为自己的原创；本仓库负责维护基于其上继续开发的差异和新增能力。
+Special thanks to the **[Linux.do](https://linux.do/)** community for your support and feedback.
