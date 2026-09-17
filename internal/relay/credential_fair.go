@@ -32,6 +32,9 @@ func selectFairChannelCredential(
 		if _, excluded := options.ExcludeKeyIDs[key.ID]; excluded {
 			continue
 		}
+		// Credential availability is the sole shared admission authority for all
+		// credential revisions. Secret replacement already advances the revision,
+		// so a legacy breaker entry must not become a second eligibility gate.
 		if !availability.CredentialAvailableRevision(channel.ID, key.ID, key.CredentialRevision, now) {
 			options.ExcludeKeyIDs[key.ID] = struct{}{}
 			if iterator != nil {
@@ -44,14 +47,6 @@ func selectFairChannelCredential(
 					ChannelName:  channel.Name,
 				})
 			}
-			continue
-		}
-		// P4A migration seam: revision-aware credentials must not inherit a stale
-		// breaker entry created for an older secret under the same key ID. Existing
-		// revision-1 credentials keep the legacy gate until the remaining circuit
-		// consumers (especially Images) are migrated in later P4 gates.
-		if key.CredentialRevision <= 1 && iterator != nil && iterator.SkipCircuitBreak(channel.ID, key.ID, channel.Name) {
-			options.ExcludeKeyIDs[key.ID] = struct{}{}
 			continue
 		}
 		candidates = append(candidates, key)
