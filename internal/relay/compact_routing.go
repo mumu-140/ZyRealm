@@ -3,8 +3,6 @@ package relay
 import (
 	"context"
 	"time"
-
-	"github.com/bestruirui/octopus/internal/relay/balancer"
 )
 
 // compactAttemptRoutingResult adapts the compact sidepath's final upstream
@@ -18,7 +16,6 @@ func compactAttemptRoutingResult(
 	statusCode int,
 	retryAfter time.Duration,
 	err error,
-	span *balancer.AttemptSpan,
 ) attemptResult {
 	result := attemptResult{
 		Success:         err == nil,
@@ -28,7 +25,6 @@ func compactAttemptRoutingResult(
 		Err:             err,
 		UpstreamStarted: statusCode > 0,
 		DispatchState:   dispatchMaybeSent,
-		traceSpan:       span,
 	}
 	if err != nil && ctx != nil && ctx.Err() != nil {
 		result.Canceled = true
