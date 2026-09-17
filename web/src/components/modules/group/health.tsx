@@ -1,8 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { Activity, ChevronDown, Clock3, LoaderCircle, Play } from 'lucide-react';
-import { useLocale, useTranslations } from 'next-intl';
+import { useState } from 'react';
+import { Activity, ChevronDown, LoaderCircle, Play } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -17,7 +17,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useGroupHealthEnabled } from '@/api/endpoints/setting';
 import {
-    useGroupHealthList,
+    useGroupHealth,
     useRunGroupHealth,
     type GroupHealthAttempt,
     type GroupHealthAttemptStatus,
@@ -25,29 +25,11 @@ import {
     type GroupHealthStatus,
 } from '@/api/endpoints/group-health';
 
-function formatDateTime(value?: string | null) {
-    if (!value) return 'Never';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return 'Never';
-    return date.toLocaleString();
-}
-
-function formatRelativeTime(value: string | null | undefined, locale: string, fallback: string) {
+function formatDateTime(value: string | null | undefined, fallback: string) {
     if (!value) return fallback;
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return fallback;
-
-    const diffSeconds = Math.round((date.getTime() - Date.now()) / 1000);
-    const absSeconds = Math.abs(diffSeconds);
-    const formatter = new Intl.RelativeTimeFormat(locale, { numeric: 'always' });
-
-    if (absSeconds < 60) return formatter.format(diffSeconds, 'second');
-    const diffMinutes = Math.round(diffSeconds / 60);
-    if (Math.abs(diffMinutes) < 60) return formatter.format(diffMinutes, 'minute');
-    const diffHours = Math.round(diffMinutes / 60);
-    if (Math.abs(diffHours) < 24) return formatter.format(diffHours, 'hour');
-    const diffDays = Math.round(diffHours / 24);
-    return formatter.format(diffDays, 'day');
+    return date.toLocaleString();
 }
 
 function statusLabel(status?: GroupHealthStatus | null) {
@@ -154,105 +136,59 @@ export function GroupHealthAttemptDetails({ attempt }: { attempt: GroupHealthAtt
     );
 }
 
-export function GroupHealthBadge({ groupId }: { groupId?: number }) {
+export function GroupDiagnosticAction({ groupId }: { groupId?: number }) {
     const t = useTranslations('group.health');
-    const locale = useLocale();
     const { enabled } = useGroupHealthEnabled();
-    const { data: views = [] } = useGroupHealthList();
-    const runGroupHealth = useRunGroupHealth();
     const [open, setOpen] = useState(false);
-
-    const view = useMemo(
-        () => views.find((item) => item.group_id === groupId),
-        [groupId, views]
-    );
-    const latest = view?.latest ?? null;
-    const attempts = latest?.attempts ?? [];
-    const successCount = attempts.filter((attempt) => attempt.status === 'success').length;
+    const { data: view, isFetching } = useGroupHealth(open ? groupId : null);
+    const runGroupHealth = useRunGroupHealth();
 
     if (!enabled || !groupId) return null;
 
+    const latest = view?.latest ?? null;
+    const attempts = latest?.attempts ?? [];
+    const successCount = attempts.filter((attempt) => attempt.status === 'success').length;
     const isRunning = latest?.status === 'running';
     const isRunPendingForGroup = runGroupHealth.isPending
         && runGroupHealth.variables?.groupId === groupId;
-    const isStandardRunPending = isRunPendingForGroup
-        && (runGroupHealth.variables?.probeMode ?? 'standard') === 'standard';
-    const isFullRunPending = isRunPendingForGroup
-        && runGroupHealth.variables?.probeMode === 'full';
-    const lastRunRelative = formatRelativeTime(latest?.finished_at ?? latest?.started_at ?? null, locale, t('never'));
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
-            <Card className="mb-3 gap-0 rounded-xl border-border/70 bg-background/80 py-0 shadow-none">
-                <CardContent className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5">
-                    <DialogTrigger asChild>
-                        <button type="button" className="grid min-w-0 flex-1 grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-2 gap-y-0.5 text-left">
-                            <span className={cn('row-span-2 size-2 rounded-full self-center', statusDotTone(latest?.status))} />
-                            <span className="text-sm font-medium leading-5 text-foreground whitespace-nowrap">{t('title')}</span>
-                            <span className="min-w-0 truncate text-xs leading-5 text-muted-foreground">
-                                {lastRunRelative}
-                            </span>
-                            <span className="col-start-2 col-span-2 flex min-w-0 items-center gap-2 text-xs leading-4 text-muted-foreground flex-wrap">
-                                <Badge variant="outline" className={cn('h-5 px-1.5 text-[10px] uppercase tracking-wide whitespace-nowrap', probeModeTone(latest?.probe_mode ?? 'standard'))}>
-                                    {t(`probeMode.${latest?.probe_mode ?? 'standard'}`)}
-                                </Badge>
-                                <span className="inline-flex items-center gap-1 whitespace-nowrap">
-                                    <Activity className="size-3.5" />
-                                    {successCount}/{attempts.length || 0}
-                                </span>
-                                <span className="inline-flex items-center gap-1 whitespace-nowrap">
-                                    <Clock3 className="size-3.5" />
-                                    {latest?.duration_ms ?? 0}ms
-                                </span>
-                            </span>
-                        </button>
-                    </DialogTrigger>
-                    <div className="flex items-center gap-1 shrink-0 flex-wrap">
-                        <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-7 rounded-lg px-2 text-xs shrink-0 whitespace-nowrap"
-                            disabled={isRunPendingForGroup || isRunning}
-                            onClick={() => runGroupHealth.mutate({ groupId })}
-                        >
-                            {isRunning || isStandardRunPending ? <LoaderCircle className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                            <span className="whitespace-nowrap">{t('run')}</span>
-                        </Button>
-                        <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-7 rounded-lg px-2 text-xs shrink-0 whitespace-nowrap"
-                            disabled={isRunPendingForGroup || isRunning}
-                            onClick={() => runGroupHealth.mutate({ groupId, probeMode: 'full' })}
-                        >
-                            {isFullRunPending ? <LoaderCircle className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                            <span className="whitespace-nowrap">{t('runFull')}</span>
-                        </Button>
-                    </div>
-                </CardContent>
-            </Card>
+            <DialogTrigger asChild>
+                <button
+                    type="button"
+                    aria-label={t('diagnosticAction')}
+                    className="flex size-8 items-center justify-center rounded-lg border border-transparent text-muted-foreground transition-all hover:border-border hover:bg-muted hover:text-foreground active:scale-95"
+                >
+                    <Activity className="size-4" />
+                </button>
+            </DialogTrigger>
 
-            <DialogContent className="flex h-[min(85vh,42rem)] flex-col overflow-hidden rounded-3xl sm:max-w-2xl">
+            <DialogContent className="flex h-[min(85vh,44rem)] flex-col overflow-hidden rounded-3xl sm:max-w-2xl">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
                         <span className={cn('size-2.5 rounded-full', statusDotTone(latest?.status))} />
-                        {t('detailTitle')}
+                        {t('diagnosticTitle')}
                     </DialogTitle>
-                    <DialogDescription>
-                        {t('lastRun', { time: formatDateTime(latest?.finished_at ?? latest?.started_at ?? null) })}
-                    </DialogDescription>
+                    <DialogDescription>{t('diagnosticDescription')}</DialogDescription>
                 </DialogHeader>
+
+                <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+                    <div>{t('warning.realRequest')}</div>
+                    <div>{t('warning.quota')}</div>
+                    <div>{t('warning.routing')}</div>
+                </div>
 
                 <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
                     <Card className="gap-0 rounded-2xl border-border/60 bg-card/80 py-0 shadow-xs">
                         <CardContent className="p-3">
                             <div className="text-xs text-muted-foreground">{t('status')}</div>
                             <div className={cn('mt-1 font-medium', statusTextTone(latest?.status))}>{t(`statusValue.${statusLabel(latest?.status)}`)}</div>
-                            <Badge variant="outline" className={cn('mt-2 h-5 px-1.5 text-[10px] uppercase tracking-wide', probeModeTone(latest?.probe_mode ?? 'standard'))}>
-                                {t(`probeMode.${latest?.probe_mode ?? 'standard'}`)}
-                            </Badge>
+                            {latest ? (
+                                <Badge variant="outline" className={cn('mt-2 h-5 px-1.5 text-[10px] uppercase tracking-wide', probeModeTone(latest.probe_mode))}>
+                                    {t(`probeMode.${latest.probe_mode}`)}
+                                </Badge>
+                            ) : null}
                         </CardContent>
                     </Card>
                     <Card className="gap-0 rounded-2xl border-border/60 bg-card/80 py-0 shadow-xs">
@@ -269,20 +205,37 @@ export function GroupHealthBadge({ groupId }: { groupId?: number }) {
                     </Card>
                     <Card className="gap-0 rounded-2xl border-border/60 bg-card/80 py-0 shadow-xs">
                         <CardContent className="p-3">
-                            <div className="text-xs text-muted-foreground">{t('attempts')}</div>
-                            <div className="mt-1 font-medium">{attempts.length}</div>
+                            <div className="text-xs text-muted-foreground">{t('lastRunLabel')}</div>
+                            <div className="mt-1 truncate text-xs font-medium">
+                                {formatDateTime(latest?.finished_at ?? latest?.started_at, t('never'))}
+                            </div>
                         </CardContent>
                     </Card>
                 </div>
 
                 <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                    {attempts.length ? attempts.map((attempt) => (
+                    {isFetching && !latest ? (
+                        <div className="flex h-24 items-center justify-center text-muted-foreground">
+                            <LoaderCircle className="size-5 animate-spin" />
+                        </div>
+                    ) : attempts.length ? attempts.map((attempt) => (
                         <GroupHealthAttemptDetails key={attempt.id} attempt={attempt} />
                     )) : (
                         <div className="rounded-2xl border border-dashed border-border/70 bg-muted/20 px-3 py-6 text-center text-xs text-muted-foreground">
                             {t('empty')}
                         </div>
                     )}
+                </div>
+
+                <div className="flex justify-end border-t border-border/60 pt-3">
+                    <Button
+                        type="button"
+                        disabled={isRunPendingForGroup || isRunning}
+                        onClick={() => runGroupHealth.mutate({ groupId })}
+                    >
+                        {isRunPendingForGroup || isRunning ? <LoaderCircle className="size-4 animate-spin" /> : <Play className="size-4" />}
+                        {t('runDiagnostic')}
+                    </Button>
                 </div>
             </DialogContent>
         </Dialog>

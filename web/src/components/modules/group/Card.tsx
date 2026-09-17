@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/animate-ui
 import type { SelectedMember } from './ItemList';
 import { MemberList } from './ItemList';
 import { GroupEditor, type GroupEditorValues } from './Editor';
-import { GroupHealthBadge } from './health';
+import { GroupDiagnosticAction } from './health';
 import { modelChannelKey, MODE_LABELS } from './utils';
 import { compressConfigPayload, GroupMode, type GroupUpdateRequest, normalizeGroupCompressConfig, normalizeGroupProtocolMode, normalizePreferredProtocols } from '@/api/endpoints/group';
 import { PresetPopover } from './PresetPopover';
@@ -323,6 +323,8 @@ export function GroupCard({ group, modelChannelByKey }: GroupCardProps) {
                         <TooltipContent>{t('autoAdd.action')}</TooltipContent>
                     </Tooltip>
 
+                    <GroupDiagnosticAction groupId={group.id} />
+
                     <PresetPopover group={group} />
 
                     <ProtocolPolicyPopover group={group} />
@@ -375,8 +377,6 @@ export function GroupCard({ group, modelChannelByKey }: GroupCardProps) {
                     </button>
                 ))}
             </div>
-
-            <GroupHealthBadge groupId={group.id} />
 
             <section className="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-border/50 bg-muted/30">
                 <MemberList
