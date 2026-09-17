@@ -13,7 +13,7 @@ type groupAutoAddMemberKey struct {
 	modelName string
 }
 
-func resolveGroupAutoAddCandidates(group model.Group, llms []model.LLMChannel) ([]model.GroupItemAdd, int, error) {
+func resolveGroupAutoAddCandidates(group model.Group, llms []model.LLMChannel) ([]model.GroupItemAddRequest, int, error) {
 	pattern := strings.TrimSpace(group.MatchRegex)
 	groupName := strings.TrimSpace(group.Name)
 
@@ -25,7 +25,7 @@ func resolveGroupAutoAddCandidates(group model.Group, llms []model.LLMChannel) (
 			return nil, 0, err
 		}
 	} else if groupName == "" {
-		return []model.GroupItemAdd{}, 0, nil
+		return []model.GroupItemAddRequest{}, 0, nil
 	}
 
 	existing := make(map[groupAutoAddMemberKey]struct{}, len(group.Items))
@@ -74,9 +74,9 @@ func resolveGroupAutoAddCandidates(group model.Group, llms []model.LLMChannel) (
 		return matchedCandidates[i].ChannelID < matchedCandidates[j].ChannelID
 	})
 
-	adds := make([]model.GroupItemAdd, 0, len(matchedCandidates))
+	adds := make([]model.GroupItemAddRequest, 0, len(matchedCandidates))
 	for index, llm := range matchedCandidates {
-		adds = append(adds, model.GroupItemAdd{
+		adds = append(adds, model.GroupItemAddRequest{
 			ChannelID: llm.ChannelID,
 			ModelName: llm.Name,
 			Priority:  maxPriority + index + 1,
