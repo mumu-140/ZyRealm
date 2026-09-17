@@ -24,6 +24,19 @@ func circuitFailureKind(retryEnabled bool, statusCode int) balancer.FailureKind 
 	return balancer.FailureHard
 }
 
+// circuitFailureKindForDecision makes RoutingDecision the gate for breaker
+// evidence. The legacy status classifier is retained only to preserve the
+// existing hard-vs-soft distinction after policy has explicitly allowed circuit
+// learning; it no longer decides whether an outcome belongs in the breaker.
+func circuitFailureKindForDecision(decision RoutingDecision, retryEnabled bool, statusCode int) balancer.FailureKind {
+	switch decision.CircuitEffect {
+	case "none", "success":
+		return balancer.FailureIgnore
+	default:
+		return circuitFailureKind(retryEnabled, statusCode)
+	}
+}
+
 // attempt 统一管理一次通道尝试的完整生命周期
 func (ra *relayAttempt) attempt() attemptResult {
 	span := ra.iter.StartAttempt(ra.channel.ID, ra.usedKey.ID, ra.channel.Name)
