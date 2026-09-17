@@ -1,12 +1,11 @@
-import type { Locale } from '@/stores/setting';
-
-export const groupDiagnosticMessages: Record<Locale, { health: Record<string, unknown> }> = {
+export const groupDiagnosticMessages = {
     en: {
         health: {
             diagnosticAction: 'Run diagnostic',
             diagnosticTitle: 'Group diagnostic',
             diagnosticDescription: 'Inspect the latest active probe result for this group.',
             runDiagnostic: 'Run diagnostic',
+            lastRunLabel: 'Last run',
             warning: {
                 realRequest: 'This sends a real synthetic request to the provider.',
                 quota: 'It may consume quota or cost and may be blocked by provider policy.',
@@ -20,6 +19,7 @@ export const groupDiagnosticMessages: Record<Locale, { health: Record<string, un
             diagnosticTitle: '分组诊断',
             diagnosticDescription: '查看该分组最近一次主动探测结果。',
             runDiagnostic: '运行诊断',
+            lastRunLabel: '最近运行',
             warning: {
                 realRequest: '该操作会向上游提供商发送一次真实的合成请求。',
                 quota: '请求可能消耗额度或产生费用，也可能被提供商策略拦截。',
@@ -33,6 +33,7 @@ export const groupDiagnosticMessages: Record<Locale, { health: Record<string, un
             diagnosticTitle: '分組診斷',
             diagnosticDescription: '查看該分組最近一次主動探測結果。',
             runDiagnostic: '執行診斷',
+            lastRunLabel: '最近執行',
             warning: {
                 realRequest: '此操作會向上游供應商送出一次真實的合成請求。',
                 quota: '請求可能消耗額度或產生費用，也可能被供應商政策攔截。',
@@ -40,4 +41,4 @@ export const groupDiagnosticMessages: Record<Locale, { health: Record<string, un
             },
         },
     },
-};
+} as const;
