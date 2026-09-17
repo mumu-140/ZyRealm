@@ -27,7 +27,7 @@ func TestRoutingDecisionProviderTransient(t *testing.T) {
 	}
 }
 
-func TestRoutingDecisionCapabilityBeatsMisleadingAuthEnvelope(t *testing.T) {
+func TestRoutingDecisionReasoningCapabilityBeatsMisleadingAuthEnvelope(t *testing.T) {
 	result := attemptResult{
 		Err:               errors.New("channel failed"),
 		StatusCode:        http.StatusUnauthorized,
@@ -37,8 +37,32 @@ func TestRoutingDecisionCapabilityBeatsMisleadingAuthEnvelope(t *testing.T) {
 	if decision.Domain != failureDomainModelCapability {
 		t.Fatalf("domain=%v, want model capability", decision.Domain)
 	}
-	if decision.Directive != routingDirectiveProtocolOrProvider {
-		t.Fatalf("directive=%q, want protocol_or_provider", decision.Directive)
+	if decision.RuleID != "reasoning_effort_unsupported" {
+		t.Fatalf("rule=%q, want reasoning_effort_unsupported", decision.RuleID)
+	}
+	if decision.Directive != routingDirectiveNextProvider || !decision.SkipProvider {
+		t.Fatalf("directive=%q skipProvider=%t, want immediate next provider", decision.Directive, decision.SkipProvider)
+	}
+	if decision.OutlierScope != scopeIgnore || decision.CircuitEffect != "none" {
+		t.Fatalf("capability must be health-neutral: outlier=%v circuit=%q", decision.OutlierScope, decision.CircuitEffect)
+	}
+}
+
+func TestRoutingDecisionGenericCapabilityBeatsMisleadingAuthEnvelope(t *testing.T) {
+	result := attemptResult{
+		Err:               errors.New("channel failed"),
+		StatusCode:        http.StatusUnauthorized,
+		UpstreamErrorBody: `{"error":{"message":"unsupported parameter: prompt_cache_key","code":"invalid_api_key"}}`,
+	}
+	decision := decideRoutingAttempt(context.Background(), nil, 1, result)
+	if decision.Domain != failureDomainModelCapability {
+		t.Fatalf("domain=%v, want model capability", decision.Domain)
+	}
+	if decision.RuleID != "model_capability" {
+		t.Fatalf("rule=%q, want model_capability", decision.RuleID)
+	}
+	if decision.Directive != routingDirectiveProtocolOrProvider || decision.SkipProvider {
+		t.Fatalf("directive=%q skipProvider=%t, want protocol fallback before provider failover", decision.Directive, decision.SkipProvider)
 	}
 	if decision.OutlierScope != scopeIgnore || decision.CircuitEffect != "none" {
 		t.Fatalf("capability must be health-neutral: outlier=%v circuit=%q", decision.OutlierScope, decision.CircuitEffect)

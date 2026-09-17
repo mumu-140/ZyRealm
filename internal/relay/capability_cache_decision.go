@@ -21,10 +21,8 @@ type capabilityFilterResult struct {
 	BlockedAny bool
 }
 
-// filterCapabilityNegativePlansDetailed mirrors the existing capability filter
-// while retaining immutable evidence for plans that were already going to be
-// excluded. It is observational only: survivor ordering and cache semantics are
-// unchanged.
+// filterCapabilityNegativePlansDetailed retains immutable rejection evidence
+// while applying the narrowest active suppression scope for each plan.
 func filterCapabilityNegativePlansDetailed(
 	channel *dbmodel.Channel,
 	request *transformerModel.InternalLLMRequest,
@@ -43,13 +41,7 @@ func filterCapabilityNegativePlansDetailed(
 		if plan == nil {
 			continue
 		}
-		info := availability.CapabilityInfo(
-			channel.ID,
-			plan.UpstreamModel(),
-			capabilitySignature(request, plan),
-			capabilityConfigFingerprint(channel, plan),
-			now,
-		)
+		info := capabilitySuppressionInfo(channel, request, plan, now)
 		if !info.Blocked {
 			result.Filtered = append(result.Filtered, plan)
 			continue

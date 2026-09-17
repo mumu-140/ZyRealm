@@ -191,33 +191,8 @@ func filterCapabilityNegativePlans(
 	plans []*protocolroute.AttemptPlan,
 	now time.Time,
 ) ([]*protocolroute.AttemptPlan, availability.CapabilitySnapshot, bool) {
-	if len(plans) == 0 || channel == nil || request == nil {
-		return plans, availability.CapabilitySnapshot{}, false
-	}
-	filtered := make([]*protocolroute.AttemptPlan, 0, len(plans))
-	var nearest availability.CapabilitySnapshot
-	blockedAny := false
-	for _, plan := range plans {
-		if plan == nil {
-			continue
-		}
-		info := availability.CapabilityInfo(
-			channel.ID,
-			plan.UpstreamModel(),
-			capabilitySignature(request, plan),
-			capabilityConfigFingerprint(channel, plan),
-			now,
-		)
-		if !info.Blocked {
-			filtered = append(filtered, plan)
-			continue
-		}
-		blockedAny = true
-		if nearest.ExpiresAt.IsZero() || info.ExpiresAt.Before(nearest.ExpiresAt) {
-			nearest = info
-		}
-	}
-	return filtered, nearest, blockedAny
+	result := filterCapabilityNegativePlansDetailed(channel, request, plans, now)
+	return result.Filtered, result.Nearest, result.BlockedAny
 }
 
 func recordCapabilityNegative(
@@ -227,29 +202,11 @@ func recordCapabilityNegative(
 	result attemptResult,
 	now time.Time,
 ) time.Time {
-	if channel == nil || request == nil || plan == nil {
-		return time.Time{}
-	}
-	return availability.RecordCapabilityNegative(
-		channel.ID,
-		plan.UpstreamModel(),
-		capabilitySignature(request, plan),
-		capabilityConfigFingerprint(channel, plan),
-		compactCapabilityReason(outlierErrorText(result.Err, result.UpstreamErrorBody)),
-		now,
-	)
+	return recordCapabilitySuppression(channel, request, plan, result, now)
 }
 
 func clearCapabilityNegative(channel *dbmodel.Channel, request *transformerModel.InternalLLMRequest, plan *protocolroute.AttemptPlan) {
-	if channel == nil || request == nil || plan == nil {
-		return
-	}
-	availability.ClearCapabilityNegative(
-		channel.ID,
-		plan.UpstreamModel(),
-		capabilitySignature(request, plan),
-		capabilityConfigFingerprint(channel, plan),
-	)
+	clearCapabilitySuppressions(channel, request, plan)
 }
 
 func capabilityNegativeCacheSkipReason(info availability.CapabilitySnapshot) string {
