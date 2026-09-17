@@ -121,9 +121,9 @@ func HandleResponsesCompact(c *gin.Context) {
 		}
 
 		item := iter.Item()
-		// 健康度、熔断、实际请求体三者必须用同一个模型键，否则写进去的健康/熔断状态
-		// 读侧（itemHealthScore / PeekItemTripped / Iterator.SkipCircuitBreak 都按
-		// item.ModelName 取）永远读不到，等于整条链路对 compact 失效。
+		// Passive health, the actual request body, and temporary breaker-compatibility
+		// writes all use the upstream model key. Legacy circuit state no longer
+		// participates in Compact credential admission.
 		upstreamModel := balancer.ItemUpstreamModel(item, requestModel)
 		channel, err := op.ChannelGet(item.ChannelID, c.Request.Context())
 		if err != nil {
@@ -144,18 +144,7 @@ func HandleResponsesCompact(c *gin.Context) {
 			ExcludeKeyIDs:  make(map[int]struct{}),
 			PreferredKeyID: iter.StickyKeyID(),
 		}
-		var usedKey dbmodel.ChannelKey
-		for {
-			usedKey = channel.GetChannelKey(selectOpts)
-			if usedKey.ChannelKey == "" {
-				break
-			}
-			if !iter.SkipCircuitBreak(channel.ID, usedKey.ID, channel.Name) {
-				break
-			}
-			selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
-			usedKey = dbmodel.ChannelKey{}
-		}
+		usedKey := selectOrderedAvailableCredential(channel, selectOpts, iter, time.Now())
 		if usedKey.ChannelKey == "" {
 			if len(selectOpts.ExcludeKeyIDs) == 0 {
 				iter.Skip(channel.ID, 0, channel.Name, "no available key")
