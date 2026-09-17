@@ -17,6 +17,7 @@ import (
 	dbmodel "github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/outlierwindow"
+	"github.com/bestruirui/octopus/internal/relay/availability"
 	"github.com/bestruirui/octopus/internal/relay/balancer"
 	"github.com/bestruirui/octopus/internal/server/resp"
 	transformerModel "github.com/bestruirui/octopus/internal/transformer/model"
@@ -83,8 +84,9 @@ func HandleResponsesCompact(c *gin.Context) {
 
 	requestModel := compactReq.Model
 	apiKeyID := c.GetInt("api_key_id")
+	ctx := c.Request.Context()
 
-	group, err := op.GroupGetEnabledMap(requestModel, c.Request.Context())
+	group, err := op.GroupGetEnabledMap(requestModel, ctx)
 	if err != nil {
 		resp.ErrorWithCode(c, http.StatusNotFound, CodeRelayModelNotFound, "model not found")
 		return
@@ -98,6 +100,7 @@ func HandleResponsesCompact(c *gin.Context) {
 
 	metricsReq := &transformerModel.InternalLLMRequest{Model: requestModel, RawRequest: body}
 	metrics := NewRelayMetrics(apiKeyID, requestModel, body, metricsReq)
+	policyRequest := &relayRequest{ctx: ctx, requestModel: requestModel, iter: iter}
 
 	var lastErr error
 	var lastStatusCode int
@@ -113,19 +116,16 @@ func HandleResponsesCompact(c *gin.Context) {
 
 	for iter.Next() {
 		select {
-		case <-c.Request.Context().Done():
+		case <-ctx.Done():
 			log.Infof("compact request context canceled, stopping retry")
-			metrics.SaveWithChannelStats(c.Request.Context(), false, context.Canceled, iter.Attempts(), false)
+			metrics.SaveWithChannelStats(ctx, false, context.Canceled, iter.Attempts(), false)
 			return
 		default:
 		}
 
 		item := iter.Item()
-		// 健康度、熔断、实际请求体三者必须用同一个模型键，否则写进去的健康/熔断状态
-		// 读侧（itemHealthScore / PeekItemTripped / Iterator.SkipCircuitBreak 都按
-		// item.ModelName 取）永远读不到，等于整条链路对 compact 失效。
 		upstreamModel := balancer.ItemUpstreamModel(item, requestModel)
-		channel, err := op.ChannelGet(item.ChannelID, c.Request.Context())
+		channel, err := op.ChannelGet(item.ChannelID, ctx)
 		if err != nil {
 			iter.Skip(item.ChannelID, 0, fmt.Sprintf("channel_%d", item.ChannelID), fmt.Sprintf("channel not found: %v", err))
 			lastErr = err
@@ -140,87 +140,119 @@ func HandleResponsesCompact(c *gin.Context) {
 			continue
 		}
 
-		selectOpts := dbmodel.ChannelKeySelectOptions{
-			ExcludeKeyIDs:  make(map[int]struct{}),
-			PreferredKeyID: iter.StickyKeyID(),
+		runtimeLease, runtimeEligible := availability.AcquireCandidate(channel.ID, upstreamModel, time.Now())
+		if !runtimeEligible {
+			iter.Skip(channel.ID, 0, channel.Name, "runtime cooldown or half-open lease busy")
+			continue
 		}
-		var usedKey dbmodel.ChannelKey
-		for {
-			usedKey = channel.GetChannelKey(selectOpts)
+
+		done := func() bool {
+			defer availability.ReleaseLease(runtimeLease, time.Now())
+
+			selectOpts := dbmodel.ChannelKeySelectOptions{
+				ExcludeKeyIDs:  make(map[int]struct{}),
+				PreferredKeyID: iter.StickyKeyID(),
+			}
+			var usedKey dbmodel.ChannelKey
+			for {
+				usedKey = channel.GetChannelKey(selectOpts)
+				if usedKey.ChannelKey == "" {
+					break
+				}
+				if availability.CredentialAvailableRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, time.Now()) {
+					break
+				}
+				selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
+				selectOpts.PreferredKeyID = 0
+				iter.RecordDecision(dbmodel.RoutingDecisionEvent{
+					Stage:        dbmodel.DecisionStageCredential,
+					Outcome:      dbmodel.DecisionOutcomeRejected,
+					Reason:       dbmodel.DecisionReasonCredentialCooldown,
+					ChannelID:    channel.ID,
+					ChannelKeyID: usedKey.ID,
+					ChannelName:  channel.Name,
+				})
+				usedKey = dbmodel.ChannelKey{}
+			}
 			if usedKey.ChannelKey == "" {
-				break
+				if len(selectOpts.ExcludeKeyIDs) == 0 {
+					iter.Skip(channel.ID, 0, channel.Name, "no available key")
+				}
+				return false
 			}
-			if !iter.SkipCircuitBreak(channel.ID, usedKey.ID, channel.Name) {
-				break
+
+			attemptBody, err := compactBodyForModel(compactPayload, upstreamModel)
+			if err != nil {
+				iter.Skip(channel.ID, usedKey.ID, channel.Name, err.Error())
+				lastErr = err
+				return false
 			}
-			selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
-			usedKey = dbmodel.ChannelKey{}
-		}
-		if usedKey.ChannelKey == "" {
-			if len(selectOpts.ExcludeKeyIDs) == 0 {
-				iter.Skip(channel.ID, 0, channel.Name, "no available key")
-			}
-			continue
-		}
 
-		attemptBody, err := compactBodyForModel(compactPayload, upstreamModel)
-		if err != nil {
-			iter.Skip(channel.ID, usedKey.ID, channel.Name, err.Error())
-			lastErr = err
-			continue
-		}
+			var attemptErr error
+			var statusCode int
+			var retryAfter time.Duration
+			var success bool
 
-		var attemptErr error
-		var statusCode int
-		var retryAfter time.Duration
-		var success bool
+			for retryNum := 0; retryNum < maxSameChannelRetries; retryNum++ {
+				if retryNum > 0 {
+					delay := computeBackoff(retryNum, retryAfter)
+					select {
+					case <-ctx.Done():
+						metrics.SaveWithChannelStats(ctx, false, context.Canceled, iter.Attempts(), false)
+						return true
+					case <-time.After(delay):
+					}
+				}
 
-		for retryNum := 0; retryNum < maxSameChannelRetries; retryNum++ {
-			if retryNum > 0 {
-				delay := computeBackoff(retryNum, retryAfter)
-				select {
-				case <-c.Request.Context().Done():
-					metrics.SaveWithChannelStats(c.Request.Context(), false, context.Canceled, iter.Attempts(), false)
-					return
-				case <-time.After(delay):
+				statusCode, retryAfter, attemptErr = forwardResponsesCompact(c, metrics, iter, channel, usedKey, attemptBody, upstreamModel)
+				if attemptErr == nil {
+					success = true
+					break
+				}
+				if !isRetryableStatus(statusCode) {
+					break
 				}
 			}
 
-			statusCode, retryAfter, attemptErr = forwardResponsesCompact(c, metrics, iter, channel, usedKey, attemptBody, upstreamModel)
-			if attemptErr == nil {
-				success = true
-				break
-			}
-			if !isRetryableStatus(statusCode) {
-				break
-			}
-		}
+			usedKey.StatusCode = statusCode
+			usedKey.LastUseTimeStamp = time.Now().Unix()
+			op.ChannelKeyUpdate(usedKey)
 
-		usedKey.StatusCode = statusCode
-		usedKey.LastUseTimeStamp = time.Now().Unix()
-		op.ChannelKeyUpdate(usedKey)
+			result := compactAttemptRoutingResult(ctx, policyRequest, channel.ID, statusCode, retryAfter, attemptErr, nil)
+			now := time.Now()
+			recordRuntimeAvailabilityEvidence(ctx, channel.ID, upstreamModel, result, now)
+			decision := result.Decision
 
-		if success {
-			op.StatsChannelUpdate(channel.ID, dbmodel.StatsMetrics{RequestSuccess: 1})
-			balancer.RecordSuccess(channel.ID, usedKey.ID, upstreamModel)
-			// 粘性会话按请求模型存取：Iterator.GetSticky 用的是请求模型名，
-			// 换成上游模型名会导致写进去的粘性记录读不到。
-			balancer.SetSticky(apiKeyID, requestModel, channel.ID, usedKey.ID)
-			outlierwindow.Report(channel.ID, upstreamModel, true, statusCode, time.Now())
-			metrics.SaveWithChannelStats(c.Request.Context(), true, nil, iter.Attempts(), false)
+			if success {
+				availability.RecordCredentialSuccessRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, now)
+				op.StatsChannelUpdate(channel.ID, dbmodel.StatsMetrics{RequestSuccess: 1})
+				balancer.RecordSuccess(channel.ID, usedKey.ID, upstreamModel)
+				// 粘性会话按请求模型存取：Iterator.GetSticky 用的是请求模型名，
+				// 换成上游模型名会导致写进去的粘性记录读不到。
+				balancer.SetSticky(apiKeyID, requestModel, channel.ID, usedKey.ID)
+				outlierwindow.Report(channel.ID, upstreamModel, true, statusCode, now)
+				metrics.SaveWithChannelStats(ctx, true, nil, iter.Attempts(), false)
+				return true
+			}
+
+			if decision.Domain == failureDomainCredential {
+				recordCredentialRoutingFailureRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, result, now)
+			}
+			op.StatsChannelUpdate(channel.ID, dbmodel.StatsMetrics{RequestFailed: 1})
+			failureKind := circuitFailureKindForDecision(decision, group.RetryEnabled, statusCode)
+			balancer.RecordFailure(channel.ID, usedKey.ID, upstreamModel, failureKind)
+			reportOutlierDecision(channel.ID, upstreamModel, decision.OutlierScope, statusCode, now)
+			lastErr = attemptErr
+			lastStatusCode = statusCode
+			lastRetryAfter = retryAfter
+			return false
+		}()
+		if done {
 			return
 		}
-
-		op.StatsChannelUpdate(channel.ID, dbmodel.StatsMetrics{RequestFailed: 1})
-		failureKind := circuitFailureKind(group.RetryEnabled, statusCode)
-		balancer.RecordFailure(channel.ID, usedKey.ID, upstreamModel, failureKind)
-		reportOutlierFailure(channel.ID, upstreamModel, statusCode, outlierErrorText(attemptErr, ""), time.Now())
-		lastErr = attemptErr
-		lastStatusCode = statusCode
-		lastRetryAfter = retryAfter
 	}
 
-	metrics.SaveWithChannelStats(c.Request.Context(), false, lastErr, iter.Attempts(), false)
+	metrics.SaveWithChannelStats(ctx, false, lastErr, iter.Attempts(), false)
 	if lastErr == nil && lastStatusCode == 0 {
 		resp.ErrorWithCode(c, http.StatusServiceUnavailable, CodeRelayNoAvailableChannel, "no available channel")
 		return

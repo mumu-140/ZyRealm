@@ -12,6 +12,7 @@ import (
 	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/outlierwindow"
 	"github.com/bestruirui/octopus/internal/protocol"
+	"github.com/bestruirui/octopus/internal/relay/availability"
 	"github.com/bestruirui/octopus/internal/relay/balancer"
 	"github.com/bestruirui/octopus/internal/transformer/inbound"
 	transformerModel "github.com/bestruirui/octopus/internal/transformer/model"
@@ -363,6 +364,7 @@ func bestEffortWarmupUpstreamWS(
 	var lastErr error
 	for iter.Next() {
 		item := iter.Item()
+		upstreamModel := balancer.ItemUpstreamModel(item, requestModel)
 
 		channel, err := op.ChannelGet(item.ChannelID, ctx)
 		if err != nil {
@@ -370,6 +372,15 @@ func bestEffortWarmupUpstreamWS(
 			continue
 		}
 		if !channel.Enabled || channel.Type != outbound.OutboundTypeOpenAIResponse {
+			continue
+		}
+
+		// Warmup is observational/best-effort. It may use only a fully available
+		// candidate; it must never acquire the HALF_OPEN single-flight recovery
+		// lease or mutate routing health based on a background preconnect.
+		state := availability.CandidateState(channel.ID, upstreamModel, time.Now())
+		if state == availability.StateCooldown || state == availability.StateHalfOpen {
+			iter.Skip(channel.ID, 0, channel.Name, "runtime cooldown or half-open reserved for live request")
 			continue
 		}
 
@@ -383,14 +394,16 @@ func bestEffortWarmupUpstreamWS(
 			if usedKey.ChannelKey == "" {
 				break
 			}
-			if iter.SkipCircuitBreak(channel.ID, usedKey.ID, channel.Name) {
+			if !availability.CredentialAvailableRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, time.Now()) {
 				selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
+				selectOpts.PreferredKeyID = 0
 				continue
 			}
 
 			if err := warmupUpstreamWSConnection(ctx, channel, usedKey); err != nil {
 				lastErr = err
 				selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
+				selectOpts.PreferredKeyID = 0
 				continue
 			}
 
@@ -523,6 +536,7 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 		}
 
 		item := req.iter.Item()
+		upstreamModel := balancer.ItemUpstreamModel(item, req.requestModel)
 
 		channel, err := op.ChannelGet(item.ChannelID, ctx)
 		if err != nil {
@@ -546,7 +560,7 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 			continue
 		}
 
-		req.internalRequest.Model = item.ModelName
+		req.internalRequest.Model = upstreamModel
 
 		selectOpts := dbmodel.ChannelKeySelectOptions{
 			ExcludeKeyIDs:  make(map[int]struct{}),
@@ -559,10 +573,19 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 			if usedKey.ChannelKey == "" {
 				break
 			}
-			if !req.iter.SkipCircuitBreak(channel.ID, usedKey.ID, channel.Name) {
+			if availability.CredentialAvailableRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, time.Now()) {
 				break
 			}
 			selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
+			selectOpts.PreferredKeyID = 0
+			req.iter.RecordDecision(dbmodel.RoutingDecisionEvent{
+				Stage:        dbmodel.DecisionStageCredential,
+				Outcome:      dbmodel.DecisionOutcomeRejected,
+				Reason:       dbmodel.DecisionReasonCredentialCooldown,
+				ChannelID:    channel.ID,
+				ChannelKeyID: usedKey.ID,
+				ChannelName:  channel.Name,
+			})
 			usedKey = dbmodel.ChannelKey{}
 		}
 		if usedKey.ChannelKey == "" {
@@ -572,79 +595,106 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 			continue
 		}
 
-		log.Debugf("ws request model %s, forwarding to channel: %s model: %s (attempt %d/%d)",
-			req.requestModel, channel.Name, item.ModelName, req.iter.Index()+1, req.iter.Len())
+		runtimeLease, runtimeEligible := availability.AcquireCandidate(channel.ID, upstreamModel, time.Now())
+		if !runtimeEligible {
+			req.iter.Skip(channel.ID, 0, channel.Name, "runtime cooldown or half-open lease busy")
+			continue
+		}
 
-		var result attemptResult
-		for retryNum := 0; retryNum < maxSameChannelRetries; retryNum++ {
-			if retryNum > 0 {
-				delay := computeBackoff(retryNum, result.RetryAfter)
-				select {
-				case <-relayCtx.Done():
-					if isLocalRelayBudgetExceeded(relayCtx, contextError(relayCtx)) {
-						publicErr := wsPublicError{
-							Status:  http.StatusGatewayTimeout,
-							Code:    "replay_recovery_timeout",
-							Message: "exact replay 恢复超过本地 15 秒预算，请重试",
+		log.Debugf("ws request model %s, forwarding to channel: %s model: %s (attempt %d/%d)",
+			req.requestModel, channel.Name, upstreamModel, req.iter.Index()+1, req.iter.Len())
+
+		candidateResult, terminal := func() (wsRelayResult, bool) {
+			defer availability.ReleaseLease(runtimeLease, time.Now())
+
+			var result attemptResult
+			for retryNum := 0; retryNum < maxSameChannelRetries; retryNum++ {
+				if retryNum > 0 {
+					delay := computeBackoff(retryNum, result.RetryAfter)
+					select {
+					case <-relayCtx.Done():
+						if isLocalRelayBudgetExceeded(relayCtx, contextError(relayCtx)) {
+							publicErr := wsPublicError{
+								Status:  http.StatusGatewayTimeout,
+								Code:    "replay_recovery_timeout",
+								Message: "exact replay 恢复超过本地 15 秒预算，请重试",
+							}
+							return wsRelayResult{Err: contextError(relayCtx), PublicError: &publicErr}, true
 						}
-						return wsRelayResult{Err: contextError(relayCtx), PublicError: &publicErr}
+						return wsRelayResult{Canceled: true, Err: contextError(relayCtx)}, true
+					case <-time.After(delay):
 					}
-					return wsRelayResult{Canceled: true, Err: contextError(relayCtx)}
-				case <-time.After(delay):
+				}
+
+				renderedChannel := renderedChannelForTemplateSource(channel, req.clientHeaderTemplateSource())
+				ra := &relayAttempt{
+					relayRequest:         req,
+					outAdapter:           outAdapter,
+					channel:              renderedChannel,
+					usedKey:              usedKey,
+					firstTokenTimeOutSec: group.FirstTokenTimeOut,
+				}
+
+				result = ra.attempt()
+				if isManualInterrupt(req.requestContext(), result.Err) {
+					return wsRelayResult{Canceled: true, Err: contextError(req.requestContext())}, true
+				}
+				if result.Success || result.Written || result.Canceled || result.ResetConversation || !isRetryableStatus(result.StatusCode) {
+					break
 				}
 			}
 
-			renderedChannel := renderedChannelForTemplateSource(channel, req.clientHeaderTemplateSource())
-			ra := &relayAttempt{
-				relayRequest:         req,
-				outAdapter:           outAdapter,
-				channel:              renderedChannel,
-				usedKey:              usedKey,
-				firstTokenTimeOutSec: group.FirstTokenTimeOut,
+			// relayAttempt already produced the canonical RoutingDecision. Consume
+			// that verdict here instead of reclassifying status/error text in the WS
+			// orchestrator.
+			result = withRoutingDecision(req.requestContext(), req, channel.ID, result)
+			now := time.Now()
+			recordRuntimeAvailabilityEvidence(req.requestContext(), channel.ID, upstreamModel, result, now)
+			decision := result.Decision
+
+			if result.Success {
+				availability.RecordCredentialSuccessRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, now)
+				outlierwindow.Report(channel.ID, upstreamModel, true, result.StatusCode, now)
+				var respID string
+				if req.metrics.InternalResponse != nil {
+					respID = req.metrics.InternalResponse.ID
+				}
+				return wsRelayResult{Success: true, ResponseID: respID}, true
 			}
 
-			result = ra.attempt()
-			if isManualInterrupt(req.requestContext(), result.Err) {
-				return wsRelayResult{Canceled: true, Err: contextError(req.requestContext())}
+			if decision.Domain == failureDomainCredential {
+				recordCredentialRoutingFailureRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, result, now)
 			}
-			if result.Success || result.Written || result.Canceled || result.ResetConversation || !isRetryableStatus(result.StatusCode) {
-				break
+			if !result.Canceled {
+				reportOutlierDecision(channel.ID, upstreamModel, decision.OutlierScope, result.StatusCode, now)
 			}
-		}
+			if !result.Written && !result.Canceled && !result.ResetConversation {
+				failureKind := circuitFailureKindForDecision(decision, group.RetryEnabled, result.StatusCode)
+				// Preserve the legacy exact-replay shadow signal until P4C2 decouples
+				// route learning from the breaker. This no longer participates in
+				// admission after P4C1b.
+				if replayExact && result.StatusCode == http.StatusServiceUnavailable && isNoAvailableAccountError(relayErrorMessage(result.Err)) {
+					failureKind = balancer.FailureHard
+				}
+				balancer.RecordFailure(channel.ID, usedKey.ID, upstreamModel, failureKind)
+			}
 
-		// 与 handleAttemptResult 同口径：健康度覆盖 Written/ResetConversation（上游流中断、
-		// 要求重建会话都是上游故障证据），只排除 Canceled（客户端主动断开）。
-		if !result.Success && !result.Canceled {
-			reportOutlierFailure(channel.ID, item.ModelName, result.StatusCode,
-				outlierErrorText(result.Err, result.UpstreamErrorBody), time.Now())
-		}
-		if !result.Success && !result.Written && !result.Canceled && !result.ResetConversation {
-			failureKind := circuitFailureKind(group.RetryEnabled, result.StatusCode)
-			if replayExact && result.StatusCode == http.StatusServiceUnavailable && isNoAvailableAccountError(relayErrorMessage(result.Err)) {
-				failureKind = balancer.FailureHard
+			if result.ResetConversation {
+				if publicErr, ok := classifyWSPublicError(result.Err, result.StatusCode); ok {
+					return wsRelayResult{ResetConversation: publicErr.ResetConversation, Err: result.Err, PublicError: &publicErr}, true
+				}
+				return wsRelayResult{ResetConversation: true, Err: result.Err}, true
 			}
-			balancer.RecordFailure(channel.ID, usedKey.ID, req.internalRequest.Model, failureKind)
-		}
-
-		if result.Success {
-			outlierwindow.Report(channel.ID, item.ModelName, true, result.StatusCode, time.Now())
-			var respID string
-			if req.metrics.InternalResponse != nil {
-				respID = req.metrics.InternalResponse.ID
+			if result.Canceled || result.Written {
+				return wsRelayResult{Written: result.Written, Canceled: result.Canceled, Err: result.Err}, true
 			}
-			return wsRelayResult{Success: true, ResponseID: respID}
+			lastErr = result.Err
+			lastResult = result
+			return wsRelayResult{}, false
+		}()
+		if terminal {
+			return candidateResult
 		}
-		if result.ResetConversation {
-			if publicErr, ok := classifyWSPublicError(result.Err, result.StatusCode); ok {
-				return wsRelayResult{ResetConversation: publicErr.ResetConversation, Err: result.Err, PublicError: &publicErr}
-			}
-			return wsRelayResult{ResetConversation: true, Err: result.Err}
-		}
-		if result.Canceled || result.Written {
-			return wsRelayResult{Written: result.Written, Canceled: result.Canceled, Err: result.Err}
-		}
-		lastErr = result.Err
-		lastResult = result
 	}
 
 	if publicErr, ok := classifyWSPublicError(lastErr, lastResult.StatusCode); ok {
