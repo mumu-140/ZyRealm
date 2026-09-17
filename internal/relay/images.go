@@ -13,6 +13,7 @@ import (
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/outlierwindow"
+	"github.com/bestruirui/octopus/internal/relay/availability"
 	"github.com/bestruirui/octopus/internal/relay/balancer"
 	"github.com/bestruirui/octopus/internal/relay/bodycache"
 	"github.com/bestruirui/octopus/internal/server/resp"
@@ -101,6 +102,7 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 		resp.ErrorWithCode(c, http.StatusServiceUnavailable, CodeRelayNoAvailableChannel, "no available channel")
 		return
 	}
+	policyRequest := &relayRequest{ctx: ctx, iter: iter, requestModel: requestModel}
 
 	metrics := newImagesRelayMetrics(apiKeyID, requestModel)
 	metrics.RequestContent = buildImagesRequestContentForLog(isMultipart, bc, jsonPayload)
@@ -148,7 +150,15 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 			continue
 		}
 
+		upstreamModel := balancer.ItemUpstreamModel(item, requestModel)
+		runtimeLease, runtimeEligible := availability.AcquireCandidate(channel.ID, upstreamModel, time.Now())
+		if !runtimeEligible {
+			iter.Skip(channel.ID, 0, channel.Name, "runtime cooldown or half-open lease busy")
+			continue
+		}
+
 		if !balancer.TryAcquireChannel(channel.ID, channel.MaxConcurrency) {
+			availability.ReleaseLease(runtimeLease, time.Now())
 			capacitySkipped = true
 			iter.SkipCapacity(channel.ID, 0, channel.Name,
 				fmt.Sprintf("channel at max concurrency (%d)", channel.MaxConcurrency))
@@ -156,16 +166,19 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 		}
 		if !balancer.TryConsumeChannelRPM(channel.ID, channel.MaxRPM, time.Now()) {
 			balancer.ReleaseChannel(channel.ID)
+			availability.ReleaseLease(runtimeLease, time.Now())
 			rateSkipped = true
 			iter.SkipRateLimit(channel.ID, 0, channel.Name,
 				fmt.Sprintf("channel at max rpm (%d)", channel.MaxRPM))
 			continue
 		}
 
-		// 同渠道内按 Key 重试（容量 slot 覆盖全部 Key 尝试）
-		// outlierwindow 只记录渠道最终结果，不记录中间 Key 失败
+		// 同渠道内按 Key 重试（容量 slot 覆盖全部 Key 尝试）。Images 保留原有
+		// GetChannelKey 排序，只把 credential/runtime eligibility 迁到统一 authority。
+		// outlierwindow 仍只记录渠道最终结果，不记录中间 Key 失败。
 		done := func() bool {
 			defer balancer.ReleaseChannel(channel.ID)
+			defer availability.ReleaseLease(runtimeLease, time.Now())
 
 			excludeKeys := make(map[int]struct{})
 			preferredKeyID := 0
@@ -175,6 +188,7 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 
 			var channelLastErr error
 			var channelLastStatus int
+			var channelLastResult attemptResult
 
 			for upstreamStarts < maxUpstreamStarts {
 				selectOpts := model.ChannelKeySelectOptions{
@@ -185,22 +199,37 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 				if usedKey.ChannelKey == "" {
 					break
 				}
-				if iter.SkipCircuitBreak(channel.ID, usedKey.ID, channel.Name) {
+				if !availability.CredentialAvailableRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, time.Now()) {
 					excludeKeys[usedKey.ID] = struct{}{}
+					preferredKeyID = 0
+					iter.RecordDecision(model.RoutingDecisionEvent{
+						Stage:        model.DecisionStageCredential,
+						Outcome:      model.DecisionOutcomeRejected,
+						Reason:       model.DecisionReasonCredentialCooldown,
+						ChannelID:    channel.ID,
+						ChannelKeyID: usedKey.ID,
+						ChannelName:  channel.Name,
+					})
 					continue
 				}
 
 				log.Debugf("images request model %s, mode: %d, forwarding to channel: %s model: %s (attempt %d/%d, sticky=%t, stream=%t)",
-					requestModel, group.Mode, channel.Name, item.ModelName,
+					requestModel, group.Mode, channel.Name, upstreamModel,
 					iter.Index()+1, iter.Len(), iter.IsSticky(), stream)
 
 				upstreamStarts++
 				span := iter.StartAttempt(channel.ID, usedKey.ID, channel.Name)
 
-				statusCode, written, usage, upstreamCT, fwdErr := imagesAttempt(ctx, endpoint, c, bc, isMultipart, boundary, jsonPayload, stream, channel, usedKey.ChannelKey, group.FirstTokenTimeOut, metrics, item.ModelName, hb)
+				statusCode, written, usage, upstreamCT, fwdErr := imagesAttempt(ctx, endpoint, c, bc, isMultipart, boundary, jsonPayload, stream, channel, usedKey.ChannelKey, group.FirstTokenTimeOut, metrics, upstreamModel, hb)
 
 				usedKey.StatusCode = statusCode
 				usedKey.LastUseTimeStamp = time.Now().Unix()
+
+				result := imagesAttemptRoutingResult(ctx, statusCode, written, fwdErr, span)
+				result = withRoutingDecision(ctx, policyRequest, channel.ID, result)
+				now := time.Now()
+				recordRuntimeAvailabilityEvidence(ctx, channel.ID, upstreamModel, result, now)
+				decision := result.Decision
 
 				if ctx.Err() != nil {
 					metrics.SaveWithChannelStats(ctx, false, ctx.Err(), iter.Attempts(), false)
@@ -208,11 +237,12 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 				}
 
 				if fwdErr == nil {
+					availability.RecordCredentialSuccessRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, now)
 					// 成功：记录渠道-模型成功样本
-					outlierwindow.Report(channel.ID, item.ModelName, true, statusCode, time.Now())
-					metrics.ActualModel = item.ModelName
+					outlierwindow.Report(channel.ID, upstreamModel, true, statusCode, now)
+					metrics.ActualModel = upstreamModel
 					if usage != nil {
-						metrics.SetUsageFromImages(item.ModelName, *usage)
+						metrics.SetUsageFromImages(upstreamModel, *usage)
 					}
 					metrics.ResponseContent = buildImagesResponseContentForLog(stream, upstreamCT, usage)
 					usedKey.TotalCost += metrics.Stats.InputCost + metrics.Stats.OutputCost
@@ -222,7 +252,7 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 						WaitTime:       span.Duration().Milliseconds(),
 						RequestSuccess: 1,
 					})
-					balancer.RecordSuccess(channel.ID, usedKey.ID, item.ModelName)
+					balancer.RecordSuccess(channel.ID, usedKey.ID, upstreamModel)
 					balancer.SetSticky(apiKeyID, requestModel, channel.ID, usedKey.ID)
 					metrics.SaveWithChannelStats(ctx, true, nil, iter.Attempts(), false)
 					return true
@@ -235,19 +265,25 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 					RequestFailed: 1,
 				})
 
-				// 已写出：无法再重试，但上游故障是真实信号，仍按作用域计入健康统计
+				// 已写出：无法再重试。RoutingDecision 仍可把已提交的上游传输失败
+				// 作为 future-health 证据，但 legacy circuit 不重新获得准入权。
 				if written {
-					reportOutlierFailure(channel.ID, item.ModelName, statusCode, outlierErrorText(fwdErr, ""), time.Now())
+					reportOutlierDecision(channel.ID, upstreamModel, decision.OutlierScope, statusCode, now)
 					metrics.SaveWithChannelStats(ctx, false, fwdErr, iter.Attempts(), false)
 					return true
 				}
 
-				balancer.RecordFailure(channel.ID, usedKey.ID, item.ModelName, circuitFailureKind(group.RetryEnabled, statusCode))
+				failureKind := circuitFailureKindForDecision(decision, group.RetryEnabled, statusCode)
+				balancer.RecordFailure(channel.ID, usedKey.ID, upstreamModel, failureKind)
+				if decision.Domain == failureDomainCredential {
+					recordCredentialRoutingFailureRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, result, now)
+				}
 				channelLastErr = fmt.Errorf("channel %s key %d failed: %w", channel.Name, usedKey.ID, fwdErr)
 				channelLastStatus = statusCode
+				channelLastResult = result
 
-				// 可重试：排除当前 key，继续同渠道下一个 key
-				if isRetryableStatus(statusCode) && group.RetryEnabled {
+				// 保留 Images 原有 HTTP retry 语义；P4B 只补 credential-domain 的同渠道换 Key。
+				if group.RetryEnabled && (decision.Domain == failureDomainCredential || isRetryableStatus(statusCode)) {
 					excludeKeys[usedKey.ID] = struct{}{}
 					preferredKeyID = 0
 					continue
@@ -255,9 +291,9 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 				break
 			}
 
-			// 渠道所有 Key 均失败：按错误作用域记录失败样本
+			// 渠道所有 Key 均失败：只按最终 RoutingDecision 的作用域记录一次失败样本。
 			if channelLastErr != nil {
-				reportOutlierFailure(channel.ID, item.ModelName, channelLastStatus, outlierErrorText(channelLastErr, ""), time.Now())
+				reportOutlierDecision(channel.ID, upstreamModel, channelLastResult.Decision.OutlierScope, channelLastStatus, time.Now())
 				lastErr = channelLastErr
 			}
 			return false

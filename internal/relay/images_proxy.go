@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	relaystream "github.com/bestruirui/octopus/internal/relay/stream"
 	"github.com/bestruirui/octopus/internal/utils/log"
 	"github.com/gin-gonic/gin"
 )
@@ -134,13 +135,13 @@ func proxySSE(ctx context.Context, c *gin.Context, respUp *http.Response, firstT
 
 		case r, ok := <-results:
 			if !ok {
-				return completedScanner.Usage(), !firstWrite, errors.New("upstream SSE ended before image_generation.completed")
+				return completedScanner.Usage(), !firstWrite, fmt.Errorf("%w: upstream SSE ended before image_generation.completed", relaystream.ErrStreamRead)
 			}
 			if r.eof {
-				return completedScanner.Usage(), !firstWrite, errors.New("upstream SSE ended before image_generation.completed")
+				return completedScanner.Usage(), !firstWrite, fmt.Errorf("%w: upstream SSE ended before image_generation.completed", relaystream.ErrStreamRead)
 			}
 			if r.err != nil {
-				return completedScanner.Usage(), !firstWrite, fmt.Errorf("failed to read stream line: %w", r.err)
+				return completedScanner.Usage(), !firstWrite, fmt.Errorf("%w: failed to read stream line: %v", relaystream.ErrStreamRead, r.err)
 			}
 
 			line := r.line
