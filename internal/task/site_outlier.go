@@ -26,6 +26,29 @@ type channelProber interface {
 	RunCandidate(ctx context.Context, channel model.Channel, usedKey model.ChannelKey, modelName string) grouphealth.ProbeResult
 }
 
+// probeOutcome 保留旧测试/注入器的兼容性，但不再把任意 Success=false 都视为不可用。
+// 真实 grouphealth.Prober 总会显式填充 Outcome；该 fallback 仅按明确 HTTP 语义保守分类。
+func probeOutcome(res grouphealth.ProbeResult) grouphealth.ProbeOutcome {
+	if res.Outcome != "" {
+		return res.Outcome
+	}
+	if res.Success {
+		return grouphealth.ProbeOutcomeSuccess
+	}
+	switch {
+	case res.HTTPStatus == 401:
+		return grouphealth.ProbeOutcomeCredentialRejected
+	case res.HTTPStatus == 429:
+		return grouphealth.ProbeOutcomeRateLimited
+	case res.HTTPStatus == 408 || res.HTTPStatus >= 500:
+		return grouphealth.ProbeOutcomeUnavailable
+	case res.HTTPStatus >= 400 && res.HTTPStatus < 500:
+		return grouphealth.ProbeOutcomeRejected
+	default:
+		return grouphealth.ProbeOutcomeInconclusive
+	}
+}
+
 // SiteOutlierRetireTask 被动离群退役（POR）控制面任务：
 // 阶段0 恢复探活 → 阶段1 门1窗口评估 → 阶段2 同站佐证 → 阶段3 探活确认 → 软退役。
 func SiteOutlierRetireTask() {
@@ -134,7 +157,10 @@ func recoverRetired(ctx context.Context, prober channelProber, cfg outlierConfig
 			continue
 		}
 		res := prober.RunCandidate(ctx, *ch, usedKey, modelName)
-		recovered, err := op.SiteChannelOutlierMarkProbe(st.ChannelID, res.Success, cfg.recoverStreak, now, ctx)
+		// 恢复仍要求主动探针明确成功；被拒绝、限流或不确定结果都不能恢复。
+		// 后续更稳妥的替代方案是 half-open 放行真实客户端请求，由真实流量确认恢复。
+		probeSucceeded := probeOutcome(res) == grouphealth.ProbeOutcomeSuccess
+		recovered, err := op.SiteChannelOutlierMarkProbe(st.ChannelID, probeSucceeded, cfg.recoverStreak, now, ctx)
 		if err != nil {
 			log.Warnf("POR mark probe channel=%d failed: %v", st.ChannelID, err)
 			continue
@@ -151,7 +177,7 @@ func recoverRetired(ctx context.Context, prober channelProber, cfg outlierConfig
 	}
 }
 
-// retireViaProbe 阶段3：探活确认，失败则软退役（含 CF 指纹识别）。
+// retireViaProbe 阶段3：只有明确 unavailable 的主动探针结果才可确认软退役。
 func retireViaProbe(ctx context.Context, prober channelProber, channelID, siteAccountID int, st outlierwindow.WindowStats, healthy, total int, now time.Time) {
 	ch, err := op.ChannelGet(channelID, ctx)
 	if err != nil {
@@ -164,16 +190,29 @@ func retireViaProbe(ctx context.Context, prober channelProber, channelID, siteAc
 	}
 
 	res := prober.RunCandidate(ctx, *ch, usedKey, modelName)
-	if res.Success {
+	switch probeOutcome(res) {
+	case grouphealth.ProbeOutcomeSuccess:
 		// 门3 探活成功 → 之前的窗口失败可能是瞬时事件，清窗放行
 		outlierwindow.ClearChannel(channelID)
+		return
+	case grouphealth.ProbeOutcomeUnavailable:
+		// 只有明确上游不可用证据才能在既有 passive + sibling gates 之后确认退役。
+	case grouphealth.ProbeOutcomeCredentialRejected,
+		grouphealth.ProbeOutcomeRateLimited,
+		grouphealth.ProbeOutcomeRejected,
+		grouphealth.ProbeOutcomeInconclusive:
+		log.Infof("POR probe inconclusive for retirement channel=%d outcome=%s status=%d, skip disable",
+			channelID, probeOutcome(res), res.HTTPStatus)
+		return
+	default:
+		log.Warnf("POR probe unknown outcome channel=%d outcome=%q, skip disable", channelID, res.Outcome)
 		return
 	}
 
 	isCF := sitesync.IsCloudflareProtectionResponse(res.HTTPStatus, res.Header, []byte(res.ErrorMessage))
-	reason := "passive outlier: window + probe failed"
+	reason := "passive outlier: window + probe unavailable"
 	if isCF {
-		reason = "passive outlier: cloudflare protection on probe"
+		reason = "passive outlier: cloudflare protection with unavailable probe"
 	}
 	snap := model.OutlierSnapshot{
 		Samples:          st.Samples,
@@ -206,7 +245,7 @@ func retireViaProbe(ctx context.Context, prober channelProber, channelID, siteAc
 //   - 退役 reason/Snapshot 标记为站点级（SiblingHealthy=0），便于诊断。
 func handleSiteOutage(ctx context.Context, prober channelProber, accountID int, siblings []int, total int, now time.Time) {
 	// 探活确认（安全阀）：门1/门2 仅是统计证据，可能是瞬时全站抖动。
-	// 对该账号下第一个可探活渠道发探针，成功则判定误判、清窗放行，不禁用。
+	// 对该账号下第一个可探活渠道发探针；只有明确 unavailable 才能确认整站退役。
 	probed := false
 	var probe grouphealth.ProbeResult
 	for _, chID := range siblings {
@@ -221,14 +260,27 @@ func handleSiteOutage(ctx context.Context, prober channelProber, accountID int, 
 		}
 		probe = prober.RunCandidate(ctx, *ch, usedKey, modelName)
 		probed = true
-		if probe.Success {
+		switch probeOutcome(probe) {
+		case grouphealth.ProbeOutcomeSuccess:
 			for _, sib := range siblings {
 				outlierwindow.ClearChannel(sib)
 			}
 			log.Infof("POR site outage probe ok account=%d, skip disable", accountID)
 			return
+		case grouphealth.ProbeOutcomeUnavailable:
+			// 门2 已证明所有兄弟高失败，再加明确 unavailable 主动证据才继续。
+		case grouphealth.ProbeOutcomeCredentialRejected,
+			grouphealth.ProbeOutcomeRateLimited,
+			grouphealth.ProbeOutcomeRejected,
+			grouphealth.ProbeOutcomeInconclusive:
+			log.Infof("POR site outage probe inconclusive account=%d outcome=%s status=%d, skip disable",
+				accountID, probeOutcome(probe), probe.HTTPStatus)
+			return
+		default:
+			log.Warnf("POR site outage probe unknown outcome account=%d outcome=%q, skip disable", accountID, probe.Outcome)
+			return
 		}
-		break // 门2 已证明所有兄弟高失败，再加主动探针失败即确认，不必探多个
+		break // 一个明确 unavailable 结果已经足够作为门3确认，不必探多个
 	}
 	if !probed {
 		// 无任何可探活渠道（缺 key/model），保守不禁用
@@ -238,9 +290,9 @@ func handleSiteOutage(ctx context.Context, prober channelProber, accountID int, 
 
 	// 确认整站故障 → 禁用该账号下所有 enabled 投影渠道
 	isCF := sitesync.IsCloudflareProtectionResponse(probe.HTTPStatus, probe.Header, []byte(probe.ErrorMessage))
-	reason := "passive outlier: site-level outage (all channels failing + probe failed)"
+	reason := "passive outlier: site-level outage (all channels failing + probe unavailable)"
 	if isCF {
-		reason = "passive outlier: site-level outage (cloudflare protection on probe)"
+		reason = "passive outlier: site-level outage (cloudflare protection with unavailable probe)"
 	}
 	disabled := 0
 	for _, chID := range siblings {
