@@ -379,13 +379,9 @@ func bestEffortWarmupUpstreamWS(
 		}
 
 		for {
-			usedKey := channel.GetChannelKey(selectOpts)
+			usedKey := selectOrderedAvailableCredential(channel, selectOpts, iter, time.Now())
 			if usedKey.ChannelKey == "" {
 				break
-			}
-			if iter.SkipCircuitBreak(channel.ID, usedKey.ID, channel.Name) {
-				selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
-				continue
 			}
 
 			if err := warmupUpstreamWSConnection(ctx, channel, usedKey); err != nil {
@@ -553,18 +549,7 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 			PreferredKeyID: req.iter.StickyKeyID(),
 		}
 
-		var usedKey dbmodel.ChannelKey
-		for {
-			usedKey = channel.GetChannelKey(selectOpts)
-			if usedKey.ChannelKey == "" {
-				break
-			}
-			if !req.iter.SkipCircuitBreak(channel.ID, usedKey.ID, channel.Name) {
-				break
-			}
-			selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
-			usedKey = dbmodel.ChannelKey{}
-		}
+		usedKey := selectOrderedAvailableCredential(channel, selectOpts, req.iter, time.Now())
 		if usedKey.ChannelKey == "" {
 			if len(selectOpts.ExcludeKeyIDs) == 0 {
 				req.iter.Skip(channel.ID, 0, channel.Name, "no available key")
