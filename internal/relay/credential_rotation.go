@@ -6,7 +6,7 @@ import (
 	"github.com/bestruirui/octopus/internal/relay/availability"
 )
 
-const defaultMaxCredentialsPerProvider = 2
+const defaultMaxCredentialsPerProvider = 3
 
 func recordCredentialRoutingFailureRevision(channelID, keyID, revision int, result attemptResult, now time.Time) {
 	text := outlierErrorText(result.Err, result.UpstreamErrorBody)
