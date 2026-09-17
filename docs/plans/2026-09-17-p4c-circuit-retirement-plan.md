@@ -2,171 +2,190 @@
 
 ## Goal
 
-Make `internal/relay/availability` the sole immediate routing-health authority without silently changing replay, credential, route-learning, outlier, or managed-site behavior.
+Make `internal/relay/availability` the sole immediate routing-health authority without silently changing replay, credential, route-learning, outlier, Compact, WebSocket, or managed-site behavior.
 
-P4C is intentionally staged. Do **not** delete `internal/relay/balancer/circuit.go` until production circuit readers are gone and circuit writes are proven inert.
+P4C is intentionally staged. Do **not** delete `internal/relay/balancer/circuit.go` until every live reader has been migrated to an equivalent availability path and circuit writes are proven unnecessary.
 
-Current baseline: `main@7fc188c1b08a347179d3a2efda1f84a148b29c3d`.
+Baseline: `main@7fc188c1b08a347179d3a2efda1f84a148b29c3d`.
 
-## Fresh source-audit findings
+## Fresh audit findings
 
-1. Core candidate ordering already ignores legacy circuit state through `runtimeOrderedCandidatesWithDecisions` / `runtimePolicyCandidates`.
-2. Core credential selection still reads circuit state for `CredentialRevision <= 1` through `selectFairChannelCredential -> Iterator.SkipCircuitBreak -> IsTripped`.
-3. Shared `Failover.Candidates` and `HealthFirst.Candidates` still read `PeekItemTripped` through their legacy compatibility mode, although core and Images both enter through `NewIterator` and runtime ordering.
-4. Images no longer uses circuit state for admission, but still writes `RecordSuccess` / `RecordFailure` for compatibility.
-5. Core relay still writes `RecordSuccess` / `RecordFailure`.
-6. Managed route learning is incorrectly coupled to breaker semantics: `maybeLearnManagedRoute` is called only when `circuitFailureKindForDecision(...) == FailureHard`.
-7. Credential replacement is already revision-safe: `ChannelKey.BeforeUpdate` atomically increments `credential_revision` when the secret changes. Revision 1 is the initial identity, not an unversionable permanent mode.
-8. Generic/low-confidence HTTP 5xx currently remains runtime-neutral and contributes passive outlier evidence; the legacy breaker supplies a separate delayed hard gate. P4C must not silently reinterpret those failures as high-confidence availability cooldowns merely to mimic the old breaker.
+1. Core runtime candidate admission is already owned by availability.
+2. Core credential selection still had a revision-1 compatibility read through `selectFairChannelCredential -> Iterator.SkipCircuitBreak -> IsTripped`.
+3. Shared `Failover.Candidates` and `HealthFirst.Candidates` still used `PeekItemTripped` as an extra ordering authority.
+4. Images was migrated in P4B to runtime/credential availability admission, but compatibility circuit writes remain.
+5. Core relay still writes legacy circuit success/failure evidence.
+6. Managed route learning is coupled to breaker semantics: `maybeLearnManagedRoute` runs only when `circuitFailureKindForDecision(...) == FailureHard`.
+7. Credential replacement is already revision-safe: `ChannelKey.BeforeUpdate` increments `credential_revision` when the secret changes. Revision 1 is only the initial identity.
+8. Generic/low-confidence HTTP 5xx is runtime-neutral and contributes passive outlier evidence. P4C must not promote it into availability cooldown merely to mimic the old breaker.
+9. An exact-head compile gate after deleting `Iterator.SkipCircuitBreak` exposed three missed live readers:
+   - `internal/relay/compact.go`
+   - WebSocket warmup in `internal/relay/ws_client.go`
+   - WebSocket relay in `internal/relay/ws_client.go`
+10. Deeper audit showed Compact/WS are not yet symmetric with core/Images for availability evidence:
+    - WS attempts already produce a `RoutingDecision`, but `runWSRelay` does not apply runtime/credential availability effects like the core handler does.
+    - Compact still uses its own outlier + compatibility-breaker path and does not yet have the same availability-effect bridge.
 
-## Architectural invariant after P4C
+Finding 10 changes the migration boundary. Removing the Compact/WS reader before migrating their health writers could weaken future bad-key/bad-model isolation. Therefore P4C1 is split into P4C1a and P4C1b.
+
+## Target invariant after all P4C slices
 
 One wire outcome -> one `RoutingDecision` -> independent effects:
 
 - current-request retry/failover/replay safety;
 - runtime availability (`Available/Suspect/Cooldown/HalfOpen`);
+- credential availability;
 - passive `outlierwindow` statistics;
 - capability/feature suppression;
-- managed-route learning, explicitly gated independently from health admission.
-
-No scheduler or credential selector may read legacy circuit state.
+- managed-route learning, explicitly independent from health admission.
 
 ---
 
-## P4C1 — Remove circuit admission readers, preserve writes temporarily
+## P4C1a — Remove legacy circuit authority from core/shared routing
 
-P4C1 is deliberately narrower than the initial audit proposal. Managed-route learning is **not** changed here. The purpose of this slice is only to remove legacy circuit state from scheduling and credential admission while keeping the old writer path intact as a reversible compatibility seam.
+This is the current implementation slice and Draft PR boundary.
 
-### Task 1: RED contracts for sole admission authority
+### Scope
 
-Files:
-- modify `internal/relay/p4a_availability_authority_test.go`
-- modify `internal/relay/balancer/p4a_availability_authority_test.go`
-- update circuit-ordering contracts in `internal/relay/balancer/strategy_test.go`
+Core/shared only:
 
-Contracts:
-1. A healthy revision-1 credential remains selectable even if a legacy circuit entry for the same `(channel,key,model)` is open.
-2. Shared `Failover` ordering ignores legacy circuit state and orders only by priority + passive outlier health.
-3. Shared `HealthFirst` ignores legacy circuit state and tiers only by passive health score.
-4. Runtime cooldown still blocks the candidate independently of any legacy circuit state.
-
-RED verification source: GitHub Actions. The new contracts must fail for the expected legacy-reader reasons before production edits.
-
-### Task 2: Remove production admission readers
-
-Files:
-- modify `internal/relay/credential_fair.go`
-- modify `internal/relay/balancer/iterator.go`
-- modify `internal/relay/balancer/balancer.go`
-- modify `internal/relay/balancer/health_order.go`
-- modify `internal/relay/balancer/runtime_candidates.go`
-- update affected tests
-
-Implementation:
-- credential admission uses `CredentialAvailableRevision` for **all** revisions;
-- remove the revision-1 `SkipCircuitBreak` compatibility gate;
-- delete `Iterator.SkipCircuitBreak` and its obsolete request-model field after behavior is green;
-- collapse Failover to priority + passive health ordering only;
-- collapse HealthFirst to passive health tiers only;
+- all core credential revisions use `CredentialAvailableRevision` for admission;
+- revision-1 no longer has a hidden circuit gate in `selectFairChannelCredential`;
+- shared Failover ordering is priority + passive model health only;
+- shared HealthFirst tiers are passive model health only;
 - remove the `includeLegacyCircuit` dual ordering path;
-- preserve priority, health-score, tier rotation, sticky, runtime availability, concurrency, RPM, retry, replay, and route-learning behavior.
+- keep Compact/WS `Iterator.SkipCircuitBreak` compatibility reader intact until P4C1b;
+- keep all circuit writers, `CircuitEffect`, route-learning coupling, circuit settings, and `circuit.go` intact.
 
-### Task 3: Replace stale live-path breaker contracts, not coverage
+### RED contracts
 
-Two existing relay integration tests mixed useful protection with the old breaker admission mechanism. They are rewritten rather than deleted:
+- a healthy revision-1 core credential remains selectable even when a stale circuit entry is open;
+- shared Failover order is unchanged by a legacy circuit entry;
+- shared HealthFirst tiers are unchanged by a legacy circuit entry;
+- runtime availability cooldown remains authoritative independently of legacy circuit state.
 
-- multi-key fallback is seeded through authoritative credential availability cooldown instead of manually opening a circuit;
-- generic HTTP 500 proves that compatibility circuit writes may still exist but cannot block a later relay admission;
-- the existing dedicated 429 test continues to protect provider-model runtime cooldown behavior.
+RED evidence:
 
-Stop gate after P4C1:
-- no production scheduling/admission path calls `IsTripped`, `PeekItemTripped`, or `SkipCircuitBreak`;
-- `Iterator.SkipCircuitBreak` is deleted;
-- circuit writes remain intentionally present and therefore reversible;
-- `RoutingDecision.CircuitEffect` remains intact;
-- managed-route learning remains untouched, including its current dependency on `circuitFailureKindForDecision`;
-- `circuit.go` and circuit settings remain intact;
-- generic 5xx remains low-confidence/passive unless an existing high-confidence classifier chooses a runtime effect;
-- full GitHub Actions CI green.
+- CI `35236762792`: exactly the three initial P4C1 authority contracts failed; governance/frontend/Vet were green.
+- after replacing two old strategy circuit-ordering contracts with the new desired behavior, CI `35237304145` remained red for the expected legacy-reader semantics only.
 
-Deliverable: Draft PR for P4C1 only. Do not merge automatically.
+### Compatibility tests retained by rewriting, not deleting
+
+Two live relay tests mixed useful behavior with obsolete core breaker admission semantics:
+
+- multi-key fallback now seeds authoritative credential cooldown and still proves the next healthy key is used;
+- generic HTTP 500 may still create a compatibility circuit entry, but that entry must not block the next **core** relay admission;
+- the existing 429 test continues to guard provider-model runtime cooldown.
+
+Behavior GREEN before attempting dead-reader deletion: CI `35238965465` — governance, backend Vet/full Test, frontend lint/Test/Build all green.
+
+### Caution gate that changed the plan
+
+Deleting `Iterator.SkipCircuitBreak` produced exact-head CI `35239301771`, which failed compilation at Compact and two WS callsites. This was treated as a source-audit failure, not fixed by restoring global breaker authority or by forcing the sidepaths through an incomplete migration.
+
+A short-lived experiment replaced those sidepath readers with an ordered availability helper while preserving `Channel.GetChannelKey` preferred/lowest-cost behavior. Diff audit was clean, but semantic review showed Compact/WS did not yet produce equivalent availability evidence. The experiment was removed from the branch before the P4C1a Draft PR.
+
+### P4C1a stop gate
+
+- core credential admission does not call circuit state for any credential revision;
+- shared Failover/HealthFirst ordering does not read circuit state;
+- core generic-500 compatibility breaker writes are inert for core admission;
+- Compact/WS legacy reader remains explicitly documented and unchanged;
+- circuit writers remain reversible compatibility writes;
+- route-learning behavior is unchanged;
+- full exact-head GitHub Actions CI green;
+- no deployment.
+
+Deliverable: Draft PR only. Do not merge automatically.
+
+---
+
+## P4C1b — Migrate Compact and WebSocket before removing the final reader
+
+Start only after P4C1a is merged and a fresh source audit is repeated on `main`.
+
+### Required behavior before reader removal
+
+Compact and WS must first write authoritative availability evidence, not merely consume it.
+
+For WS:
+
+- reuse the `RoutingDecision` already attached by `relayAttempt.attempt()`;
+- apply `recordRuntimeAvailabilityEvidence` at the WS orchestration boundary;
+- apply revision-aware credential failure/success effects with the same policy source as core;
+- preserve committed-stream no-replay behavior and WS conversation-reset semantics.
+
+For Compact:
+
+- add a thin Compact-to-`attemptResult`/`RoutingDecision` bridge rather than a new classifier;
+- apply runtime and credential availability effects from that decision;
+- preserve Compact request/response passthrough, upstream-model keying, sticky semantics, retry behavior, and outlier accounting.
+
+Only after those effects are covered by RED/GREEN tests:
+
+- preserve `Channel.GetChannelKey` ordering (preferred key, then lowest `TotalCost`);
+- replace circuit admission with revision-aware credential availability while keeping that ordering;
+- remove the two WS and one Compact `SkipCircuitBreak` callsites;
+- then delete `Iterator.SkipCircuitBreak` and its obsolete breaker-only state.
+
+### P4C1b stop gate
+
+- no live scheduling/credential admission path reads `IsTripped`, `PeekItemTripped`, or `SkipCircuitBreak`;
+- Compact/WS high-confidence failures still create the correct future availability state;
+- no fairness/sticky/retry/replay semantics changed incidentally;
+- full exact-head CI green.
 
 ---
 
 ## P4C2 — Decouple route learning, then remove circuit writes and policy surface
 
-Start only after P4C1 is merged and a fresh source audit confirms zero production scheduling/admission circuit readers.
+Start only after P4C1b is merged and a fresh audit confirms zero live circuit readers.
 
-### Task 1: Decouple managed-route learning from breaker classification
+### Route-learning decoupling
 
-Files likely include:
-- `internal/relay/route_learning.go`
-- `internal/relay/relay_handler.go`
-- focused route-learning tests
-
-Implementation:
-- add a small route-learning eligibility policy based on the already-computed `RoutingDecision`, retry policy, and status;
-- preserve the current externally observable hard/soft/ignored learning behavior;
+- add an explicit route-learning eligibility policy based on the already-computed `RoutingDecision`, retry policy, and status;
+- preserve current hard/soft/ignored learning behavior;
 - remove route-learning dependence on `balancer.FailureKind` / `circuitFailureKindForDecision`;
 - do not add another health state machine or re-parse raw errors downstream.
 
-Gate: route learning has an explicit independent contract before any circuit writer is removed.
+### Remove writers
 
-### Task 2: RED contracts proving breaker writes are unnecessary
+After RED contracts cover core HTTP, Images, Compact, WS, committed stream failures, credential failures, model capacity, provider transients, content policy, success, and route learning:
 
-Cover core HTTP relay, Images, committed stream failure, credential failure, model capacity, provider transient, content policy, success, and managed-route learning.
+- remove live `balancer.RecordSuccess` / `RecordFailure` calls;
+- remove `circuitFailureKind` / `circuitFailureKindForDecision` after route learning is independent;
+- remove `RoutingDecision.CircuitEffect` and circuit trace production if no compatibility consumer remains.
 
-The tests should assert authoritative outcomes directly:
-- runtime availability state;
-- credential runtime state;
-- outlier effect;
-- replay/failover directive;
-- route-learning eligibility.
+P4C2 stop gate:
 
-They must not require circuit state for live-path correctness.
-
-### Task 3: Remove writers
-
-Files likely include:
-- `internal/relay/relay_attempt.go`
-- `internal/relay/relay_handler.go`
-- `internal/relay/images.go`
-- `internal/relay/routing_decision.go`
-- circuit-specific relay tests
-
-Remove:
-- `balancer.RecordSuccess` / `balancer.RecordFailure` live-path calls;
-- `circuitFailureKind` / `circuitFailureKindForDecision` after route learning is independent;
-- `RoutingDecision.CircuitEffect` and trace production if no compatibility consumer remains.
-
-Stop gate after P4C2:
-- zero production circuit admission readers;
-- zero production circuit writers;
-- route learning is independent of breaker classification;
-- full CI green;
-- `circuit.go` still present only as dead implementation until the final cleanup diff is reviewed.
+- zero live circuit readers;
+- zero live circuit writers;
+- route learning independently tested;
+- `circuit.go` retained only as dead code pending final cleanup review;
+- full CI green.
 
 ---
 
 ## P4C3 — Delete dead breaker implementation and compatibility settings
 
-Start only after a fresh repository-wide audit confirms zero production references.
+Start only after a fresh repository-wide audit confirms zero live references.
 
 Candidate cleanup:
+
 - delete `internal/relay/balancer/circuit.go` and circuit-only tests;
-- remove circuit reset from `internal/relay/balancer/state.go` / shared reset path;
-- remove dead circuit settings from `internal/model/setting.go` and matching UI/i18n only after checking backward-compatibility expectations;
-- remove obsolete circuit-specific trace/tests/comments;
-- keep passive outlier/POR configuration untouched;
-- keep availability cooldown policy untouched unless separately justified by production evidence.
+- remove circuit reset plumbing;
+- remove dead circuit settings and matching UI/i18n only after backward-compatibility review;
+- remove obsolete circuit-specific trace/comments/tests;
+- keep passive outlier/POR policy unchanged;
+- keep availability cooldown policy unchanged unless separately justified by production evidence.
 
 Final gate:
+
 - no circuit implementation, reader, writer, or active configuration surface remains;
-- route learning is independently tested;
-- revision-1 and later credential identities share the same availability authority;
-- full GitHub Actions CI green on the exact final tree;
+- revision-1 and later credentials share the same availability authority everywhere;
+- full CI green on the exact final tree;
 - no DB migration;
-- no deployment in P4C.
+- no deployment.
 
 ## Explicit non-goals
 
