@@ -1,3 +1,4 @@
+import { useTranslations } from 'next-intl';
 import {
     Select,
     SelectContent,
@@ -13,15 +14,17 @@ interface ProviderPresetPickerProps {
 }
 
 export function ProviderPresetPicker({ value, onSelect }: ProviderPresetPickerProps) {
+    const t = useTranslations('channel.create.providerPreset');
+
     return (
         <div className="space-y-2">
-            <label className="text-sm font-medium text-card-foreground">Provider preset</label>
+            <label className="text-sm font-medium text-card-foreground">{t('label')}</label>
             <Select
                 value={value}
                 onValueChange={(nextValue) => onSelect(nextValue as ProviderPresetID)}
             >
                 <SelectTrigger className="w-full rounded-xl">
-                    <SelectValue placeholder="Choose a provider preset" />
+                    <SelectValue placeholder={t('placeholder')} />
                 </SelectTrigger>
                 <SelectContent className="rounded-xl">
                     {PROVIDER_PRESETS.map((preset) => (
@@ -31,9 +34,7 @@ export function ProviderPresetPicker({ value, onSelect }: ProviderPresetPickerPr
                     ))}
                 </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">
-                Presets only prefill the existing Channel form. Base URL and other settings remain editable.
-            </p>
+            <p className="text-xs text-muted-foreground">{t('hint')}</p>
         </div>
     );
 }

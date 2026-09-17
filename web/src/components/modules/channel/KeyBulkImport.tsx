@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import {
     parseCredentialLines,
@@ -16,13 +17,14 @@ export function KeyBulkImport({ credentialCount, maxConcurrency, onImport }: Key
     const [input, setInput] = useState('');
     const parsed = useMemo(() => parseCredentialLines(input), [input]);
     const showConcurrencyHint = shouldShowLargeCredentialPoolHint(credentialCount, maxConcurrency);
+    const t = useTranslations('channel.create.bulkKeys');
 
     return (
         <div className="space-y-2 rounded-xl border border-border p-3">
             <div className="flex items-center justify-between gap-3">
                 <div>
-                    <div className="text-sm font-medium text-card-foreground">Bulk import API keys</div>
-                    <p className="text-xs text-muted-foreground">One credential per line. Duplicates and blank lines are ignored.</p>
+                    <div className="text-sm font-medium text-card-foreground">{t('title')}</div>
+                    <p className="text-xs text-muted-foreground">{t('description')}</p>
                 </div>
                 <Button
                     type="button"
@@ -34,7 +36,7 @@ export function KeyBulkImport({ credentialCount, maxConcurrency, onImport }: Key
                         setInput('');
                     }}
                 >
-                    Import
+                    {t('import')}
                 </Button>
             </div>
             <textarea
@@ -48,12 +50,16 @@ export function KeyBulkImport({ credentialCount, maxConcurrency, onImport }: Key
             />
             {input.length > 0 ? (
                 <p className="text-xs text-muted-foreground">
-                    {parsed.validCount} valid / {parsed.duplicateCount} duplicates / {parsed.blankCount} blank lines ignored
+                    {t('summary', {
+                        valid: parsed.validCount,
+                        duplicates: parsed.duplicateCount,
+                        blank: parsed.blankCount,
+                    })}
                 </p>
             ) : null}
             {showConcurrencyHint ? (
                 <p className="text-xs text-amber-600 dark:text-amber-400">
-                    This Channel currently allows only {maxConcurrency} concurrent requests. A large key pool is still capped by the Channel concurrency limit; key count does not imply provider quota.
+                    {t('concurrencyHint', { maxConcurrency })}
                 </p>
             ) : null}
         </div>

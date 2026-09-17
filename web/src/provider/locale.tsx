@@ -3,6 +3,7 @@
 import type { ReactNode } from 'react';
 import { NextIntlClientProvider } from 'next-intl';
 import { useSettingStore, type Locale } from '@/stores/setting';
+import { channelCreateMessages } from './channel-create-messages';
 
 import zh_hansMessages from '../../public/locale/zh_hans.json';
 import zh_hantMessages from '../../public/locale/zh_hant.json';
@@ -23,11 +24,22 @@ const bcp47: Record<Locale, string> = {
 
 export function LocaleProvider({ children }: { children: ReactNode }) {
     const { locale } = useSettingStore();
+    const baseMessages = messages[locale];
+    const localizedMessages = {
+        ...baseMessages,
+        channel: {
+            ...baseMessages.channel,
+            create: {
+                ...baseMessages.channel.create,
+                ...channelCreateMessages[locale],
+            },
+        },
+    };
 
     return (
         <NextIntlClientProvider
             locale={bcp47[locale]}
-            messages={messages[locale]}
+            messages={localizedMessages}
             timeZone="Asia/Shanghai"
         >
             {children}
