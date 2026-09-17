@@ -46,6 +46,7 @@ function MemberItem({
     showConfirmDelete = true,
     layoutScope,
     dnd,
+    clone = false,
 }: {
     member: SelectedMember;
     onRemove: (id: string) => void;
@@ -56,6 +57,7 @@ function MemberItem({
     showConfirmDelete?: boolean;
     layoutScope?: string;
     dnd: MemberItemDnd;
+    clone?: boolean;
 }) {
     const { Avatar: ModelAvatar } = getModelIcon(member.name);
     const [confirmDelete, setConfirmDelete] = useState(false);
@@ -73,13 +75,17 @@ function MemberItem({
             ref={dnd.innerRef}
             // eslint-disable-next-line react-hooks/refs
             {...dnd.draggableProps}
-            className={cn('rounded-lg grid transition-[grid-template-rows] duration-200', isRemoving ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]')}
+            className={cn(
+                'rounded-lg grid transition-[grid-template-rows] duration-200',
+                isRemoving ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]',
+            )}
             // eslint-disable-next-line react-hooks/refs
             style={{
                 /* eslint-disable-next-line react-hooks/refs */
                 ...(dnd.draggableProps?.style ?? {}),
                 /* eslint-disable-next-line react-hooks/refs */
                 ...(dnd.isDragging ? { zIndex: 50, boxShadow: '0 8px 32px rgba(0,0,0,0.15)' } : null),
+                ...(clone ? { pointerEvents: 'none' as const } : null),
             }}
         >
             <div className={cn(
@@ -129,7 +135,10 @@ function MemberItem({
                         type="number"
                         min={1}
                         value={member.weight ?? 1}
-                        onChange={(e) => onWeightChange?.(member.id, Math.max(1, parseInt(e.target.value) || 1))}
+                        onChange={(e) => {
+                            if (clone) return;
+                            onWeightChange?.(member.id, Math.max(1, parseInt(e.target.value) || 1));
+                        }}
                         className={cn(
                             'w-12 h-6 text-xs text-center rounded border border-border bg-muted/50 focus:outline-none focus:ring-1 focus:ring-primary',
                             isDisabled && 'text-muted-foreground'
@@ -141,19 +150,22 @@ function MemberItem({
                     <motion.button
                         layoutId={`delete-btn-member-${layoutScope ?? 'default'}-${member.id}`}
                         type="button"
-                        onClick={() => showConfirmDelete ? setConfirmDelete(true) : onRemove(member.id)}
+                        onClick={() => {
+                            if (clone) return;
+                            showConfirmDelete ? setConfirmDelete(true) : onRemove(member.id);
+                        }}
                         className="p-1 rounded hover:bg-destructive/10 hover:text-destructive transition-colors"
                         initial={false}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ duration: 0.15 }}
-                        style={{ pointerEvents: 'auto' }}
+                        style={{ pointerEvents: clone ? 'none' : 'auto' }}
                     >
                         <X className="size-3" />
                     </motion.button>
                 )}
 
                 <AnimatePresence>
-                    {showConfirmDelete && confirmDelete && (
+                    {showConfirmDelete && confirmDelete && !clone && (
                         <motion.div
                             layoutId={`delete-btn-member-${layoutScope ?? 'default'}-${member.id}`}
                             className="absolute inset-0 flex items-center justify-center gap-2 bg-destructive p-1.5 rounded-lg"
@@ -305,7 +317,33 @@ export function MemberList({
                     onDragStart={() => onDragStart?.()}
                     onDragEnd={handleDragEnd}
                 >
-                    <Droppable droppableId={`members-${layoutScope}`}>
+                    <Droppable
+                        droppableId={`members-${layoutScope}`}
+                        getContainerForClone={() => document.body}
+                        renderClone={(provided, snapshot, rubric) => {
+                            const member = members[rubric.source.index];
+                            if (!member) return null;
+                            return (
+                                <MemberItem
+                                    member={member}
+                                    onRemove={() => undefined}
+                                    onWeightChange={() => undefined}
+                                    isRemoving={false}
+                                    index={rubric.source.index}
+                                    showWeight={showWeight}
+                                    showConfirmDelete={false}
+                                    layoutScope={`${layoutScope}-clone`}
+                                    clone
+                                    dnd={{
+                                        innerRef: provided.innerRef,
+                                        draggableProps: provided.draggableProps,
+                                        dragHandleProps: provided.dragHandleProps,
+                                        isDragging: snapshot.isDragging,
+                                    }}
+                                />
+                            );
+                        }}
+                    >
                         {(droppableProvided) => (
                             <div
                                 ref={droppableProvided.innerRef}
