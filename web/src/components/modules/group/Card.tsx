@@ -4,7 +4,7 @@ import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Trash2, X, Pencil, Pin, PinOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { type Group, useDeleteGroup, useUpdateGroup, useToggleGroupPin } from '@/api/endpoints/group';
-import { useModelChannelList } from '@/api/endpoints/model';
+import type { LLMChannel } from '@/api/endpoints/model';
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { toast } from '@/components/common/Toast';
@@ -36,6 +36,11 @@ interface EditDialogContentProps {
     displayMembers: SelectedMember[];
     isSubmitting: boolean;
     onSubmit: (values: GroupEditorValues, onDone?: () => void) => void;
+}
+
+interface GroupCardProps {
+    group: Group;
+    modelChannelByKey: ReadonlyMap<string, LLMChannel>;
 }
 
 function EditDialogContent({ group, displayMembers, isSubmitting, onSubmit }: EditDialogContentProps) {
@@ -78,12 +83,11 @@ function EditDialogContent({ group, displayMembers, isSubmitting, onSubmit }: Ed
     );
 }
 
-export function GroupCard({ group }: { group: Group }) {
+export function GroupCard({ group, modelChannelByKey }: GroupCardProps) {
     const t = useTranslations('group');
     const updateGroup = useUpdateGroup();
     const deleteGroup = useDeleteGroup();
     const togglePin = useToggleGroupPin();
-    const { data: modelChannels = [] } = useModelChannelList();
 
     const [confirmDelete, setConfirmDelete] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
@@ -91,14 +95,6 @@ export function GroupCard({ group }: { group: Group }) {
     const [weightOverrides, setWeightOverrides] = useState<Record<string, number>>({});
     const weightTimerRef = useRef<NodeJS.Timeout | null>(null);
     const membersRef = useRef<SelectedMember[]>([]);
-
-    const modelChannelByKey = useMemo(() => {
-        const map = new Map<string, typeof modelChannels[number]>();
-        modelChannels.forEach((mc) => {
-            map.set(modelChannelKey(mc.channel_id, mc.name), mc);
-        });
-        return map;
-    }, [modelChannels]);
 
     const displayMembers = useMemo((): SelectedMember[] =>
         [...(group.items || [])]
