@@ -53,8 +53,10 @@
   - card-level quick action.
 - `web/src/components/modules/group/Editor.tsx`
   - use the extracted preview helper and show pending-match count.
-- locale source(s) currently used for `group.*`
-  - add concise Auto Add success/no-op/error/pending copy in English/Simplified Chinese/Traditional Chinese.
+- `web/public/locale/en.json`
+- `web/public/locale/zh_hans.json`
+- `web/public/locale/zh_hant.json`
+  - add concise Auto Add success/no-op/error/pending copy.
 
 ---
 
@@ -212,18 +214,7 @@ updated, err := GroupUpdate(&model.GroupUpdateRequest{
 
 This is intentional: `GroupUpdate` owns active preset live binding through `syncActivePresetTx`, cache refresh, and balancer reset. Do **not** call `GroupItemBatchAdd` directly from this feature.
 
-Return:
-
-```go
-&model.GroupAutoAddResult{
-    Group:           *updated,
-    Matched:         matched,
-    Added:           len(adds),
-    AlreadyPresent:  matched - len(adds),
-}
-```
-
-The database uniqueness constraint/`OnConflict DoNothing` remains the concurrency safety net.
+Return the authoritative updated Group. Compute `Added` from the exact candidate keys that were absent in the pre-update Group and are present in the returned Group rather than blindly assuming every attempted insert won a concurrent conflict. Set `AlreadyPresent = Matched - Added`.
 
 - [ ] **Step 3: Add active-preset preservation coverage**
 
@@ -407,7 +398,9 @@ git commit -m "refactor(group): share auto-add preview logic"
 - Modify: `web/src/api/endpoints/group.ts`
 - Modify: `web/src/components/modules/group/Card.tsx`
 - Modify: `web/tests/group-auto-add.test.mjs`
-- Modify: existing English/Simplified Chinese/Traditional Chinese Group locale messages.
+- Modify: `web/public/locale/en.json`
+- Modify: `web/public/locale/zh_hans.json`
+- Modify: `web/public/locale/zh_hant.json`
 
 **Interfaces:**
 - Frontend result:
@@ -512,11 +505,16 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add web/src/api/endpoints/group.ts web/src/components/modules/group/Card.tsx web/src/components/modules/group/Editor.tsx web/src/components/modules/group/autoAdd.ts web/tests/group-auto-add.test.mjs public/locales
+git add web/src/api/endpoints/group.ts \
+  web/src/components/modules/group/Card.tsx \
+  web/src/components/modules/group/Editor.tsx \
+  web/src/components/modules/group/autoAdd.ts \
+  web/tests/group-auto-add.test.mjs \
+  web/public/locale/en.json \
+  web/public/locale/zh_hans.json \
+  web/public/locale/zh_hant.json
 git commit -m "feat(group): add card auto-add action"
 ```
-
-If locale files live at a different currently-authoritative path on the implementation baseline, stage those exact existing locale files rather than creating a second locale system.
 
 ---
 
