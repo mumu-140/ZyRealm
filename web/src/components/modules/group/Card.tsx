@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Trash2, X, Pencil, Pin, PinOff } from 'lucide-react';
+import { Trash2, X, Pencil, Pin, PinOff, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { type Group, useDeleteGroup, useUpdateGroup, useToggleGroupPin } from '@/api/endpoints/group';
+import { type Group, useDeleteGroup, useUpdateGroup, useToggleGroupPin, useGroupAutoAdd } from '@/api/endpoints/group';
 import { useModelChannelList } from '@/api/endpoints/model';
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
@@ -82,6 +82,7 @@ export function GroupCard({ group }: { group: Group }) {
     const updateGroup = useUpdateGroup();
     const deleteGroup = useDeleteGroup();
     const togglePin = useToggleGroupPin();
+    const autoAdd = useGroupAutoAdd();
     const { data: modelChannels = [] } = useModelChannelList();
 
     const [confirmDelete, setConfirmDelete] = useState(false);
@@ -293,11 +294,40 @@ export function GroupCard({ group }: { group: Group }) {
                         <TooltipContent>{t('detail.actions.copyName')}</TooltipContent>
                     </Tooltip>
 
+                    <Tooltip side="top" sideOffset={10} align="center">
+                        <TooltipTrigger asChild>
+                            <button
+                                type="button"
+                                aria-label={t('autoAdd.action')}
+                                disabled={autoAdd.isPending || !group.id}
+                                onClick={() => {
+                                    if (!group.id || autoAdd.isPending) return;
+                                    autoAdd.mutate(group.id, {
+                                        onSuccess: (result) => {
+                                            if (result.added > 0) {
+                                                toast.success(t('autoAdd.added', { count: result.added }));
+                                            } else {
+                                                toast.info(t('autoAdd.noNew'));
+                                            }
+                                        },
+                                        onError: (error: Error) => {
+                                            toast.error(t('autoAdd.failed'), { description: error.message });
+                                        },
+                                    });
+                                }}
+                                className="flex size-8 items-center justify-center rounded-lg border border-transparent transition-all hover:border-border hover:bg-muted active:scale-95 text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                            >
+                                <Sparkles className="size-4" />
+                            </button>
+                        </TooltipTrigger>
+                        <TooltipContent>{t('autoAdd.action')}</TooltipContent>
+                    </Tooltip>
+
                     <PresetPopover group={group} />
 
                     <ProtocolPolicyPopover group={group} />
 
-                                        <MorphingDialog>
+                    <MorphingDialog>
                         <MorphingDialogTrigger className="flex size-8 items-center justify-center rounded-lg border border-transparent transition-all hover:border-border hover:bg-muted active:scale-95 text-muted-foreground hover:text-foreground">
                             <Tooltip side="top" sideOffset={10} align="center">
                                 <TooltipTrigger asChild>
@@ -442,6 +472,6 @@ export function GroupCard({ group }: { group: Group }) {
                     </motion.div>
                 )}
             </AnimatePresence>
-        </article >
+        </article>
     );
 }
