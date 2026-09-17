@@ -77,8 +77,10 @@ This remains unchanged.
   - move diagnostic trigger into compact header actions and remove the large always-rendered health block.
 - `web/src/api/endpoints/group-health.ts`
   - use detail query on demand; keep compatibility APIs for list/full mode.
-- existing Group locale messages
-  - rename user-facing semantics from route “health” to “diagnostic probe” and add provider-warning copy.
+- `web/public/locale/en.json`
+- `web/public/locale/zh_hans.json`
+- `web/public/locale/zh_hant.json`
+  - rename user-facing semantics from route “health” to diagnostic probe and add provider-warning copy.
 
 No `internal/relay/balancer/*` production file should change unless a RED regression proves the passive-health invariant is already violated.
 
@@ -146,7 +148,7 @@ if stats.Samples != 0 {
 }
 ```
 
-Reset `outlierwindow` test state using its existing reset/test helper or isolated channel/model IDs according to current package facilities.
+Use a test-only channel/model identifier that is unique to this test (for example a high channel ID and a test-specific model string) so the package-global in-memory outlier store cannot collide with another test. Do not add a production reset API solely for this assertion.
 
 - [ ] **Step 3: Run focused tests and verify RED**
 
@@ -154,7 +156,7 @@ Reset `outlierwindow` test state using its existing reset/test helper or isolate
 go test ./internal/grouphealth -run 'TestProbeOutcome|TestProberDoesNotReportPassiveHealth' -count=1
 ```
 
-Expected: taxonomy tests fail because `ProbeOutcome` is not implemented. Passive-neutral test should either already pass or expose an unexpected coupling; do not weaken it if it passes in the RED commit.
+Expected: taxonomy tests fail because `ProbeOutcome` is not implemented. Passive-neutral test may already pass; keep it as a preservation test rather than weakening it to force RED.
 
 - [ ] **Step 4: Commit tests**
 
@@ -301,7 +303,7 @@ case grouphealth.ProbeOutcomeCredentialRejected,
      grouphealth.ProbeOutcomeRateLimited,
      grouphealth.ProbeOutcomeRejected,
      grouphealth.ProbeOutcomeInconclusive:
-    // log bounded diagnostic context and return without disabling
+    // bounded diagnostic log and return without disabling
 }
 ```
 
@@ -339,7 +341,9 @@ git commit -m "fix(por): ignore inconclusive active probes"
 - Modify: `web/src/components/modules/group/health.tsx`
 - Modify: `web/src/components/modules/group/Card.tsx`
 - Modify: `web/src/api/endpoints/group-health.ts`
-- Modify: Group locale messages.
+- Modify: `web/public/locale/en.json`
+- Modify: `web/public/locale/zh_hans.json`
+- Modify: `web/public/locale/zh_hant.json`
 
 **Interfaces:**
 - Replace the card body component with a compact action interface:
@@ -363,7 +367,7 @@ assert.match(health, /useGroupHealth\(/);
 assert.doesNotMatch(health, /runFull|probeMode:\s*['"]full['"]/);
 ```
 
-The test should also verify provider-warning translation keys are used rather than a hard-coded English warning.
+The test should also verify provider-warning translation keys are used rather than hard-coded English warning text.
 
 - [ ] **Step 2: Verify RED**
 
@@ -383,7 +387,7 @@ const [open, setOpen] = useState(false);
 const { data: view } = useGroupHealth(open ? groupId : null);
 ```
 
-The compact trigger is always available only when the existing `group_health_enabled` setting is enabled. It should not start a 30-second list poll for every card.
+The compact trigger is available only when the existing `group_health_enabled` setting is enabled. It must not start a 30-second list poll for every card.
 
 Place the trigger in the Group-card compact action row with the same footprint as Copy/Preset/Protocol/Edit.
 
@@ -407,7 +411,7 @@ Do not expose `Run Full` in the card/dialog primary UI. Keep the backend/API `fu
 
 - [ ] **Step 5: Keep historical attempt details read-only**
 
-The existing attempt list/status/HTTP/duration/error display can remain inside the on-demand dialog. Rename headings from ambiguous “health” wording to diagnostic/probe wording in all three locales.
+The existing attempt list/status/HTTP/duration/error display can remain inside the on-demand dialog. Rename headings from ambiguous “health” wording to diagnostic/probe wording in all three locale files.
 
 - [ ] **Step 6: Run frontend tests**
 
@@ -421,11 +425,15 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add web/src/components/modules/group/health.tsx web/src/components/modules/group/Card.tsx web/src/api/endpoints/group-health.ts web/tests/group-diagnostic-ui.test.mjs public/locales
+git add web/src/components/modules/group/health.tsx \
+  web/src/components/modules/group/Card.tsx \
+  web/src/api/endpoints/group-health.ts \
+  web/tests/group-diagnostic-ui.test.mjs \
+  web/public/locale/en.json \
+  web/public/locale/zh_hans.json \
+  web/public/locale/zh_hant.json
 git commit -m "refactor(group): make health probes on-demand diagnostics"
 ```
-
-If the authoritative locale path differs on the implementation baseline, modify the existing locale sources rather than creating a parallel catalog.
 
 ---
 
