@@ -133,7 +133,7 @@ export function useGroupHealthList() {
     });
 }
 
-export function useGroupHealth(groupId: number | null) {
+export function useGroupHealth(groupId: number | null | undefined) {
     const { enabled } = useGroupHealthEnabled();
     return useQuery({
         queryKey: ['group-health', 'detail', groupId],
