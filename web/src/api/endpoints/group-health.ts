@@ -115,7 +115,7 @@ function normalizeView(view: Partial<GroupHealthGroupView>): GroupHealthGroupVie
 }
 
 function invalidateGroupHealth(queryClient: ReturnType<typeof useQueryClient>) {
-    queryClient.invalidateQueries({ queryKey: ['group-health', 'list'] });
+    queryClient.invalidateQueries({ queryKey: ['group-health'] });
     queryClient.invalidateQueries({ queryKey: ['groups', 'list'] });
 }
 
