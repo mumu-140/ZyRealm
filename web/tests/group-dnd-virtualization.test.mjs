@@ -14,6 +14,17 @@ test('group member drag uses the supported clone path outside virtualized ancest
     assert.match(itemList, /document\.body/, 'the drag clone must be reparented to document.body');
 });
 
+test('virtualized grid exposes backward-compatible fixed-row options', async () => {
+    const grid = await source('../src/components/common/VirtualizedGrid.tsx');
+
+    assert.match(grid, /measureRows\?: boolean/, 'dynamic measurement must be an opt-out prop');
+    assert.match(grid, /positionMode\?: ['"]top['"] \| ['"]transform['"]/, 'row positioning must expose top/transform modes');
+    assert.match(grid, /measureRows\s*=\s*true/, 'dynamic measurement must remain the default');
+    assert.match(grid, /positionMode\s*=\s*['"]top['"]/, 'top positioning must remain the backward-compatible default');
+    assert.match(grid, /measureRows\s*\?\s*rowVirtualizer\.measureElement\s*:\s*undefined/, 'row measurement refs must be omitted in fixed-row mode');
+    assert.match(grid, /translateY\(\$\{start\}px\)/, 'transform mode must translate rows by their virtual start');
+});
+
 test('group grid opts into a fixed-height transform virtual layout', async () => {
     const groupPage = await source('../src/components/modules/group/index.tsx');
 
