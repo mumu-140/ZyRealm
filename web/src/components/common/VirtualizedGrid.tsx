@@ -1,6 +1,7 @@
 'use client';
 
 import {
+    type CSSProperties,
     type ReactNode,
     useCallback,
     useEffect,
@@ -21,6 +22,7 @@ const BREAKPOINTS = {
 
 type Breakpoint = keyof typeof BREAKPOINTS;
 type ResponsiveColumns = Partial<Record<Breakpoint | 'default', number>>;
+type VirtualRowPositionMode = 'top' | 'transform';
 
 interface VirtualizedGridProps<T> {
     items: T[];
@@ -29,6 +31,8 @@ interface VirtualizedGridProps<T> {
     estimateItemHeight: number;
     gap?: number;
     overscan?: number;
+    measureRows?: boolean;
+    positionMode?: 'top' | 'transform';
     getItemKey: (item: T, index: number) => string | number;
     renderItem: (item: T, index: number) => ReactNode;
     header?: ReactNode;
@@ -51,6 +55,13 @@ function getColumnsForWidth(
     return columns.default ?? 1;
 }
 
+function virtualRowStyle(start: number, mode: VirtualRowPositionMode): CSSProperties {
+    if (mode === 'transform') {
+        return { top: 0, transform: `translateY(${start}px)` };
+    }
+    return { top: `${start}px` };
+}
+
 export function VirtualizedGrid<T>({
     items,
     layout = 'grid',
@@ -58,6 +69,8 @@ export function VirtualizedGrid<T>({
     estimateItemHeight,
     gap = 16,
     overscan = 4,
+    measureRows = true,
+    positionMode = 'top',
     getItemKey,
     renderItem,
     header = null,
@@ -171,6 +184,8 @@ export function VirtualizedGrid<T>({
         onReachEnd();
     }, [onReachEnd, reachEndEnabled, itemRowCount, reachEndOffset, virtualRows, estimateItemHeight, gap]);
 
+    const rowMeasureRef = measureRows ? rowVirtualizer.measureElement : undefined;
+
     return (
         <div className="relative h-full min-h-0 w-full">
             <div
@@ -193,11 +208,9 @@ export function VirtualizedGrid<T>({
                                     <div
                                         key={virtualRow.key}
                                         data-index={virtualRow.index}
-                                        ref={rowVirtualizer.measureElement}
+                                        ref={rowMeasureRef}
                                         className="absolute left-0 w-full"
-                                        style={{
-                                            top: `${virtualRow.start}px`,
-                                        }}
+                                        style={virtualRowStyle(virtualRow.start, positionMode)}
                                     >
                                         {header}
                                     </div>
@@ -211,11 +224,9 @@ export function VirtualizedGrid<T>({
                                     <div
                                         key={virtualRow.key}
                                         data-index={virtualRow.index}
-                                        ref={rowVirtualizer.measureElement}
+                                        ref={rowMeasureRef}
                                         className="absolute left-0 w-full"
-                                        style={{
-                                            top: `${virtualRow.start}px`,
-                                        }}
+                                        style={virtualRowStyle(virtualRow.start, positionMode)}
                                     >
                                         {footer}
                                     </div>
@@ -231,16 +242,9 @@ export function VirtualizedGrid<T>({
                                 <div
                                     key={virtualRow.key}
                                     data-index={virtualRow.index}
-                                    ref={rowVirtualizer.measureElement}
+                                    ref={rowMeasureRef}
                                     className="absolute left-0 w-full"
-                                    style={{
-                                        // Use `top` instead of `transform: translateY` so the row
-                                        // does NOT establish a containing block for fixed-positioned
-                                        // descendants. Otherwise @hello-pangea/dnd's drag clone
-                                        // (position: fixed) gets re-anchored to the row and shifts
-                                        // by the row's viewport left offset.
-                                        top: `${virtualRow.start}px`,
-                                    }}
+                                    style={virtualRowStyle(virtualRow.start, positionMode)}
                                 >
                                     <div
                                         className="grid"
