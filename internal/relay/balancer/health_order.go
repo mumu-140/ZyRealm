@@ -9,6 +9,8 @@ import (
 
 // HealthFirst 健康优先：按渠道-模型健康分档（健康/降级/差），档间健康档先，
 // 同档内轮换（连续请求不盯死同一候选），档间顺序稳定。
+// 共享策略保留 legacy circuit 降档语义，供 Images 等尚未迁移的调用方使用；
+// Core relay 复用同一排序实现，但关闭 legacy circuit 降档。
 //
 // 移植自 omniroute auto 策略的「健康分档 + 同档轮换」A 类本质：
 //   - scoring.ts health 因子（这里退化为成败窗口，无 p95/cost）；
@@ -36,6 +38,10 @@ func healthTierOf(score float64) int {
 }
 
 func (b *HealthFirst) Candidates(items []model.GroupItem) []model.GroupItem {
+	return healthFirstCandidates(items, true, "hf:")
+}
+
+func healthFirstCandidates(items []model.GroupItem, includeLegacyCircuit bool, rotationBucket string) []model.GroupItem {
 	n := len(items)
 	if n == 0 {
 		return nil
@@ -51,9 +57,9 @@ func (b *HealthFirst) Candidates(items []model.GroupItem) []model.GroupItem {
 	for i, item := range items {
 		s := itemHealthScore(item.ChannelID, item.ModelName, now)
 		tier := healthTierOf(s)
-		// 熔断中的候选直接压到差档兜底，但不从候选里删除：
-		// 调用方遍历候选时自行做熔断准入，这里删除会让熔断期完全无路可走。
-		if tier != healthTierBad && PeekItemTripped(item.ChannelID, item.ModelName) {
+		// Legacy callers keep the historical circuit demotion. Core runtime
+		// candidates already passed availability gating, so P4A disables it.
+		if includeLegacyCircuit && tier != healthTierBad && PeekItemTripped(item.ChannelID, item.ModelName) {
 			tier = healthTierBad
 		}
 		es[i] = hfEntry{item: item, score: s, tier: tier}
@@ -73,12 +79,8 @@ func (b *HealthFirst) Candidates(items []model.GroupItem) []model.GroupItem {
 	// 同档内轮换：一次请求只推进一次 rotation，得到的 offset 供全部档位共用。
 	// 每档取 offset % segLen 作为起始下标，使「同档内」的通道在连续请求间轮转
 	// （不盯死最优），档间顺序仍稳定。
-	//
-	// 必须在档循环之外只调一次 nextRotation：早期实现每档各调一次，
-	// 两个多成员档同时存在时各档偏移按同一序列连续推进、互相抵消，
-	// 候选顺序在连续请求间长期冻结（例如两档各 2 个候选时完全不变）。
-	// 计数器按候选集合指纹独立分桶，不与 RoundRobin 或其他分组共用游标。
-	offset := nextRotation("hf:" + itemSetKey(items))
+	// 计数器按用途+候选集合分桶，core 与 legacy 路径不会互相推进游标。
+	offset := nextRotation(rotationBucket + itemSetKey(items))
 	result := make([]model.GroupItem, n)
 	tierStart := 0
 	for k := 0; k < n; {
