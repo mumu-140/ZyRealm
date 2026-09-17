@@ -316,9 +316,6 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 
 	decision := result.Decision
 	manualInterrupt := decision.RuleID == "manual_interrupt"
-	ambiguousCancellation := decision.RuleID == "ambiguous_transport_cancel"
-	budgetExceeded := isRelayAttemptBudgetExceeded(result.Err)
-	failureDomain := decision.Domain
 	explicitContentPolicy := decision.ContentPolicy
 
 	if manualInterrupt {
@@ -355,25 +352,18 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 		h.iterator.SkipProvider(channel.ID)
 	}
 
-	// 健康度上报与熔断上报的口径不同：
-	//   - 熔断只处理「可继续 failover」的失败（Written/ResetConversation 已终止本次请求）；
-	//   - 健康度必须覆盖 Written 与 ResetConversation：上游流中断、要求重建会话都是上游故障证据，
-	//     漏掉它们会让持续吐流失败的渠道-模型永远显示健康。
-	//   - Canceled 是客户端主动断开，与上游健康无关，继续排除。
-	//   - 单次 ambiguous transport cancellation 只做请求内绕开，暂不污染慢速 outlier/circuit；
-	//     它由共享 runtime availability 记录为 SUSPECT 并在短期重复时升级。
-	//   - request-local attempt budget exhaustion is not upstream health evidence.
-	if !result.Success && !result.Canceled && !ambiguousCancellation && !budgetExceeded {
+	if !result.Success {
+		// RoutingDecision is the single policy verdict. Downstream health effects
+		// consume its precomputed scopes/effects and do not reinterpret raw error
+		// text or status to decide whether evidence belongs in these systems.
 		reportOutlierDecision(channel.ID, plan.UpstreamModel(), decision.OutlierScope, result.StatusCode, now)
-	}
-	if !result.Success && !result.Written && !result.Canceled && !ambiguousCancellation && !budgetExceeded &&
-		!result.ResetConversation && failureDomain != failureDomainModelCapability && !explicitContentPolicy {
-		failureKind := circuitFailureKind(h.group.RetryEnabled, result.StatusCode)
+		failureKind := circuitFailureKindForDecision(decision, h.group.RetryEnabled, result.StatusCode)
 		balancer.RecordFailure(channel.ID, key.ID, plan.UpstreamModel(), failureKind)
 		if failureKind == balancer.FailureHard {
 			maybeLearnManagedRoute(ctx, channel.ID, plan.UpstreamModel(), h.inboundType, result.Err)
 		}
 	}
+
 	switch classifyAttemptResult(result) {
 	case attemptActionSuccess:
 		return h.handleSuccessfulAttempt(channel, key, plan, result)
