@@ -21,14 +21,18 @@ func compactAttemptRoutingResult(
 	span *balancer.AttemptSpan,
 ) attemptResult {
 	result := attemptResult{
-		Success:          err == nil,
-		StatusCode:       statusCode,
-		UpstreamStatus:   statusCode,
-		RetryAfter:       retryAfter,
-		Err:              err,
-		UpstreamStarted:  statusCode > 0,
-		DispatchState:    dispatchMaybeSent,
-		traceSpan:        span,
+		Success:         err == nil,
+		StatusCode:      statusCode,
+		UpstreamStatus:  statusCode,
+		RetryAfter:      retryAfter,
+		Err:             err,
+		UpstreamStarted: statusCode > 0,
+		DispatchState:   dispatchMaybeSent,
+		traceSpan:       span,
+	}
+	if err != nil && ctx != nil && ctx.Err() != nil {
+		result.Canceled = true
+		result.Err = ctx.Err()
 	}
 	return withRoutingDecision(ctx, request, channelID, result)
 }
