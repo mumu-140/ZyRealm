@@ -152,7 +152,11 @@ function MemberItem({
                         type="button"
                         onClick={() => {
                             if (clone) return;
-                            showConfirmDelete ? setConfirmDelete(true) : onRemove(member.id);
+                            if (showConfirmDelete) {
+                                setConfirmDelete(true);
+                            } else {
+                                onRemove(member.id);
+                            }
                         }}
                         className="p-1 rounded hover:bg-destructive/10 hover:text-destructive transition-colors"
                         initial={false}
