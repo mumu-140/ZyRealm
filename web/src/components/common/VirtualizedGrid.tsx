@@ -184,8 +184,6 @@ export function VirtualizedGrid<T>({
         onReachEnd();
     }, [onReachEnd, reachEndEnabled, itemRowCount, reachEndOffset, virtualRows, estimateItemHeight, gap]);
 
-    const rowMeasureRef = measureRows ? rowVirtualizer.measureElement : undefined;
-
     return (
         <div className="relative h-full min-h-0 w-full">
             <div
@@ -208,7 +206,7 @@ export function VirtualizedGrid<T>({
                                     <div
                                         key={virtualRow.key}
                                         data-index={virtualRow.index}
-                                        ref={rowMeasureRef}
+                                        ref={measureRows ? rowVirtualizer.measureElement : undefined}
                                         className="absolute left-0 w-full"
                                         style={virtualRowStyle(virtualRow.start, positionMode)}
                                     >
@@ -224,7 +222,7 @@ export function VirtualizedGrid<T>({
                                     <div
                                         key={virtualRow.key}
                                         data-index={virtualRow.index}
-                                        ref={rowMeasureRef}
+                                        ref={measureRows ? rowVirtualizer.measureElement : undefined}
                                         className="absolute left-0 w-full"
                                         style={virtualRowStyle(virtualRow.start, positionMode)}
                                     >
@@ -242,7 +240,7 @@ export function VirtualizedGrid<T>({
                                 <div
                                     key={virtualRow.key}
                                     data-index={virtualRow.index}
-                                    ref={rowMeasureRef}
+                                    ref={measureRows ? rowVirtualizer.measureElement : undefined}
                                     className="absolute left-0 w-full"
                                     style={virtualRowStyle(virtualRow.start, positionMode)}
                                 >
