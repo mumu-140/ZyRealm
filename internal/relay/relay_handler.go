@@ -256,7 +256,7 @@ func (h *relayHandler) processCandidate() bool {
 			usedPlan = result.Plan
 		}
 
-		if classifyRoutingFailure(result) == failureDomainCredential {
+		if result.Decision.Domain == failureDomainCredential {
 			recordCredentialRoutingFailureRevision(channel.ID, key.ID, key.CredentialRevision, result, time.Now())
 			excludedKeyIDs[key.ID] = struct{}{}
 			h.lastErr = result.Err
@@ -364,8 +364,7 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 	//     它由共享 runtime availability 记录为 SUSPECT 并在短期重复时升级。
 	//   - request-local attempt budget exhaustion is not upstream health evidence.
 	if !result.Success && !result.Canceled && !ambiguousCancellation && !budgetExceeded {
-		reportOutlierFailure(channel.ID, plan.UpstreamModel(), result.StatusCode,
-			outlierErrorText(result.Err, result.UpstreamErrorBody), now)
+		reportOutlierDecision(channel.ID, plan.UpstreamModel(), decision.OutlierScope, result.StatusCode, now)
 	}
 	if !result.Success && !result.Written && !result.Canceled && !ambiguousCancellation && !budgetExceeded &&
 		!result.ResetConversation && failureDomain != failureDomainModelCapability && !explicitContentPolicy {
