@@ -29,3 +29,23 @@ func TestCircuitFailureKindPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestCircuitFailureKindForDecisionHonorsCircuitEffect(t *testing.T) {
+	// Raw HTTP 500 would normally be a hard breaker failure. Once unified
+	// routing policy marks the outcome circuit-neutral, downstream circuit code
+	// must not reinterpret the status and create a second policy verdict.
+	neutral := RoutingDecision{Valid: true, CircuitEffect: "none"}
+	if got := circuitFailureKindForDecision(neutral, true, 500); got != balancer.FailureIgnore {
+		t.Fatalf("circuit-neutral decision reclassified HTTP 500 as %v", got)
+	}
+
+	// Existing hard/soft breaker semantics remain unchanged when the decision
+	// explicitly allows circuit evidence.
+	record := RoutingDecision{Valid: true, CircuitEffect: "record_failure"}
+	if got := circuitFailureKindForDecision(record, true, 500); got != balancer.FailureHard {
+		t.Fatalf("record_failure 500 = %v, want hard", got)
+	}
+	if got := circuitFailureKindForDecision(record, true, 503); got != balancer.FailureSoftRateLimit {
+		t.Fatalf("record_failure 503 = %v, want soft rate limit", got)
+	}
+}

@@ -117,3 +117,26 @@ func TestOutlierErrorTextCombinesAndLowercases(t *testing.T) {
 		t.Fatal("空输入应返回空串")
 	}
 }
+
+// TestReportOutlierDecisionHonorsPrecomputedScope locks the Single Decision
+// contract: once routing policy has chosen an outlier scope, downstream effects
+// must not reinterpret status codes or raw error text and arrive at a second
+// health verdict.
+func TestReportOutlierDecisionHonorsPrecomputedScope(t *testing.T) {
+	const ch = 90004
+	outlierwindow.ClearChannel(ch)
+	t.Cleanup(func() { outlierwindow.ClearChannel(ch) })
+	now := time.Now()
+
+	// A raw HTTP 500 would be classified as channel-scoped by the legacy
+	// classifier. The precomputed policy scope must still win.
+	reportOutlierDecision(ch, "m1", scopeIgnore, 500, now)
+	if st := outlierwindow.Evaluate(ch, "m1", now); st.Samples != 0 {
+		t.Fatalf("precomputed scopeIgnore was reclassified: Samples=%d, want 0", st.Samples)
+	}
+
+	reportOutlierDecision(ch, "m1", scopeModel, 500, now.Add(time.Millisecond))
+	if st := outlierwindow.Evaluate(ch, "m1", now.Add(time.Millisecond)); st.Samples != 1 || st.Failures != 1 {
+		t.Fatalf("precomputed scopeModel not applied directly: Samples=%d Failures=%d, want 1/1", st.Samples, st.Failures)
+	}
+}
