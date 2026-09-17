@@ -30,8 +30,6 @@ func nextRotation(bucket string) uint64 {
 
 // Balancer 根据负载均衡模式选择通道
 type Balancer interface {
-	// Candidates 返回按策略排序的候选列表
-	// 调用方在遍历候选列表时自行检查熔断状态
 	Candidates(items []model.GroupItem) []model.GroupItem
 }
 
@@ -93,12 +91,15 @@ func (b *Random) Candidates(items []model.GroupItem) []model.GroupItem {
 }
 
 // Failover 故障转移：Priority 升序 → 未熔断优先 → 健康分降序。
-// 原实现只按 Priority 排序，最高优先级的渠道-模型即使连续失败也永远排第一，
-// 每次请求都要先撞一次坏上游才会降级；加入熔断与健康度作为同优先级内的次级键后，
-// 同一 Priority 内坏项自动后移，Priority 的语义（优先级高的先用）不变。
+// 该共享策略仍保留 legacy circuit 语义，供 Images 等尚未迁移的调用方使用。
+// Core relay 的 runtime-candidate 路径复用同一排序实现，但关闭 legacy circuit 次级键。
 type Failover struct{}
 
 func (b *Failover) Candidates(items []model.GroupItem) []model.GroupItem {
+	return failoverCandidates(items, true)
+}
+
+func failoverCandidates(items []model.GroupItem, includeLegacyCircuit bool) []model.GroupItem {
 	n := len(items)
 	if n == 0 {
 		return nil
@@ -114,14 +115,14 @@ func (b *Failover) Candidates(items []model.GroupItem) []model.GroupItem {
 		es[i] = foEntry{
 			item:    item,
 			score:   itemHealthScore(item.ChannelID, item.ModelName, now),
-			tripped: PeekItemTripped(item.ChannelID, item.ModelName),
+			tripped: includeLegacyCircuit && PeekItemTripped(item.ChannelID, item.ModelName),
 		}
 	}
 	sort.SliceStable(es, func(i, j int) bool {
 		if es[i].item.Priority != es[j].item.Priority {
 			return es[i].item.Priority < es[j].item.Priority
 		}
-		if es[i].tripped != es[j].tripped {
+		if includeLegacyCircuit && es[i].tripped != es[j].tripped {
 			return !es[i].tripped
 		}
 		return es[i].score > es[j].score
@@ -292,10 +293,9 @@ func (b *P2C) Candidates(items []model.GroupItem) []model.GroupItem {
 	return result
 }
 
-// ItemUpstreamModel 返回候选项的上游模型名——健康度与熔断的唯一模型键来源。
-// 写侧（成败上报、熔断上报）与读侧（itemHealthScore、PeekItemTripped、
-// Iterator.SkipCircuitBreak）必须取同一个值，否则写入的键永远读不到。
-// GroupItem.ModelName 为空时（历史数据未配置映射）退回请求模型名。
+// ItemUpstreamModel 返回候选项的上游模型名，作为 runtime health、outlier 统计以及
+// legacy circuit 兼容写入的一致模型键。GroupItem.ModelName 为空时（历史数据未配置映射）
+// 退回请求模型名。
 func ItemUpstreamModel(item model.GroupItem, requestModel string) string {
 	if item.ModelName != "" {
 		return item.ModelName

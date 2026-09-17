@@ -46,7 +46,11 @@ func selectFairChannelCredential(
 			}
 			continue
 		}
-		if iterator != nil && iterator.SkipCircuitBreak(channel.ID, key.ID, channel.Name) {
+		// P4A migration seam: revision-aware credentials must not inherit a stale
+		// breaker entry created for an older secret under the same key ID. Existing
+		// revision-1 credentials keep the legacy gate until the remaining circuit
+		// consumers (especially Images) are migrated in later P4 gates.
+		if key.CredentialRevision <= 1 && iterator != nil && iterator.SkipCircuitBreak(channel.ID, key.ID, channel.Name) {
 			options.ExcludeKeyIDs[key.ID] = struct{}{}
 			continue
 		}

@@ -53,9 +53,10 @@ const (
 )
 
 // RoutingDecision is the single policy result consumed by retry/failover,
-// runtime availability, outlier health, circuit gating, and attempt tracing.
-// Marker/status parsing remains behind the compatibility classifiers, but one
-// wire result is converted into this object exactly once on the relay path.
+// runtime availability, outlier health, legacy circuit compatibility writes,
+// and attempt tracing. Marker/status parsing remains behind the compatibility
+// classifiers, but one wire result is converted into this object exactly once
+// on the relay path.
 type RoutingDecision struct {
 	Valid               bool
 	Domain              routingFailureDomain

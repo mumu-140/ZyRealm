@@ -22,6 +22,21 @@ func boundedRuntimeDecisionDetail(value string) string {
 	return value
 }
 
+// runtimePolicyCandidates is the P4A migration seam for the core relay. The
+// shared strategies keep legacy circuit semantics for unmigrated callers such
+// as Images, while core candidates reuse the same ordering implementations with
+// the legacy circuit contribution disabled.
+func runtimePolicyCandidates(mode model.GroupMode, items []model.GroupItem) []model.GroupItem {
+	switch mode {
+	case model.GroupModeFailover:
+		return failoverCandidates(items, false)
+	case model.GroupModeHealthFirst:
+		return healthFirstCandidates(items, false, "hf-runtime:")
+	default:
+		return GetBalancer(mode).Candidates(items)
+	}
+}
+
 // runtimeOrderedCandidatesWithDecisions applies the existing runtime
 // eligibility policy and returns observational metadata captured at the same
 // decision point. The decision slice is request-local diagnostics only: it does
@@ -68,10 +83,9 @@ func runtimeOrderedCandidatesWithDecisions(group model.Group, requestModel strin
 		}
 	}
 
-	b := GetBalancer(group.Mode)
 	ordered := make([]model.GroupItem, 0, len(primary)+len(suspect))
-	ordered = append(ordered, b.Candidates(primary)...)
-	ordered = append(ordered, b.Candidates(suspect)...)
+	ordered = append(ordered, runtimePolicyCandidates(group.Mode, primary)...)
+	ordered = append(ordered, runtimePolicyCandidates(group.Mode, suspect)...)
 	return runtimeCandidateOrder{Candidates: ordered, Decisions: decisions}
 }
 
