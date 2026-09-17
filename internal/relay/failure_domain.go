@@ -33,13 +33,17 @@ var credentialFailureMarkers = []string{
 	"额度不足",
 }
 
+var modelNotPricedMarkers = []string{
+	"model is not priced",
+	"model not priced",
+	"model_not_priced",
+}
+
 var modelCapabilityMarkers = []string{
 	"model_not_support",
 	"model not supported",
 	"model is not supported",
 	"is not supported",
-	"effort_not_supported",
-	"does not support reasoning effort",
 	"unsupported parameter(s)",
 	"unsupported parameter:",
 }
@@ -72,6 +76,22 @@ var modelCapacityRoutingMarkers = []string{
 var credentialConcurrencyMarkers = []string{
 	"concurrency limit exceeded for account",
 	"account concurrency limit",
+}
+
+func isModelNotPricedFailure(text string) bool {
+	return containsAny(strings.ToLower(text), modelNotPricedMarkers)
+}
+
+func isReasoningEffortCapabilityMismatch(text string) bool {
+	text = strings.ToLower(text)
+	if containsAny(text, []string{
+		"effort_not_supported",
+		"does not support reasoning effort",
+		"unsupported reasoning effort",
+	}) {
+		return true
+	}
+	return strings.Contains(text, "reasoning effort") && strings.Contains(text, "not supported")
 }
 
 // isAnthropicPayloadSchemaMismatch recognizes a narrow class of pre-execution
@@ -120,7 +140,7 @@ func classifyRoutingFailure(result attemptResult) routingFailureDomain {
 	// Capability markers deliberately precede generic client-error markers.
 	// Some real relays wrap a capability error in an auth/request-shaped HTTP
 	// envelope, and strings such as "unsupported parameter" overlap both sets.
-	if containsAny(text, modelCapabilityMarkers) {
+	if isModelNotPricedFailure(text) || isReasoningEffortCapabilityMismatch(text) || containsAny(text, modelCapabilityMarkers) {
 		return failureDomainModelCapability
 	}
 

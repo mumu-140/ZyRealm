@@ -231,9 +231,14 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		decision.CircuitEffect = "none"
 	case failureDomainModelCapability:
 		decision.FailureScope = routingScopeProviderModel
-		decision.Directive = routingDirectiveProtocolOrProvider
 		decision.OutlierScope = scopeIgnore
 		decision.CircuitEffect = "none"
+		if decision.RuleID == "model_not_priced" || decision.RuleID == "reasoning_effort_unsupported" {
+			decision.Directive = routingDirectiveNextProvider
+			decision.SkipProvider = true
+		} else {
+			decision.Directive = routingDirectiveProtocolOrProvider
+		}
 	case failureDomainModelCapacity:
 		decision.FailureScope = routingScopeProviderModel
 		decision.RuntimeEffect = routingRuntimeModelCooldown
@@ -288,6 +293,12 @@ func routingRuleID(domain routingFailureDomain, status int, text string) string 
 		}
 		return "credential_auth_quota"
 	case failureDomainModelCapability:
+		if isModelNotPricedFailure(text) {
+			return "model_not_priced"
+		}
+		if isReasoningEffortCapabilityMismatch(text) {
+			return "reasoning_effort_unsupported"
+		}
 		return "model_capability"
 	case failureDomainModelCapacity:
 		return "model_capacity"
