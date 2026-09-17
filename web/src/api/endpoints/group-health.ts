@@ -142,7 +142,7 @@ export function useGroupHealth(groupId: number | null) {
         enabled: enabled && groupId != null && groupId > 0,
         refetchInterval: (query) => {
             const data = query.state.data as GroupHealthGroupView | undefined;
-            return data?.latest?.status === 'running' ? 5000 : 30000;
+            return data?.latest?.status === 'running' ? 5000 : false;
         },
     });
 }
