@@ -24,8 +24,8 @@ import (
 )
 
 type p4c1bRoute struct {
-	channel      *model.Channel
-	group        *model.Group
+	channel       *model.Channel
+	group         *model.Group
 	upstreamModel string
 }
 
@@ -74,6 +74,12 @@ func writeP4C1BCompactSuccess(w http.ResponseWriter) {
 	_, _ = io.WriteString(w, `{"id":"cmp_1","object":"response.compaction","created_at":1,"output":[]}`)
 }
 
+func writeP4C1BProviderUnavailable(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_, _ = io.WriteString(w, `{"error":{"message":"upstream service temporarily unavailable"}}`)
+}
+
 func newP4C1BWSRoute(t *testing.T, ctx context.Context, upstreamURL, suffix string, keys []model.ChannelKey) p4c1bRoute {
 	t.Helper()
 	upstreamModel := "p4c1b-ws-upstream-" + suffix
@@ -101,6 +107,12 @@ func newP4C1BWSRoute(t *testing.T, ctx context.Context, upstreamURL, suffix stri
 	return p4c1bRoute{channel: channel, group: group, upstreamModel: upstreamModel}
 }
 
+// These P4C1b WebSocket routing tests deliberately use a non-2xx upstream
+// response. A real processWSResponseCreate round always forces stream=true; a
+// direct runWSRelay success fixture without that wrapper would exercise the
+// ordinary Gin non-stream renderer with req.c == nil, which is not the live WS
+// path. A 503 still proves credential/candidate admission and produces the same
+// RoutingDecision health evidence without testing an artificial transport mode.
 func newP4C1BWSRelayRequest(t *testing.T, ctx context.Context, route p4c1bRoute, apiKeyID int) (*relayRequest, *model.Group) {
 	t.Helper()
 	clientConn, serverConn := newTestWSConnPair(t)
@@ -134,11 +146,6 @@ func newP4C1BWSRelayRequest(t *testing.T, ctx context.Context, route p4c1bRoute,
 		t.Fatalf("newWSRelayRequest failed: %v", err)
 	}
 	return req, group
-}
-
-func writeP4C1BChatSuccess(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = io.WriteString(w, `{"id":"chatcmpl_1","object":"chat.completion","created":1,"model":"p4c1b","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
 }
 
 func TestP4C1BCompactSkipsCredentialInAvailabilityCooldown(t *testing.T) {
@@ -177,9 +184,7 @@ func TestP4C1BCompactProviderFailureCreatesRuntimeCooldown(t *testing.T) {
 	var hits atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = io.WriteString(w, `{"error":{"message":"upstream service temporarily unavailable"}}`)
+		writeP4C1BProviderUnavailable(w)
 	}))
 	defer server.Close()
 
@@ -236,7 +241,7 @@ func TestP4C1BWSRelaySkipsCredentialInAvailabilityCooldown(t *testing.T) {
 	var gotAuth atomic.Value
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth.Store(r.Header.Get("Authorization"))
-		writeP4C1BChatSuccess(w)
+		writeP4C1BProviderUnavailable(w)
 	}))
 	defer server.Close()
 
@@ -248,10 +253,7 @@ func TestP4C1BWSRelaySkipsCredentialInAvailabilityCooldown(t *testing.T) {
 	availability.RecordCredentialFailureRevision(route.channel.ID, first.ID, first.CredentialRevision, "test", time.Now())
 
 	req, group := newP4C1BWSRelayRequest(t, ctx, route, 4201)
-	result := runWSRelay(ctx, req, group)
-	if !result.Success {
-		t.Fatalf("ws relay failed: %+v", result)
-	}
+	_ = runWSRelay(ctx, req, group)
 	if auth, _ := gotAuth.Load().(string); auth != "Bearer ws-key-two" {
 		t.Fatalf("Authorization = %q, want second available credential", auth)
 	}
@@ -263,9 +265,7 @@ func TestP4C1BWSRelayProviderFailureCreatesRuntimeCooldown(t *testing.T) {
 	ctx := setupRelayTestDB(t)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = io.WriteString(w, `{"error":{"message":"upstream service temporarily unavailable"}}`)
+		writeP4C1BProviderUnavailable(w)
 	}))
 	defer server.Close()
 
@@ -291,7 +291,7 @@ func TestP4C1BWSRelayIgnoresLegacyCircuitForCredentialAdmission(t *testing.T) {
 	var hits atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
-		writeP4C1BChatSuccess(w)
+		writeP4C1BProviderUnavailable(w)
 	}))
 	defer server.Close()
 
@@ -303,12 +303,9 @@ func TestP4C1BWSRelayIgnoresLegacyCircuitForCredentialAdmission(t *testing.T) {
 	}
 
 	req, group := newP4C1BWSRelayRequest(t, ctx, route, 4203)
-	result := runWSRelay(ctx, req, group)
-	if !result.Success {
-		t.Fatalf("ws relay failed: %+v", result)
-	}
+	_ = runWSRelay(ctx, req, group)
 	if got := hits.Load(); got != 1 {
-		t.Fatalf("upstream hits = %d, want 1", got)
+		t.Fatalf("upstream hits = %d, want 1; live WS admission must ignore legacy circuit", got)
 	}
 }
 
