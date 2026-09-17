@@ -23,6 +23,7 @@ func TestHandlerCredentialBudgetFallsThroughToNextProvider(t *testing.T) {
 	var firstKeyHits atomic.Int32
 	var secondKeyHits atomic.Int32
 	var thirdKeyHits atomic.Int32
+	var fourthKeyHits atomic.Int32
 	firstProvider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Header.Get("Authorization") {
 		case "Bearer bad-key-1":
@@ -31,6 +32,8 @@ func TestHandlerCredentialBudgetFallsThroughToNextProvider(t *testing.T) {
 			secondKeyHits.Add(1)
 		case "Bearer bad-key-3":
 			thirdKeyHits.Add(1)
+		case "Bearer bad-key-4":
+			fourthKeyHits.Add(1)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
@@ -56,6 +59,7 @@ func TestHandlerCredentialBudgetFallsThroughToNextProvider(t *testing.T) {
 			{Enabled: true, ChannelKey: "bad-key-1", TotalCost: 0},
 			{Enabled: true, ChannelKey: "bad-key-2", TotalCost: 1},
 			{Enabled: true, ChannelKey: "bad-key-3", TotalCost: 2},
+			{Enabled: true, ChannelKey: "bad-key-4", TotalCost: 3},
 		},
 	}
 	if err := op.ChannelCreate(firstChannel, ctx); err != nil {
@@ -97,24 +101,23 @@ func TestHandlerCredentialBudgetFallsThroughToNextProvider(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected request to recover through second provider, got %d: %s", recorder.Code, recorder.Body.String())
 	}
-	if firstKeyHits.Load() != 1 || secondKeyHits.Load() != 1 {
-		t.Fatalf("expected exactly two credential attempts on first provider, got key1=%d key2=%d", firstKeyHits.Load(), secondKeyHits.Load())
+	if firstKeyHits.Load() != 1 || secondKeyHits.Load() != 1 || thirdKeyHits.Load() != 1 {
+		t.Fatalf("expected exactly three credential attempts on first provider, got key1=%d key2=%d key3=%d", firstKeyHits.Load(), secondKeyHits.Load(), thirdKeyHits.Load())
 	}
-	if thirdKeyHits.Load() != 0 {
-		t.Fatalf("expected third key to remain untouched after credential budget, got %d hits", thirdKeyHits.Load())
+	if fourthKeyHits.Load() != 0 {
+		t.Fatalf("expected fourth key to remain untouched after credential budget, got %d hits", fourthKeyHits.Load())
 	}
 	if secondProviderHits.Load() != 1 {
 		t.Fatalf("expected one attempt on fallback provider, got %d", secondProviderHits.Load())
 	}
 
-	if availability.CredentialAvailable(firstChannel.ID, firstChannel.Keys[0].ID, time.Now()) {
-		t.Fatalf("expected first attempted key to enter cooldown")
+	for i := 0; i < 3; i++ {
+		if availability.CredentialAvailable(firstChannel.ID, firstChannel.Keys[i].ID, time.Now()) {
+			t.Fatalf("expected attempted key %d to enter cooldown", i+1)
+		}
 	}
-	if availability.CredentialAvailable(firstChannel.ID, firstChannel.Keys[1].ID, time.Now()) {
-		t.Fatalf("expected second attempted key to enter cooldown")
-	}
-	if !availability.CredentialAvailable(firstChannel.ID, firstChannel.Keys[2].ID, time.Now()) {
-		t.Fatalf("expected untouched third key to remain available")
+	if !availability.CredentialAvailable(firstChannel.ID, firstChannel.Keys[3].ID, time.Now()) {
+		t.Fatalf("expected untouched fourth key to remain available")
 	}
 	if state := availability.CandidateState(firstChannel.ID, "credential-budget-model", time.Now()); state != availability.StateAvailable {
 		t.Fatalf("expected credential failures not to degrade first provider/model runtime state, got %v", state)
