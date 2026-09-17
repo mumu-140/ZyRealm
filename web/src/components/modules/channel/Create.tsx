@@ -9,11 +9,13 @@ import { useCreateChannel, ChannelType, AutoGroupType } from '@/api/endpoints/ch
 import { useTranslations } from 'next-intl';
 import { toast } from '@/components/common/Toast';
 import { ChannelForm, type ChannelFormData } from './Form';
+import { ProviderPresetPicker } from './ProviderPresetPicker';
+import { KeyBulkImport } from './KeyBulkImport';
+import { getProviderPreset, type ProviderPresetID } from './provider-presets';
+import { mergeCredentialKeys, type ImportedCredentialKey } from './key-import';
 
-export function CreateDialogContent() {
-    const { setIsOpen } = useMorphingDialog();
-    const createChannel = useCreateChannel();
-    const [formData, setFormData] = useState<ChannelFormData>({
+function createDefaultFormData(): ChannelFormData {
+    return {
         name: '',
         type: ChannelType.OpenAIChat,
         base_urls: [{ url: '', delay: 0 }],
@@ -31,9 +33,37 @@ export function CreateDialogContent() {
         max_concurrency: 3,
         max_rpm: 0,
         match_regex: '',
-    });
+    };
+}
+
+export function CreateDialogContent() {
+    const { setIsOpen } = useMorphingDialog();
+    const createChannel = useCreateChannel();
+    const [formData, setFormData] = useState<ChannelFormData>(createDefaultFormData);
+    const [selectedPreset, setSelectedPreset] = useState<ProviderPresetID>();
     const t = useTranslations('channel.create');
     const tProxy = useTranslations('proxyPool');
+
+    const handlePresetSelect = (id: ProviderPresetID) => {
+        const preset = getProviderPreset(id);
+        setSelectedPreset(id);
+        setFormData((current) => ({
+            ...current,
+            name: preset.name,
+            type: preset.type,
+            base_urls: [{ url: preset.baseUrl, delay: 0 }],
+            keys: [{ enabled: true, channel_key: '', remark: '' }],
+            model: '',
+            custom_model: '',
+        }));
+    };
+
+    const handleBulkKeyImport = (keys: ImportedCredentialKey[]) => {
+        setFormData((current) => ({
+            ...current,
+            keys: mergeCredentialKeys(current.keys, keys),
+        }));
+    };
 
     const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -75,29 +105,14 @@ export function CreateDialogContent() {
             },
             {
                 onSuccess: () => {
-                    setFormData({
-                        name: '',
-                        type: ChannelType.OpenAIChat,
-                        base_urls: [{ url: '', delay: 0 }],
-                        custom_header: [],
-                        ws_mode: 'inherit',
-                        proxy_mode: 'direct',
-                        proxy_config_id: null,
-                        param_override: '',
-                        keys: [{ enabled: true, channel_key: '', remark: '' }],
-                        model: '',
-                        custom_model: '',
-                        auto_sync: false,
-                        auto_group: AutoGroupType.None,
-                        enabled: true,
-                        max_concurrency: 3,
-                        max_rpm: 0,
-                        match_regex: '',
-                    });
+                    setFormData(createDefaultFormData());
+                    setSelectedPreset(undefined);
                     setIsOpen(false);
                 }
             });
     };
+
+    const credentialCount = formData.keys.filter((key) => key.channel_key.trim()).length;
 
     return (
         <div className="w-screen max-w-full md:max-w-xl h-full min-h-0 flex flex-col">
@@ -115,15 +130,23 @@ export function CreateDialogContent() {
                 </header>
             </MorphingDialogTitle>
             <MorphingDialogDescription disableLayoutAnimation className="flex-1 min-h-0 overflow-auto">
-                <ChannelForm
-                    formData={formData}
-                    onFormDataChange={setFormData}
-                    onSubmit={handleSubmit}
-                    isPending={createChannel.isPending}
-                    submitText={t('submit')}
-                    pendingText={t('submitting')}
-                    idPrefix="new-channel"
-                />
+                <div className="space-y-4">
+                    <ProviderPresetPicker value={selectedPreset} onSelect={handlePresetSelect} />
+                    <KeyBulkImport
+                        credentialCount={credentialCount}
+                        maxConcurrency={formData.max_concurrency}
+                        onImport={handleBulkKeyImport}
+                    />
+                    <ChannelForm
+                        formData={formData}
+                        onFormDataChange={setFormData}
+                        onSubmit={handleSubmit}
+                        isPending={createChannel.isPending}
+                        submitText={t('submit')}
+                        pendingText={t('submitting')}
+                        idPrefix="new-channel"
+                    />
+                </div>
             </MorphingDialogDescription>
         </div>
     );

@@ -33,6 +33,30 @@ func TestCredentialFairSelectionIsProviderLocalAndEven(t *testing.T) {
 	}
 }
 
+func TestCredentialFairSelectionBalancesHundredKeys(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+	keys := make([]dbmodel.ChannelKey, 0, 100)
+	for id := 1; id <= 100; id++ {
+		keys = append(keys, fairTestKey(id, 1))
+	}
+
+	counts := make(map[int]int, len(keys))
+	for range 1000 {
+		selected := SelectCredentialFair(91, keys, 0)
+		if selected.ID == 0 {
+			t.Fatalf("fair selector returned no credential")
+		}
+		counts[selected.ID]++
+	}
+
+	for id := 1; id <= 100; id++ {
+		if counts[id] != 10 {
+			t.Fatalf("100-key distribution is not balanced: key=%d count=%d, want 10", id, counts[id])
+		}
+	}
+}
+
 func TestCredentialFairNewMemberUsesCurrentWatermark(t *testing.T) {
 	Reset()
 	t.Cleanup(Reset)
