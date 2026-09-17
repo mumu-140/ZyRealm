@@ -85,7 +85,6 @@ export type {
     GroupCompressConfig,
 } from '@/components/modules/group/groupCompressConfig';
 
-
 /**
  * 分组信息
  */
@@ -193,6 +192,11 @@ export interface GroupUpdateRequest {
     items_to_delete?: number[];              // 删除的 item IDs
 }
 
+export interface GroupAutoAddResponse {
+    matched: number;
+    added: number;
+}
+
 export interface GroupAutoGroupSource {
     channel_id: number;
     channel_name: string;
@@ -234,13 +238,13 @@ export interface GroupAutoGroupRunRequest {
 
 /**
  * 获取分组列表 Hook
- * 
+ *
  * @example
  * const { data: groups, isLoading, error } = useGroupList();
- * 
+ *
  * if (isLoading) return <Loading />;
  * if (error) return <Error message={error.message} />;
- * 
+ *
  * groups?.forEach(group => console.log(group.name, group.items));
  */
 export function useGroupList() {
@@ -255,10 +259,10 @@ export function useGroupList() {
 
 /**
  * 创建分组 Hook
- * 
+ *
  * @example
  * const createGroup = useCreateGroup();
- * 
+ *
  * createGroup.mutate({
  *   name: 'my-group',
  *   items: [
@@ -285,10 +289,10 @@ export function useCreateGroup() {
 
 /**
  * 更新分组 Hook - 仅发送变更的数据
- * 
+ *
  * @example
  * const updateGroup = useUpdateGroup();
- * 
+ *
  * updateGroup.mutate({
  *   id: 1,
  *   name: 'updated-group',  // 可选，仅在名称变更时发送
@@ -383,10 +387,10 @@ export function useUpdateGroup() {
 
 /**
  * 删除分组 Hook
- * 
+ *
  * @example
  * const deleteGroup = useDeleteGroup();
- * 
+ *
  * deleteGroup.mutate(1); // 删除 ID 为 1 的分组
  */
 export function useDeleteGroup() {
@@ -402,6 +406,22 @@ export function useDeleteGroup() {
         },
         onError: (error) => {
             logger.error('分组删除失败:', error);
+        },
+    });
+}
+
+export function useGroupAutoAdd() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: async (id: number) =>
+            apiClient.post<GroupAutoAddResponse>(`/api/v1/group/${id}/auto-add`, {}),
+        onSuccess: (data) => {
+            logger.log('分组自动添加完成:', data);
+            queryClient.invalidateQueries({ queryKey: ['groups', 'list'] });
+        },
+        onError: (error) => {
+            logger.error('分组自动添加失败:', error);
         },
     });
 }
@@ -455,33 +475,6 @@ export function useRunGroupAutoGroup() {
         },
     });
 }
-
-/**
- * 自动添加分组 item Hook
- *
- * 后端路由: POST /api/v1/group/auto-add-item
- * Body: { id: number }
- *
- * @example
- * const autoAdd = useAutoAddGroupItem();
- * autoAdd.mutate(1); // 为 groupId=1 自动添加匹配的 items
- */
-// export function useAutoAddGroupItem() {
-//     const queryClient = useQueryClient();
-
-//     return useMutation({
-//         mutationFn: async (groupId: number) => {
-//             return apiClient.post<null>(`/api/v1/group/auto-add-item`, { id: groupId });
-//         },
-//         onSuccess: () => {
-//             logger.log('自动添加分组 item 成功');
-//             queryClient.invalidateQueries({ queryKey: ['groups', 'list'] });
-//         },
-//         onError: (error) => {
-//             logger.error('自动添加分组 item 失败:', error);
-//         },
-//     });
-// }
 
 /**
  * 获取某个分组的预设列表
@@ -610,4 +603,3 @@ export function useToggleGroupPin() {
         onError: (error) => logger.error('置顶切换失败:', error),
     });
 }
-

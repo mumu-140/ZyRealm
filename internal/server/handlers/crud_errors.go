@@ -25,11 +25,12 @@ const (
 	codeChannelDeleteFailed      = "channel.delete_failed"
 	codeChannelFetchModelsFailed = "channel.fetch_models_failed"
 
-	codeGroupNotFound     = "group.not_found"
-	codeGroupCreateFailed = "group.create_failed"
-	codeGroupUpdateFailed = "group.update_failed"
-	codeGroupDeleteFailed = "group.delete_failed"
-	codeGroupPinFailed    = "group.pin_failed"
+	codeGroupNotFound      = "group.not_found"
+	codeGroupCreateFailed  = "group.create_failed"
+	codeGroupUpdateFailed  = "group.update_failed"
+	codeGroupDeleteFailed  = "group.delete_failed"
+	codeGroupPinFailed     = "group.pin_failed"
+	codeGroupAutoAddFailed = "group.auto_add_failed"
 
 	codeGroupPresetListFailed        = "group.preset.list_failed"
 	codeGroupPresetCreateFailed      = "group.preset.create_failed"

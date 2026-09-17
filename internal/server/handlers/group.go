@@ -31,6 +31,10 @@ func init() {
 				Handle(updateGroup),
 		).
 		AddRoute(
+			router.NewRoute("/:id/auto-add", http.MethodPost).
+				Handle(autoAddGroup),
+		).
+		AddRoute(
 			router.NewRoute("/delete/:id", http.MethodDelete).
 				Handle(deleteGroup),
 		)
@@ -84,6 +88,20 @@ func updateGroup(c *gin.Context) {
 		return
 	}
 	resp.Success(c, group)
+}
+
+func autoAddGroup(c *gin.Context) {
+	idNum, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		resp.InvalidParam(c)
+		return
+	}
+	result, err := op.GroupAutoAdd(idNum, c.Request.Context())
+	if err != nil {
+		resp.ErrorWithAppError(c, http.StatusInternalServerError, groupError(codeGroupAutoAddFailed, "group auto add failed", err))
+		return
+	}
+	resp.Success(c, result)
 }
 
 func deleteGroup(c *gin.Context) {
