@@ -28,9 +28,12 @@ func recordRuntimeAvailabilityEvidence(
 	case routingRuntimeModelSuspect:
 		availability.RecordModelSuspect(channelID, upstreamModel, "ambiguous_transport_cancel", now)
 	case routingRuntimeModelCooldown:
-		if result.FirstTokenTimeout {
+		switch {
+		case result.FirstTokenTimeout:
 			availability.RecordModelFailure(channelID, upstreamModel, "first_token_timeout", now)
-		} else {
+		case decision.RuleID == "committed_stream_failure":
+			availability.RecordModelFailure(channelID, upstreamModel, "committed_stream_failure", now)
+		default:
 			availability.EnsureModelFailureWithRetryAfter(channelID, upstreamModel, "model_capacity", now, result.RetryAfter)
 		}
 	case routingRuntimeProviderCooldown:
