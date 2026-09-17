@@ -148,19 +148,13 @@ The current backend does not expose that route. Source history inspected in this
 
 Therefore the new card quick action should be designed from current Group semantics rather than uncommenting dead client code.
 
-### Existing backend primitive should be reused
-
-`internal/op/group.go` already provides `GroupItemBatchAdd(...)`, which:
-
-- de-duplicates the request;
-- appends after the current maximum priority;
-- uses the existing `(group_id, channel_id, model_name)` conflict boundary;
-- refreshes Group cache;
-- resets affected balancer state.
+### Existing backend pieces are reusable, but persistence must stay on `GroupUpdate`
 
 `internal/op/channel.go` already provides `ChannelLLMList(ctx)` as the authoritative channel-model inventory.
 
-The missing piece is therefore a thin server-side **resolve matches for this persisted Group** operation, not a second batch-write implementation.
+`internal/op/group.go` also contains `GroupItemBatchAdd(...)`, which demonstrates existing duplicate/priority/cache semantics. However, it is **not** the correct final persistence entry point for this quick action because `GroupUpdate()` additionally executes `syncActivePresetTx`, preserving the current live-binding invariant between a Group and its active preset.
+
+The missing piece is therefore a thin server-side **resolve matches for this persisted Group** operation followed by `GroupUpdate(ItemsToAdd=...)`, not a second item-write path.
 
 ### Slice B decision
 
@@ -171,7 +165,8 @@ POST /api/v1/group/:id/auto-add
   -> load Group
   -> resolve matches using persisted group.name / group.match_regex
   -> subtract existing items
-  -> GroupItemBatchAdd(...)
+  -> GroupUpdate(items_to_add=...)
+  -> preserve active preset live binding
   -> return updated Group + matched/added/already-present counts
 ```
 
