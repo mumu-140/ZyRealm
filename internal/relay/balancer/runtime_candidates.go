@@ -22,16 +22,14 @@ func boundedRuntimeDecisionDetail(value string) string {
 	return value
 }
 
-// runtimePolicyCandidates is the P4A migration seam for the core relay. The
-// shared strategies keep legacy circuit semantics for unmigrated callers such
-// as Images, while core candidates reuse the same ordering implementations with
-// the legacy circuit contribution disabled.
+// runtimePolicyCandidates applies strategy ordering after runtime eligibility
+// has already been decided by availability. HealthFirst keeps a dedicated
+// rotation bucket so runtime requests do not share its cursor with direct
+// strategy callers; no strategy contributes an additional admission authority.
 func runtimePolicyCandidates(mode model.GroupMode, items []model.GroupItem) []model.GroupItem {
 	switch mode {
-	case model.GroupModeFailover:
-		return failoverCandidates(items, false)
 	case model.GroupModeHealthFirst:
-		return healthFirstCandidates(items, false, "hf-runtime:")
+		return healthFirstCandidates(items, "hf-runtime:")
 	default:
 		return GetBalancer(mode).Candidates(items)
 	}
@@ -53,12 +51,12 @@ func runtimeOrderedCandidatesWithDecisions(group model.Group, requestModel strin
 		switch info.State {
 		case availability.StateCooldown:
 			event := model.RoutingDecisionEvent{
-				Stage:       model.DecisionStageCandidate,
-				Outcome:     model.DecisionOutcomeRejected,
-				Reason:      model.DecisionReasonRuntimeCooldown,
-				ChannelID:   item.ChannelID,
-				ModelName:   upstreamModel,
-				Detail:      boundedRuntimeDecisionDetail(info.Reason),
+				Stage:     model.DecisionStageCandidate,
+				Outcome:   model.DecisionOutcomeRejected,
+				Reason:    model.DecisionReasonRuntimeCooldown,
+				ChannelID: item.ChannelID,
+				ModelName: upstreamModel,
+				Detail:    boundedRuntimeDecisionDetail(info.Reason),
 			}
 			if !info.CooldownUntil.IsZero() {
 				event.ExpiresAt = info.CooldownUntil.Unix()
@@ -67,12 +65,12 @@ func runtimeOrderedCandidatesWithDecisions(group model.Group, requestModel strin
 			continue
 		case availability.StateSuspect:
 			decisions = append(decisions, model.RoutingDecisionEvent{
-				Stage:       model.DecisionStageCandidate,
-				Outcome:     model.DecisionOutcomeEligible,
-				Reason:      model.DecisionReasonRuntimeSuspect,
-				ChannelID:   item.ChannelID,
-				ModelName:   upstreamModel,
-				Detail:      boundedRuntimeDecisionDetail(info.Reason),
+				Stage:     model.DecisionStageCandidate,
+				Outcome:   model.DecisionOutcomeEligible,
+				Reason:    model.DecisionReasonRuntimeSuspect,
+				ChannelID: item.ChannelID,
+				ModelName: upstreamModel,
+				Detail:    boundedRuntimeDecisionDetail(info.Reason),
 			})
 			suspect = append(suspect, item)
 		default:
