@@ -5,6 +5,7 @@ import { GroupCard } from './Card';
 import { useGroupList } from '@/api/endpoints/group';
 import { useSearchStore, useToolbarViewOptionsStore } from '@/components/modules/toolbar';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
+import { GROUP_CARD_HEIGHT, GROUP_GRID_GAP } from './layout';
 
 // 分组卡目标宽度: 一行 3-4 个 (较窄紧凑卡片)
 function resolveGroupColumns(width: number): number {
@@ -47,7 +48,10 @@ export function Group() {
         <VirtualizedGrid
             items={visibleGroups}
             columns={resolveGroupColumns}
-            estimateItemHeight={520}
+            estimateItemHeight={GROUP_CARD_HEIGHT}
+            gap={GROUP_GRID_GAP}
+            measureRows={false}
+            positionMode="transform"
             getItemKey={(group, index) => group.id ?? `group-${index}`}
             renderItem={(group) => <GroupCard group={group} />}
         />
