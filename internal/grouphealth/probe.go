@@ -16,6 +16,7 @@ import (
 
 type ProbeResult struct {
 	Success      bool
+	Outcome      ProbeOutcome
 	HTTPStatus   int
 	DurationMS   int64
 	ErrorMessage string
@@ -30,6 +31,13 @@ func NewProber() *Prober {
 	return &Prober{
 		CandidateTimeout: 12 * time.Second,
 	}
+}
+
+func finishProbeResult(result *ProbeResult, outcome ProbeOutcome, startedAt time.Time) ProbeResult {
+	result.Outcome = outcome
+	result.Success = outcome == ProbeOutcomeSuccess
+	result.DurationMS = time.Since(startedAt).Milliseconds()
+	return *result
 }
 
 func (p *Prober) RunCandidate(ctx context.Context, channel model.Channel, usedKey model.ChannelKey, modelName string) ProbeResult {
@@ -47,8 +55,7 @@ func (p *Prober) RunCandidate(ctx context.Context, channel model.Channel, usedKe
 	request, err := buildProbeRequest(probeCtx, &channel, &usedKey, modelName)
 	if err != nil {
 		result.ErrorMessage = err.Error()
-		result.DurationMS = time.Since(startedAt).Milliseconds()
-		return result
+		return finishProbeResult(&result, ProbeOutcomeInconclusive, startedAt)
 	}
 
 	applyCustomHeaders(request, channel.CustomHeader)
@@ -58,32 +65,31 @@ func (p *Prober) RunCandidate(ctx context.Context, channel model.Channel, usedKe
 	}
 	if err := helper.ApplyParamOverride(request, channel.ParamOverride); err != nil {
 		result.ErrorMessage = err.Error()
-		result.DurationMS = time.Since(startedAt).Milliseconds()
-		return result
+		return finishProbeResult(&result, ProbeOutcomeInconclusive, startedAt)
 	}
 
 	httpClient, err := helper.ChannelHTTPClientWithContext(probeCtx, &channel)
 	if err != nil {
 		result.ErrorMessage = err.Error()
-		result.DurationMS = time.Since(startedAt).Milliseconds()
-		return result
+		return finishProbeResult(&result, ProbeOutcomeInconclusive, startedAt)
 	}
 
 	response, err := httpClient.Do(request)
 	if err != nil {
 		result.ErrorMessage = err.Error()
-		result.DurationMS = time.Since(startedAt).Milliseconds()
-		return result
+		probeErr := err
+		if ctx.Err() == nil && probeCtx.Err() != nil {
+			probeErr = probeCtx.Err()
+		}
+		return finishProbeResult(&result, classifyProbeTransport(ctx.Err(), probeErr), startedAt)
 	}
 	defer response.Body.Close()
 
 	result.HTTPStatus = response.StatusCode
 	result.Header = response.Header.Clone()
-	result.DurationMS = time.Since(startedAt).Milliseconds()
-
-	if response.StatusCode >= 200 && response.StatusCode < 300 {
-		result.Success = true
-		return result
+	outcome := classifyProbeHTTP(response.StatusCode)
+	if outcome == ProbeOutcomeSuccess {
+		return finishProbeResult(&result, outcome, startedAt)
 	}
 
 	body, _ := io.ReadAll(io.LimitReader(response.Body, 8*1024))
@@ -92,7 +98,7 @@ func (p *Prober) RunCandidate(ctx context.Context, channel model.Channel, usedKe
 	} else {
 		result.ErrorMessage = fmt.Sprintf("upstream error: %d", response.StatusCode)
 	}
-	return result
+	return finishProbeResult(&result, outcome, startedAt)
 }
 
 func buildProbeRequest(ctx context.Context, channel *model.Channel, usedKey *model.ChannelKey, modelName string) (*http.Request, error) {
