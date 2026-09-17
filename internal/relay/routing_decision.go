@@ -6,6 +6,7 @@ import (
 	"time"
 
 	dbmodel "github.com/bestruirui/octopus/internal/model"
+	relaystream "github.com/bestruirui/octopus/internal/relay/stream"
 )
 
 type routingDirective string
@@ -205,20 +206,30 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		return decision
 	}
 
-	// Once downstream delivery or a conversation reset has committed, routing
-	// must stop. Keep the raw failure scope only for slow outlier evidence, which
-	// intentionally still observes stream/reset failures.
+	// Downstream commitment always terminates the current request. An upstream
+	// stream-read transport failure is still future provider-model health
+	// evidence; replay safety and future route health are intentionally separate.
 	if result.Written || result.ResetConversation {
 		decision.Domain = failureDomainUnknown
 		decision.RuleID = "downstream_committed"
-		if result.ResetConversation {
-			decision.RuleID = "conversation_reset"
-		}
 		decision.Directive = routingDirectiveTerminal
 		decision.RuntimeEffect = routingRuntimeNone
 		decision.CircuitEffect = "none"
 		decision.ReplaySafety = routingReplayCommitted
+		decision.SkipProvider = false
+		decision.RetrySameCredential = false
 		decision.Terminal = true
+
+		switch {
+		case result.ResetConversation:
+			decision.RuleID = "conversation_reset"
+		case errors.Is(result.Err, relaystream.ErrStreamRead):
+			decision.RuleID = "committed_stream_failure"
+			decision.FailureScope = routingScopeProviderModel
+			decision.RuntimeEffect = routingRuntimeModelCooldown
+			decision.OutlierScope = scopeModel
+			decision.CircuitEffect = "record_failure"
+		}
 		return decision
 	}
 

@@ -20,6 +20,11 @@ import (
 // Relay should fail over to another channel.
 var ErrEmptyUpstreamStream = errors.New("upstream stream ended without forwarding any payload")
 
+// ErrStreamRead marks transport/read failures returned by the upstream stream
+// source. Callers can distinguish provider transport evidence from local
+// transform/write failures without matching HTTP/2 or provider error strings.
+var ErrStreamRead = errors.New("stream read error")
+
 // StreamSource abstracts different event sources (SSE, WebSocket, raw bytes).
 type StreamSource interface {
 	// ReadEvent blocks until the next event is available or returns an error.
@@ -169,7 +174,7 @@ func (p *StreamProcessor) Run() error {
 				if r.err == io.EOF {
 					return p.finalize()
 				}
-				return fmt.Errorf("stream read error: %w", r.err)
+				return fmt.Errorf("%w: %w", ErrStreamRead, r.err)
 			}
 
 			if len(r.data) == 0 {
