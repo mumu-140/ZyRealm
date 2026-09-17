@@ -90,40 +90,35 @@ func (b *Random) Candidates(items []model.GroupItem) []model.GroupItem {
 	return result
 }
 
-// Failover 故障转移：Priority 升序 → 未熔断优先 → 健康分降序。
-// 该共享策略仍保留 legacy circuit 语义，供 Images 等尚未迁移的调用方使用。
-// Core relay 的 runtime-candidate 路径复用同一排序实现，但关闭 legacy circuit 次级键。
+// Failover 故障转移：Priority 升序 → passive health score 降序。
+// Immediate eligibility is owned by availability before strategy ordering;
+// failover must not introduce a second hidden health authority.
 type Failover struct{}
 
 func (b *Failover) Candidates(items []model.GroupItem) []model.GroupItem {
-	return failoverCandidates(items, true)
+	return failoverCandidates(items)
 }
 
-func failoverCandidates(items []model.GroupItem, includeLegacyCircuit bool) []model.GroupItem {
+func failoverCandidates(items []model.GroupItem) []model.GroupItem {
 	n := len(items)
 	if n == 0 {
 		return nil
 	}
 	now := time.Now()
 	type foEntry struct {
-		item    model.GroupItem
-		score   float64
-		tripped bool
+		item  model.GroupItem
+		score float64
 	}
 	es := make([]foEntry, n)
 	for i, item := range items {
 		es[i] = foEntry{
-			item:    item,
-			score:   itemHealthScore(item.ChannelID, item.ModelName, now),
-			tripped: includeLegacyCircuit && PeekItemTripped(item.ChannelID, item.ModelName),
+			item:  item,
+			score: itemHealthScore(item.ChannelID, item.ModelName, now),
 		}
 	}
 	sort.SliceStable(es, func(i, j int) bool {
 		if es[i].item.Priority != es[j].item.Priority {
 			return es[i].item.Priority < es[j].item.Priority
-		}
-		if includeLegacyCircuit && es[i].tripped != es[j].tripped {
-			return !es[i].tripped
 		}
 		return es[i].score > es[j].score
 	})
