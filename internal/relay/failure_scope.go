@@ -135,10 +135,13 @@ func containsAny(text string, markers []string) bool {
 	return false
 }
 
-// reportOutlierFailure 按作用域把一次失败写入渠道-模型健康度。
-// errText 传入错误信息与上游错误体的拼接，用于作用域分类。
-func reportOutlierFailure(channelID int, modelName string, statusCode int, errText string, now time.Time) {
-	switch classifyFailureScope(statusCode, errText) {
+// reportOutlierDecision applies an already-decided outlier scope without
+// reclassifying raw status/error text. Runtime consumers should use this after
+// RoutingDecision has been computed so one wire result has exactly one policy
+// verdict. Legacy callers/tests may still use reportOutlierFailure while the
+// classifier migration is in progress.
+func reportOutlierDecision(channelID int, modelName string, scope failureScope, statusCode int, now time.Time) {
+	switch scope {
 	case scopeIgnore:
 		return
 	case scopeChannel:
@@ -148,7 +151,14 @@ func reportOutlierFailure(channelID int, modelName string, statusCode int, errTe
 	}
 }
 
-// outlierErrorText 拼接错误信息与上游错误体，供作用域分类使用。
+// reportOutlierFailure is the compatibility entry point for callers that do
+// not yet carry RoutingDecision. New relay-path code should use
+// reportOutlierDecision with decision.OutlierScope.
+func reportOutlierFailure(channelID int, modelName string, statusCode int, errText string, now time.Time) {
+	reportOutlierDecision(channelID, modelName, classifyFailureScope(statusCode, errText), statusCode, now)
+}
+
+// outlierErrorText 拼接错误信息与上游报文并统一小写。
 func outlierErrorText(err error, upstreamBody string) string {
 	var b strings.Builder
 	if err != nil {
