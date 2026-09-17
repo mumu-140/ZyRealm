@@ -1,6 +1,7 @@
 package balancer
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/bestruirui/octopus/internal/model"
@@ -13,6 +14,7 @@ type Iterator struct {
 	index            int
 	stickyIdx        int // 粘性通道在 candidates 中的位置，-1 表示无
 	stickyKeyID      int
+	modelName        string // 请求模型名（用于熔断检查）
 	skippedProviders map[int]struct{}
 
 	// 内嵌追踪
@@ -76,6 +78,7 @@ func NewIteratorWithPreference(group model.Group, apiKeyID int, requestModel str
 		index:            -1,
 		stickyIdx:        stickyIdx,
 		stickyKeyID:      stickyKeyID,
+		modelName:        requestModel,
 		skippedProviders: make(map[int]struct{}),
 	}
 	for _, decision := range order.Decisions {
@@ -181,6 +184,31 @@ func (it *Iterator) SkipRateLimit(channelID, channelKeyID int, channelName, msg 
 		ModelName: it.candidates[it.index].ModelName, AttemptNum: it.count,
 		Status: model.AttemptRateLimit, Sticky: it.IsSticky(), Msg: msg,
 	})
+}
+
+// SkipCircuitBreak 检查熔断状态，若已熔断自动记录（含剩余冷却时间）并返回 true
+func (it *Iterator) SkipCircuitBreak(channelID, channelKeyID int, channelName string) bool {
+	modelName := it.candidates[it.index].ModelName
+	tripped, remaining := IsTripped(channelID, channelKeyID, modelName)
+	if !tripped {
+		return false
+	}
+	msg := "circuit breaker tripped"
+	if remaining > 0 {
+		msg = fmt.Sprintf("circuit breaker tripped, remaining cooldown: %ds", int(remaining.Seconds()))
+	}
+	it.count++
+	it.attempts = append(it.attempts, model.ChannelAttempt{
+		ChannelID:    channelID,
+		ChannelKeyID: channelKeyID,
+		ChannelName:  channelName,
+		ModelName:    modelName,
+		AttemptNum:   it.count,
+		Status:       model.AttemptCircuitBreak,
+		Sticky:       it.IsSticky(),
+		Msg:          msg,
+	})
+	return true
 }
 
 // StartAttempt 开始一次真实转发尝试，返回 Span 用于记录结果
