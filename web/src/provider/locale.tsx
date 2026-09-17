@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { NextIntlClientProvider } from 'next-intl';
 import { useSettingStore, type Locale } from '@/stores/setting';
 import { channelCreateMessages } from './channel-create-messages';
+import { groupAutoAddMessages } from './group-auto-add-messages';
 
 import zh_hansMessages from '../../public/locale/zh_hans.json';
 import zh_hantMessages from '../../public/locale/zh_hant.json';
@@ -33,6 +34,10 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
                 ...baseMessages.channel.create,
                 ...channelCreateMessages[locale],
             },
+        },
+        group: {
+            ...baseMessages.group,
+            autoAdd: groupAutoAddMessages[locale].autoAdd,
         },
     };
 
