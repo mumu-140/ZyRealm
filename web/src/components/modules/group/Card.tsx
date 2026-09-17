@@ -19,6 +19,7 @@ import { compressConfigPayload, GroupMode, type GroupUpdateRequest, normalizeGro
 import { PresetPopover } from './PresetPopover';
 import { ProtocolPolicyPopover } from './ProtocolPolicyPopover';
 import { buildGroupMemberChanges } from './groupMemberDiff';
+import { GROUP_CARD_HEIGHT } from './layout';
 import {
     MorphingDialog,
     MorphingDialogClose,
@@ -269,7 +270,10 @@ export function GroupCard({ group }: { group: Group }) {
     }, [group.first_token_time_out, group.session_keep_time, group.retry_enabled, group.max_retries, group.protocol_mode, group.preferred_protocols, group.compress_config, group.id, group.items, group.match_regex, group.mode, group.name, onSuccess, onError, updateGroup]);
 
     return (
-        <article className="relative group/card flex flex-col rounded-2xl border border-border bg-card text-card-foreground p-3 custom-shadow">
+        <article
+            style={{ height: GROUP_CARD_HEIGHT }}
+            className="relative group/card flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-card text-card-foreground p-3 custom-shadow"
+        >
             <header className="flex items-start justify-between mb-3 relative overflow-visible rounded-xl -mx-1 px-1 -my-1 py-1">
                 <div className="relative flex-1 mr-2 min-w-0 group/title">
                     <Tooltip side="top" sideOffset={10} align="center">
@@ -297,7 +301,7 @@ export function GroupCard({ group }: { group: Group }) {
 
                     <ProtocolPolicyPopover group={group} />
 
-                                        <MorphingDialog>
+                    <MorphingDialog>
                         <MorphingDialogTrigger className="flex size-8 items-center justify-center rounded-lg border border-transparent transition-all hover:border-border hover:bg-muted active:scale-95 text-muted-foreground hover:text-foreground">
                             <Tooltip side="top" sideOffset={10} align="center">
                                 <TooltipTrigger asChild>
@@ -348,7 +352,7 @@ export function GroupCard({ group }: { group: Group }) {
 
             <GroupHealthBadge groupId={group.id} />
 
-            <section className="rounded-lg border border-border/50 bg-muted/30 overflow-hidden relative h-96">
+            <section className="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-border/50 bg-muted/30">
                 <MemberList
                     members={renderedMembers}
                     onReorder={setMembers}
@@ -442,6 +446,6 @@ export function GroupCard({ group }: { group: Group }) {
                     </motion.div>
                 )}
             </AnimatePresence>
-        </article >
+        </article>
     );
 }
