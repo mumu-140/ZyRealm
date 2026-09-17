@@ -27,9 +27,9 @@ func TestRoutingDecisionGeneric500StaysRuntimeNeutralDuringLegacyCircuitCompatib
 	if decision.OutlierScope != scopeChannel {
 		t.Fatalf("outlier scope = %v, want channel statistical evidence", decision.OutlierScope)
 	}
-	// P4A deliberately preserves the legacy breaker write for revision-1
-	// compatibility. The circuit stops being an authority in later P4 gates,
-	// after all shared consumers (notably Images) have migrated.
+	// P4C1 removes circuit admission reads but deliberately keeps compatibility
+	// writes for one migration step. Generic 5xx remains low-confidence/passive
+	// evidence rather than being promoted into an availability cooldown.
 	if decision.CircuitEffect != "record_failure" {
 		t.Fatalf("circuit effect = %q, want temporary compatibility write", decision.CircuitEffect)
 	}
@@ -75,13 +75,13 @@ func TestCoreCredentialSelectionNewRevisionDoesNotInheritLegacyCircuit(t *testin
 	}
 }
 
-func TestCoreCredentialSelectionRevisionOneKeepsLegacyCircuitCompatibility(t *testing.T) {
+func TestCoreCredentialSelectionRevisionOneUsesAvailabilityNotLegacyCircuit(t *testing.T) {
 	balancer.Reset()
 	t.Cleanup(balancer.Reset)
 	now := time.Now()
 	channel := &dbmodel.Channel{
 		ID:      1702,
-		Name:    "p4a-core-legacy-credential",
+		Name:    "p4c-core-revision-one-credential",
 		Enabled: true,
 		Keys: []dbmodel.ChannelKey{
 			{ID: 12, Enabled: true, ChannelKey: "key-12", CredentialRevision: 1},
@@ -102,8 +102,15 @@ func TestCoreCredentialSelectionRevisionOneKeepsLegacyCircuitCompatibility(t *te
 	for i := 0; i < 5; i++ {
 		balancer.RecordFailure(channel.ID, 12, "upstream-model", balancer.FailureHard)
 	}
+	if tripped, _ := balancer.IsTripped(channel.ID, 12, "upstream-model"); !tripped {
+		t.Fatal("test precondition: legacy circuit must be open")
+	}
+	if !availability.CredentialAvailableRevision(channel.ID, 12, 1, now) {
+		t.Fatal("test precondition: revision-1 credential must be available in the authoritative runtime")
+	}
+
 	selected := selectFairChannelCredential(channel, dbmodel.ChannelKeySelectOptions{}, iterator, now)
-	if selected.ID != 0 {
-		t.Fatalf("selected key = %d, want none while revision-1 compatibility circuit is open", selected.ID)
+	if selected.ID != 12 {
+		t.Fatalf("selected key = %d, want 12; credential availability must be the sole admission authority", selected.ID)
 	}
 }

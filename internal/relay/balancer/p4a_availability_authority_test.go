@@ -8,7 +8,7 @@ import (
 	"github.com/bestruirui/octopus/internal/outlierwindow"
 )
 
-func TestRuntimeFailoverOrderingIgnoresLegacyCircuitWhileSharedStrategyPreservesIt(t *testing.T) {
+func TestFailoverOrderingUsesPassiveHealthNotLegacyCircuit(t *testing.T) {
 	Reset()
 	t.Cleanup(Reset)
 	now := time.Now()
@@ -24,18 +24,18 @@ func TestRuntimeFailoverOrderingIgnoresLegacyCircuitWhileSharedStrategyPreserves
 		mkItem(1, 1, 1801),
 		mkItem(2, 1, 1802),
 	}
-	legacy := (&Failover{}).Candidates(items)
-	if legacy[0].ChannelID != 1802 {
-		t.Fatalf("legacy first channel = %d, want circuit-compatible ch1802", legacy[0].ChannelID)
+	shared := (&Failover{}).Candidates(items)
+	if shared[0].ChannelID != 1801 {
+		t.Fatalf("shared first channel = %d, want healthy ch1801; legacy circuit must not influence shared ordering", shared[0].ChannelID)
 	}
 
 	ordered := runtimeOrderedCandidates(model.Group{Mode: model.GroupModeFailover, Items: items}, "m", now)
 	if ordered[0].ChannelID != 1801 {
-		t.Fatalf("runtime first channel = %d, want healthy ch1801; core runtime ordering must ignore legacy circuit state", ordered[0].ChannelID)
+		t.Fatalf("runtime first channel = %d, want healthy ch1801", ordered[0].ChannelID)
 	}
 }
 
-func TestRuntimeHealthFirstOrderingIgnoresLegacyCircuitWhileSharedStrategyPreservesIt(t *testing.T) {
+func TestHealthFirstOrderingUsesPassiveHealthNotLegacyCircuit(t *testing.T) {
 	Reset()
 	t.Cleanup(Reset)
 	now := time.Now()
@@ -51,13 +51,13 @@ func TestRuntimeHealthFirstOrderingIgnoresLegacyCircuitWhileSharedStrategyPreser
 		mkItem(1, 1, 1811),
 		mkItem(2, 1, 1812),
 	}
-	legacy := (&HealthFirst{}).Candidates(items)
-	if legacy[0].ChannelID != 1812 {
-		t.Fatalf("legacy first channel = %d, want circuit-compatible ch1812", legacy[0].ChannelID)
+	shared := (&HealthFirst{}).Candidates(items)
+	if shared[0].ChannelID != 1811 {
+		t.Fatalf("shared first channel = %d, want healthy ch1811; legacy circuit must not influence health tiers", shared[0].ChannelID)
 	}
 
 	ordered := runtimeOrderedCandidates(model.Group{Mode: model.GroupModeHealthFirst, Items: items}, "m", now)
 	if ordered[0].ChannelID != 1811 {
-		t.Fatalf("runtime first channel = %d, want healthy ch1811; core runtime ordering must ignore legacy circuit state", ordered[0].ChannelID)
+		t.Fatalf("runtime first channel = %d, want healthy ch1811", ordered[0].ChannelID)
 	}
 }

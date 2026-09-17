@@ -19,6 +19,7 @@ import (
 	"github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/outlierwindow"
+	"github.com/bestruirui/octopus/internal/relay/availability"
 	"github.com/bestruirui/octopus/internal/relay/balancer"
 	"github.com/bestruirui/octopus/internal/transformer/inbound"
 	transformerModel "github.com/bestruirui/octopus/internal/transformer/model"
@@ -1504,7 +1505,7 @@ func TestHandlerRetryEnabledRespectsModelCapacityCooldown(t *testing.T) {
 	}
 }
 
-func TestHandlerUsesNextKeyWhenFirstKeyCircuitIsOpen(t *testing.T) {
+func TestHandlerUsesNextKeyWhenFirstCredentialIsCooling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := setupRelayTestDB(t)
 
@@ -1521,7 +1522,7 @@ func TestHandlerUsesNextKeyWhenFirstKeyCircuitIsOpen(t *testing.T) {
 	defer server.Close()
 
 	channel := &model.Channel{
-		Name:     "relay-multi-key-circuit",
+		Name:     "relay-multi-key-availability",
 		Type:     outbound.OutboundTypeOpenAIChat,
 		Enabled:  true,
 		BaseUrls: []model.BaseUrl{{URL: server.URL + "/v1"}},
@@ -1543,8 +1544,15 @@ func TestHandlerUsesNextKeyWhenFirstKeyCircuitIsOpen(t *testing.T) {
 		t.Fatalf("GroupItemAdd failed: %v", err)
 	}
 
-	for i := 0; i < 5; i++ {
-		balancer.RecordFailure(channel.ID, channel.Keys[0].ID, "multi-key-model", balancer.FailureHard)
+	availability.RecordCredentialFailureRevision(
+		channel.ID,
+		channel.Keys[0].ID,
+		channel.Keys[0].CredentialRevision,
+		"invalid_api_key",
+		time.Now(),
+	)
+	if availability.CredentialAvailableRevision(channel.ID, channel.Keys[0].ID, channel.Keys[0].CredentialRevision, time.Now()) {
+		t.Fatal("test precondition: first credential must be cooling")
 	}
 
 	recorder := httptest.NewRecorder()
@@ -1564,17 +1572,17 @@ func TestHandlerUsesNextKeyWhenFirstKeyCircuitIsOpen(t *testing.T) {
 	}
 }
 
-func TestSoftRateLimitFailureDoesNotTripOrAmplifyCircuitBreaker(t *testing.T) {
+func TestGeneric500LegacyCircuitWriteDoesNotBlockRelayAdmission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := setupRelayTestDB(t)
 
 	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerThreshold, 2); err != nil {
 		t.Fatalf("SettingSetInt threshold failed: %v", err)
 	}
-	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerCooldown, 1); err != nil {
+	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerCooldown, 60); err != nil {
 		t.Fatalf("SettingSetInt cooldown failed: %v", err)
 	}
-	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerMaxCooldown, 8); err != nil {
+	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerMaxCooldown, 60); err != nil {
 		t.Fatalf("SettingSetInt max cooldown failed: %v", err)
 	}
 
@@ -1582,21 +1590,17 @@ func TestSoftRateLimitFailureDoesNotTripOrAmplifyCircuitBreaker(t *testing.T) {
 	var phase atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
-		switch phase.Load() {
-		case 0:
+		if phase.Load() == 0 {
 			http.Error(w, `{"error":"server unavailable"}`, http.StatusInternalServerError)
-		case 1:
-			w.Header().Set("Retry-After", "1")
-			http.Error(w, `{"error":"rate limited"}`, http.StatusTooManyRequests)
-		default:
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"id":"resp_1","object":"chat.completion","created":1,"model":"breaker-model","choices":[{"index":0,"message":{"role":"assistant","content":"ok"}}]}`))
+			return
 		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_1","object":"chat.completion","created":1,"model":"breaker-model","choices":[{"index":0,"message":{"role":"assistant","content":"ok"}}]}`))
 	}))
 	defer server.Close()
 
 	channel := &model.Channel{
-		Name:     "relay-soft-rate-limit",
+		Name:     "relay-inert-legacy-circuit",
 		Type:     outbound.OutboundTypeOpenAIChat,
 		Enabled:  true,
 		BaseUrls: []model.BaseUrl{{URL: server.URL + "/v1"}},
@@ -1608,10 +1612,9 @@ func TestSoftRateLimitFailureDoesNotTripOrAmplifyCircuitBreaker(t *testing.T) {
 	}
 
 	group := &model.Group{
-		Name:         "relay-soft-rate-limit-group",
+		Name:         "relay-inert-legacy-circuit-group",
 		Mode:         model.GroupModeFailover,
-		RetryEnabled: true,
-		MaxRetries:   1,
+		RetryEnabled: false,
 	}
 	if err := op.GroupCreate(group, ctx); err != nil {
 		t.Fatalf("GroupCreate failed: %v", err)
@@ -1629,45 +1632,31 @@ func TestSoftRateLimitFailureDoesNotTripOrAmplifyCircuitBreaker(t *testing.T) {
 		return recorder
 	}
 
-	resp1 := makeRequest(`{"model":"relay-soft-rate-limit-group","messages":[{"role":"user","content":"first"}]}`)
+	resp1 := makeRequest(`{"model":"relay-inert-legacy-circuit-group","messages":[{"role":"user","content":"first"}]}`)
 	if resp1.Code != http.StatusInternalServerError {
-		t.Fatalf("expected first hard failure to return 500, got status %d body %s", resp1.Code, resp1.Body.String())
+		t.Fatalf("expected first generic 500 to pass through, got status %d body %s", resp1.Code, resp1.Body.String())
 	}
-
-	resp2 := makeRequest(`{"model":"relay-soft-rate-limit-group","messages":[{"role":"user","content":"second"}]}`)
+	resp2 := makeRequest(`{"model":"relay-inert-legacy-circuit-group","messages":[{"role":"user","content":"second"}]}`)
 	if resp2.Code != http.StatusInternalServerError {
-		t.Fatalf("expected second hard failure to return 500 and trip breaker, got status %d body %s", resp2.Code, resp2.Body.String())
+		t.Fatalf("expected second generic 500 to pass through, got status %d body %s", resp2.Code, resp2.Body.String())
+	}
+	if hits.Load() != 2 {
+		t.Fatalf("expected two upstream generic-500 calls, got %d", hits.Load())
+	}
+	if !balancer.PeekItemTripped(channel.ID, "breaker-model") {
+		t.Fatal("test precondition: compatibility circuit write must be open")
 	}
 
-	resp3 := makeRequest(`{"model":"relay-soft-rate-limit-group","messages":[{"role":"user","content":"third"}]}`)
-	if resp3.Code != http.StatusBadGateway {
-		t.Fatalf("expected open circuit to reject request before upstream call, got status %d body %s", resp3.Code, resp3.Body.String())
-	}
-
-	time.Sleep(1100 * time.Millisecond)
 	phase.Store(1)
-	resp4 := makeRequest(`{"model":"relay-soft-rate-limit-group","messages":[{"role":"user","content":"fourth"}]}`)
-	if resp4.Code != http.StatusTooManyRequests {
-		t.Fatalf("expected half-open probe to return passthrough 429, got status %d body %s", resp4.Code, resp4.Body.String())
+	resp3 := makeRequest(`{"model":"relay-inert-legacy-circuit-group","messages":[{"role":"user","content":"third"}]}`)
+	if resp3.Code != http.StatusOK {
+		t.Fatalf("legacy circuit write must not block relay admission, got status %d body %s", resp3.Code, resp3.Body.String())
 	}
 	if hits.Load() != 3 {
-		t.Fatalf("expected exactly three upstream calls after soft-rate-limit probe, got %d", hits.Load())
+		t.Fatalf("expected request to reach upstream despite open legacy circuit, got %d total hits", hits.Load())
 	}
-
-	tripped, remaining := balancer.IsTripped(channel.ID, channel.Keys[0].ID, "breaker-model")
-	if !tripped {
-		t.Fatalf("expected soft 429 half-open probe to reopen circuit")
-	}
-	if remaining <= 0 || remaining > 1100*time.Millisecond {
-		t.Fatalf("expected soft 429 to preserve the original 1s circuit cooldown without amplification, remaining=%v", remaining)
-	}
-
-	resp5 := makeRequest(`{"model":"relay-soft-rate-limit-group","messages":[{"role":"user","content":"fifth"}]}`)
-	if resp5.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected provider-model runtime cooldown to reject immediate request, got status %d body %s", resp5.Code, resp5.Body.String())
-	}
-	if hits.Load() != 3 {
-		t.Fatalf("expected runtime cooldown to prevent another upstream probe, got %d total hits", hits.Load())
+	if !strings.Contains(resp3.Body.String(), `"content":"ok"`) {
+		t.Fatalf("expected successful response body, got %s", resp3.Body.String())
 	}
 }
 

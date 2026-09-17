@@ -203,6 +203,58 @@ func TestCircuitProbeFailureReopensWithBackoff(t *testing.T) {
 	}
 }
 
+// TestHalfOpenSoftRateLimitReopensWithoutBackoffAmplification preserves the
+// temporary compatibility contract used by Compact/WebSocket until P4C1b:
+// a rate-limited half-open probe reopens the breaker, but must not count as a
+// new hard outage or exponentially lengthen the next probe delay.
+func TestHalfOpenSoftRateLimitReopensWithoutBackoffAmplification(t *testing.T) {
+	Reset()
+	const (
+		ch  = 53
+		key = 7
+		mdl = "gpt-4o"
+	)
+
+	for i := 0; i < 5; i++ {
+		RecordFailure(ch, key, mdl, FailureHard)
+	}
+	entry, ok := loadCircuitEntry(ch, key, mdl)
+	if !ok {
+		t.Fatal("expected hard failures to create a circuit entry")
+	}
+	entry.mu.Lock()
+	initialTrips := entry.TripCount
+	entry.mu.Unlock()
+	initialCooldown := GetCooldown(initialTrips)
+
+	rewindCircuitFailure(t, ch, key, mdl, initialCooldown+time.Second)
+	if tripped, _ := IsTripped(ch, key, mdl); tripped {
+		t.Fatal("cooldown expiry should admit exactly one half-open probe")
+	}
+	if state, _ := circuitStateOf(t, ch, key, mdl); state != StateHalfOpen {
+		t.Fatalf("probe state = %v, want HalfOpen", state)
+	}
+
+	RecordFailure(ch, key, mdl, FailureSoftRateLimit)
+
+	entry, ok = loadCircuitEntry(ch, key, mdl)
+	if !ok {
+		t.Fatal("expected soft rate limit to retain the circuit entry")
+	}
+	entry.mu.Lock()
+	state, trips := entry.State, entry.TripCount
+	entry.mu.Unlock()
+	if state != StateOpen {
+		t.Fatalf("soft-rate-limited probe state = %v, want Open", state)
+	}
+	if trips != initialTrips {
+		t.Fatalf("soft rate limit amplified trip count: before=%d after=%d", initialTrips, trips)
+	}
+	if cooldown := GetCooldown(trips); cooldown != initialCooldown {
+		t.Fatalf("soft rate limit amplified cooldown: before=%v after=%v", initialCooldown, cooldown)
+	}
+}
+
 func TestHalfOpenDoesNotRemainTrippedForeverWithoutResult(t *testing.T) {
 	Reset()
 	seedCircuitEntry(7, 8, "gpt-4o", circuitSeed{
