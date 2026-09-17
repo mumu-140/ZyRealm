@@ -136,14 +136,14 @@ export function GroupHealthAttemptDetails({ attempt }: { attempt: GroupHealthAtt
     );
 }
 
-export function GroupDiagnosticAction({ groupId }: { groupId: number }) {
+export function GroupDiagnosticAction({ groupId }: { groupId?: number }) {
     const t = useTranslations('group.health');
     const { enabled } = useGroupHealthEnabled();
     const [open, setOpen] = useState(false);
     const { data: view, isFetching } = useGroupHealth(open ? groupId : null);
     const runGroupHealth = useRunGroupHealth();
 
-    if (!enabled) return null;
+    if (!enabled || !groupId) return null;
 
     const latest = view?.latest ?? null;
     const attempts = latest?.attempts ?? [];
