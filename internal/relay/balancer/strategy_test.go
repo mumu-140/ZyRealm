@@ -207,60 +207,83 @@ func TestFailoverModelHealthDoesNotLeakAcrossModels(t *testing.T) {
 	}
 }
 
-// TestFailoverTrippedPushedBack 同 Priority、同健康分时，熔断中的候选后移。
-func TestFailoverTrippedPushedBack(t *testing.T) {
+// TestFailoverLegacyCircuitDoesNotReorderCandidates proves that a stale breaker
+// entry cannot become a hidden scheduling authority once P4C1 is active.
+func TestFailoverLegacyCircuitDoesNotReorderCandidates(t *testing.T) {
 	Reset()
 	now := time.Now()
-	outlierwindow.ClearChannel(691)
-	outlierwindow.ClearChannel(692)
-	for i := 0; i < 10; i++ {
-		outlierwindow.Report(691, "m", true, 200, now)
-		outlierwindow.Report(692, "m", true, 200, now)
+	items := []model.GroupItem{
+		{ID: 1, Priority: 1, ChannelID: 691, ModelName: "m"},
+		{ID: 2, Priority: 1, ChannelID: 692, ModelName: "m"},
 	}
-	// 691 有一个 Key 处于熔断
+	seed := func() {
+		outlierwindow.ClearChannel(691)
+		outlierwindow.ClearChannel(692)
+		for i := 0; i < 10; i++ {
+			outlierwindow.Report(691, "m", true, 200, now)
+			outlierwindow.Report(692, "m", true, 200, now)
+		}
+	}
+
+	seed()
+	withoutCircuit := (&Failover{}).Candidates(items)
+
+	Reset()
+	seed()
 	seedCircuitEntry(691, 1, "m", circuitSeed{
 		State:           StateOpen,
 		LastFailureTime: time.Now(),
 		TripCount:       1,
 	})
-	b := &Failover{}
-	items := []model.GroupItem{
-		{ID: 1, Priority: 1, ChannelID: 691, ModelName: "m"},
-		{ID: 2, Priority: 1, ChannelID: 692, ModelName: "m"},
+	withCircuit := (&Failover{}).Candidates(items)
+
+	if len(withCircuit) != len(withoutCircuit) {
+		t.Fatalf("candidate count changed with legacy circuit: got %d want %d", len(withCircuit), len(withoutCircuit))
 	}
-	got := b.Candidates(items)
-	if got[0].ChannelID != 692 {
-		t.Fatalf("熔断项未后移，首位 = %d, want 692", got[0].ChannelID)
+	for i := range withCircuit {
+		if withCircuit[i].ChannelID != withoutCircuit[i].ChannelID {
+			t.Fatalf("legacy circuit changed failover order: without=%v with=%v", headChannels(withoutCircuit), headChannels(withCircuit))
+		}
 	}
 }
 
-// TestHealthFirstTrippedDemotedButKept 熔断中的健康候选压到差档，但不得从候选中删除，
-// 否则熔断期整组无路可走。
-func TestHealthFirstTrippedDemotedButKept(t *testing.T) {
+// TestHealthFirstLegacyCircuitDoesNotChangeTiers proves that breaker state is
+// not a fourth hidden health tier beside passive outlier evidence.
+func TestHealthFirstLegacyCircuitDoesNotChangeTiers(t *testing.T) {
 	Reset()
 	now := time.Now()
-	outlierwindow.ClearChannel(701)
-	outlierwindow.ClearChannel(702)
-	for i := 0; i < 10; i++ {
-		outlierwindow.Report(701, "m", true, 200, now) // 健康但熔断
-		outlierwindow.Report(702, "m", true, 200, now) // 健康
+	items := []model.GroupItem{
+		{ID: 1, Priority: 1, ChannelID: 701, ModelName: "m"},
+		{ID: 2, Priority: 1, ChannelID: 702, ModelName: "m"},
 	}
+	seed := func() {
+		outlierwindow.ClearChannel(701)
+		outlierwindow.ClearChannel(702)
+		for i := 0; i < 10; i++ {
+			outlierwindow.Report(701, "m", true, 200, now)
+			outlierwindow.Report(702, "m", true, 200, now)
+		}
+	}
+
+	seed()
+	withoutCircuit := (&HealthFirst{}).Candidates(items)
+
+	Reset()
+	seed()
 	seedCircuitEntry(701, 7, "m", circuitSeed{
 		State:           StateOpen,
 		LastFailureTime: time.Now(),
 		TripCount:       1,
 	})
-	b := &HealthFirst{}
-	items := []model.GroupItem{
-		{ID: 1, Priority: 1, ChannelID: 701, ModelName: "m"},
-		{ID: 2, Priority: 1, ChannelID: 702, ModelName: "m"},
+	withCircuit := (&HealthFirst{}).Candidates(items)
+
+	if len(withCircuit) != len(withoutCircuit) {
+		t.Fatalf("candidate count changed with legacy circuit: got %d want %d", len(withCircuit), len(withoutCircuit))
 	}
-	got := b.Candidates(items)
-	if len(got) != 2 {
-		t.Fatalf("熔断候选被删除，len = %d, want 2", len(got))
-	}
-	if got[0].ChannelID != 702 || got[1].ChannelID != 701 {
-		t.Fatalf("熔断候选未降到末位：%d, %d", got[0].ChannelID, got[1].ChannelID)
+	for i := range withCircuit {
+		if withCircuit[i].ChannelID != withoutCircuit[i].ChannelID {
+			t.Fatalf("legacy circuit changed health-first order: without=%v with=%v", headChannels(withoutCircuit), headChannels(withCircuit))
+		}
 	}
 }
 
