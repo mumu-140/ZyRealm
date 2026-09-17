@@ -1,6 +1,7 @@
 package op
 
 import (
+	"context"
 	"sort"
 	"strings"
 
@@ -8,9 +9,40 @@ import (
 	"github.com/dlclark/regexp2"
 )
 
+type GroupAutoAddResult struct {
+	Matched int `json:"matched"`
+	Added   int `json:"added"`
+}
+
 type groupAutoAddMemberKey struct {
 	channelID int
 	modelName string
+}
+
+func GroupAutoAdd(groupID int, ctx context.Context) (*GroupAutoAddResult, error) {
+	group, err := GroupGet(groupID, ctx)
+	if err != nil {
+		return nil, err
+	}
+	llms, err := ChannelLLMList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	adds, matched, err := resolveGroupAutoAddCandidates(*group, llms)
+	if err != nil {
+		return nil, err
+	}
+	result := &GroupAutoAddResult{Matched: matched, Added: len(adds)}
+	if len(adds) == 0 {
+		return result, nil
+	}
+	if _, err := GroupUpdate(&model.GroupUpdateRequest{
+		ID:         groupID,
+		ItemsToAdd: adds,
+	}, ctx); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func resolveGroupAutoAddCandidates(group model.Group, llms []model.LLMChannel) ([]model.GroupItemAddRequest, int, error) {
