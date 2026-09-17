@@ -3,9 +3,11 @@
 import { useMemo } from 'react';
 import { GroupCard } from './Card';
 import { useGroupList } from '@/api/endpoints/group';
+import { useModelChannelList, type LLMChannel } from '@/api/endpoints/model';
 import { useSearchStore, useToolbarViewOptionsStore } from '@/components/modules/toolbar';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
 import { GROUP_CARD_HEIGHT, GROUP_GRID_GAP } from './layout';
+import { modelChannelKey } from './utils';
 
 // 分组卡目标宽度: 一行 3-4 个 (较窄紧凑卡片)
 function resolveGroupColumns(width: number): number {
@@ -17,10 +19,19 @@ function resolveGroupColumns(width: number): number {
 
 export function Group() {
     const { data: groups } = useGroupList();
+    const { data: modelChannels = [] } = useModelChannelList();
     const pageKey = 'group' as const;
     const searchTerm = useSearchStore((s) => s.getSearchTerm(pageKey));
     const sortField = useToolbarViewOptionsStore((s) => s.getSortField(pageKey));
     const sortOrder = useToolbarViewOptionsStore((s) => s.getSortOrder(pageKey));
+
+    const modelChannelByKey = useMemo(() => {
+        const map = new Map<string, LLMChannel>();
+        modelChannels.forEach((modelChannel) => {
+            map.set(modelChannelKey(modelChannel.channel_id, modelChannel.name), modelChannel);
+        });
+        return map;
+    }, [modelChannels]);
 
     const sortedGroups = useMemo(() => {
         if (!groups) return [];
@@ -53,7 +64,7 @@ export function Group() {
             measureRows={false}
             positionMode="transform"
             getItemKey={(group, index) => group.id ?? `group-${index}`}
-            renderItem={(group) => <GroupCard group={group} />}
+            renderItem={(group) => <GroupCard group={group} modelChannelByKey={modelChannelByKey} />}
         />
     );
 }
