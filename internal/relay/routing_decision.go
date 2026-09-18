@@ -277,10 +277,10 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 			decision.RouteLearningCandidate = false
 		}
 	default:
-		if isRetryableStatus(status) {
-			// Generic 5xx is too ambiguous to poison shared runtime state, but when
-			// another request-eligible provider exists it is still more useful to
-			// search that provider than to spend same-key retries on this one.
+		if isRetryableStatus(result.StatusCode) {
+			// Generic 5xx is too ambiguous for a provider cooldown, but when another
+			// request-eligible provider exists it is still more useful to search that
+			// provider than to spend same-key retries on this one.
 			if status >= 500 && status <= 599 && hasAlternative {
 				decision.Directive = routingDirectiveNextProvider
 				decision.SkipProvider = true
