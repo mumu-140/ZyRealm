@@ -43,7 +43,7 @@ One wire outcome -> one `RoutingDecision` -> independent effects:
 
 ## P4C1a — Remove legacy circuit authority from core/shared routing
 
-This is the current implementation slice and Draft PR boundary.
+Status: ✅ merged as PR #45 (`0d5b4e2c38e387de8782d70967adcaf19b992717`).
 
 ### Scope
 
@@ -102,7 +102,7 @@ Deliverable: Draft PR only. Do not merge automatically.
 
 ## P4C1b — Migrate Compact and WebSocket before removing the final reader
 
-Start only after P4C1a is merged and a fresh source audit is repeated on `main`.
+Status: ✅ merged as PR #46 (`080aa59d9888ca4b7377515caa272608d21e2bc7`).
 
 ### Required behavior before reader removal
 
@@ -139,7 +139,15 @@ Only after those effects are covered by RED/GREEN tests:
 
 ## P4C2 — Decouple route learning, then remove circuit writes and policy surface
 
-Start only after P4C1b is merged and a fresh audit confirms zero live circuit readers.
+P4C2 is split into two independently verified slices. P4C2A is merged; P4C2B is the current Draft PR boundary.
+
+### P4C2A status
+
+✅ merged as PR #47 (`31562a22dd539ee6bbd2f675cc22f8a37a1ce366`). Route learning now uses an explicit `shouldLearnManagedRoute` policy and no longer depends on `balancer.FailureKind` / `FailureHard`.
+
+### P4C2B status
+
+🚧 Draft PR #48. Live Core / Images / Compact / WebSocket circuit writes are removed; `circuit.go`, reset/settings compatibility, and `CircuitEffect` policy/trace compatibility remain for P4C3.
 
 ### Route-learning decoupling
 
@@ -154,15 +162,23 @@ After RED contracts cover core HTTP, Images, Compact, WS, committed stream failu
 
 - remove live `balancer.RecordSuccess` / `RecordFailure` calls;
 - remove `circuitFailureKind` / `circuitFailureKindForDecision` after route learning is independent;
-- remove `RoutingDecision.CircuitEffect` and circuit trace production if no compatibility consumer remains.
+- retain `RoutingDecision.CircuitEffect` through P4C2B because route-learning compatibility and attempt tracing still consume the token; review and remove/rename that surface in P4C3.
 
 P4C2 stop gate:
 
 - zero live circuit readers;
 - zero live circuit writers;
 - route learning independently tested;
-- `circuit.go` retained only as dead code pending final cleanup review;
+- exact-head source audit confirms no non-test `internal/relay` caller of `balancer.RecordFailure`, `balancer.RecordSuccess`, or `circuitFailureKind*`;
+- `circuit.go` retained only as dead compatibility code pending final cleanup review;
+- `CircuitEffect` retained temporarily as a compatibility policy/trace token, not as a breaker writer;
 - full CI green.
+
+P4C2B RED evidence:
+
+- initial RED exposed a test-fixture ordering issue for two Core cases; the fixture was corrected without production changes;
+- clean RED run `35299692585` then failed exactly the seven writer-retirement contracts across Core / Images / Compact / WebSocket;
+- first GREEN run `35300007859` passed governance, backend Vet/full Go tests, and frontend lint/test/build.
 
 ---
 
