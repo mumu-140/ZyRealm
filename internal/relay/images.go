@@ -174,8 +174,9 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 			continue
 		}
 
-		// 同渠道内按 Key 重试（容量 slot 覆盖全部 Key 尝试）。Images 保留原有
-		// GetChannelKey 排序，只把 credential/runtime eligibility 迁到统一 authority。
+		// 同渠道内按 Key 重试（容量 slot 覆盖全部 Key 尝试）。Live credential
+		// selection uses the provider-local fair ledger. Same-credential transport
+		// retries reuse the selected key without charging another fair allocation.
 		// outlierwindow 仍只记录渠道最终结果，不记录中间 Key 失败。
 		done := func() bool {
 			defer balancer.ReleaseChannel(channel.ID)
@@ -187,32 +188,27 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 				preferredKeyID = iter.StickyKeyID()
 			}
 
+			var usedKey model.ChannelKey
+			selectNextCredential := func() bool {
+				selected := selectFairChannelCredential(channel, model.ChannelKeySelectOptions{
+					ExcludeKeyIDs:  excludeKeys,
+					PreferredKeyID: preferredKeyID,
+				}, iter, time.Now())
+				if selected.ChannelKey == "" {
+					return false
+				}
+				usedKey = selected
+				return true
+			}
+			if !selectNextCredential() {
+				return false
+			}
+
 			var channelLastErr error
 			var channelLastStatus int
 			var channelLastEffects attemptEffectPlan
 
 			for upstreamStarts < maxUpstreamStarts {
-				selectOpts := model.ChannelKeySelectOptions{
-					ExcludeKeyIDs:  excludeKeys,
-					PreferredKeyID: preferredKeyID,
-				}
-				usedKey := channel.GetChannelKey(selectOpts)
-				if usedKey.ChannelKey == "" {
-					break
-				}
-				if !availability.CredentialAvailableRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, time.Now()) {
-					excludeKeys[usedKey.ID] = struct{}{}
-					preferredKeyID = 0
-					iter.RecordDecision(model.RoutingDecisionEvent{
-						Stage:        model.DecisionStageCredential,
-						Outcome:      model.DecisionOutcomeRejected,
-						Reason:       model.DecisionReasonCredentialCooldown,
-						ChannelID:    channel.ID,
-						ChannelKeyID: usedKey.ID,
-						ChannelName:  channel.Name,
-					})
-					continue
-				}
 
 				log.Debugf("images request model %s, mode: %d, forwarding to channel: %s model: %s (attempt %d/%d, sticky=%t, stream=%t)",
 					requestModel, group.Mode, channel.Name, upstreamModel,
@@ -284,14 +280,15 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 				switch resolveSidepathDirective(coordination.Disposition) {
 				case sidepathDirectiveRetrySameCredential:
 					if upstreamStarts < maxUpstreamStarts {
-						preferredKeyID = usedKey.ID
 						continue
 					}
 				case sidepathDirectiveRotateCredential:
 					if upstreamStarts < maxUpstreamStarts {
 						excludeKeys[usedKey.ID] = struct{}{}
 						preferredKeyID = 0
-						continue
+						if selectNextCredential() {
+							continue
+						}
 					}
 				case sidepathDirectiveNextProvider:
 					iter.SkipProvider(channel.ID)
