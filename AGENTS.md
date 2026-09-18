@@ -1,4 +1,4 @@
-# Octopus Repository Rules
+# ZyRealm Repository Rules
 
 本文件是该仓库对 Codex、Claude、Hermes 和其他自动化代理的最高优先级项目规则。
 开始任何工作前必须先读本文件，再按需读取 `docs/octopus-development-governance.md` 和
@@ -26,7 +26,7 @@
 
 | 对象 | 唯一位置 | 允许操作 |
 | --- | --- | --- |
-| GitHub 仓库 | `mumu-140/octopus-concurrency` | 代码、文档、CI、Release 和 GHCR 的远端真值 |
+| GitHub 仓库 | `mumu-140/ZyRealm` | 代码、文档、CI、Release 和 GHCR 的远端真值 |
 | 可编辑源码 | `/opt/octopus-mumu/` | 开发、测试、提交、构建 |
 | 生产控制面 | `/opt/octopus/` | 仅保存生产 compose 副本、运行数据和备份；不是源码 |
 | 生产数据 | `/opt/octopus/data/` | 仅获批的数据操作；不得用于开发或测试 |
