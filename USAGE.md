@@ -53,7 +53,7 @@ The UI has 7 pages, listed in order of use:
 | **Channels** | Site channels (auto-projected) + Manual channels (manually added), complete Keys here |
 | **Groups** | **Define external model names**, aggregate channels into one model |
 | **Pricing** | Model pricing management |
-| **Logs** | Request details, retries, circuit breaker records |
+| **Logs** | Request details, retries, routing decisions and runtime recovery records |
 | **Settings** | Global config, API keys, account credentials, backup, etc. |
 
 ---
