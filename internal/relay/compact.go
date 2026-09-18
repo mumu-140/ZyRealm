@@ -226,7 +226,6 @@ func HandleResponsesCompact(c *gin.Context) {
 			if success {
 				availability.RecordCredentialSuccessRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, now)
 				op.StatsChannelUpdate(channel.ID, dbmodel.StatsMetrics{RequestSuccess: 1})
-				balancer.RecordSuccess(channel.ID, usedKey.ID, upstreamModel)
 				// 粘性会话按请求模型存取：Iterator.GetSticky 用的是请求模型名，
 				// 换成上游模型名会导致写进去的粘性记录读不到。
 				balancer.SetSticky(apiKeyID, requestModel, channel.ID, usedKey.ID)
@@ -239,8 +238,6 @@ func HandleResponsesCompact(c *gin.Context) {
 				recordCredentialRoutingFailureRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, result, now)
 			}
 			op.StatsChannelUpdate(channel.ID, dbmodel.StatsMetrics{RequestFailed: 1})
-			failureKind := circuitFailureKindForDecision(decision, group.RetryEnabled, statusCode)
-			balancer.RecordFailure(channel.ID, usedKey.ID, upstreamModel, failureKind)
 			reportOutlierDecision(channel.ID, upstreamModel, decision.OutlierScope, statusCode, now)
 			lastErr = attemptErr
 			lastStatusCode = statusCode
