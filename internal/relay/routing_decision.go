@@ -53,10 +53,11 @@ const (
 )
 
 // RoutingDecision is the single policy result consumed by retry/failover,
-// runtime availability, outlier health, legacy circuit compatibility writes,
-// and attempt tracing. Marker/status parsing remains behind the compatibility
-// classifiers, but one wire result is converted into this object exactly once
-// on the relay path.
+// runtime availability, passive outlier health, managed-route policy, and
+// attempt tracing. CircuitEffect is retained as a compatibility policy/trace
+// token through P4C3; it no longer writes or controls legacy breaker state.
+// Marker/status parsing remains behind the compatibility classifiers, but one
+// wire result is converted into this object exactly once on the relay path.
 type RoutingDecision struct {
 	Valid               bool
 	Domain              routingFailureDomain
