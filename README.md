@@ -53,7 +53,7 @@ Major extensions include:
 - **Retry-After recovery** — honors upstream recovery hints with bounded local waiting.
 - **Anthropic compatibility hardening** — malformed HTTP 200 responses and narrow payload-schema incompatibilities can fail over instead of becoming false successes.
 - **Attempt tracing** — each real wire attempt records a routing decision and failure classification.
-- **Configurable request budget** — up to 20 wire attempts per client request, with a separate provider budget and unknown-outcome replay guard.
+- **Configurable request budgets** — provider and wire-attempt budgets default to 20 and accept any positive administrator-defined value; unknown-outcome cross-provider replay remains separately bounded.
 - **Site and channel management** — provider/channel resources, synchronized aggregator sites, models, groups and pricing.
 - **OpenAI Chat / Responses / Images and Anthropic relay support**.
 
@@ -129,10 +129,10 @@ The gateway can perform protocol conversion where supported and can route around
 Three limits are deliberately separate:
 
 1. **Provider budget** limits how many distinct providers a single client request can enter.
-2. **Wire-attempt budget** limits real upstream sends and is configurable up to 20.
+2. **Wire-attempt budget** limits real upstream sends. It defaults to 20, and the application accepts any positive administrator-defined value.
 3. **Unknown-outcome replay budget** remains tightly bounded to reduce duplicate execution and duplicate billing risk.
 
-Local skips such as disabled channels, runtime cooldown, concurrency saturation or circuit rejection do not consume a wire attempt because no upstream request was sent.
+Local skips such as disabled channels, runtime cooldown, a busy passive half-open lease, concurrency saturation or RPM saturation do not consume a wire attempt because no upstream request was sent.
 
 ## Compatibility naming
 
