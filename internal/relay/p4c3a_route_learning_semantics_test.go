@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -30,9 +31,12 @@ func TestP4C3ARouteLearningPolicyReplacesCircuitEffect(t *testing.T) {
 }
 
 func TestP4C3ANewAttemptTraceUsesRouteLearningEffect(t *testing.T) {
-	encoded, err := json.Marshal(dbmodel.AttemptRoutingTrace{
-		RouteLearningEffect: string(routingRouteLearningCandidate),
-	})
+	decision := RoutingDecision{
+		Valid:               true,
+		RouteLearningEffect: routingRouteLearningCandidate,
+	}
+	trace := routingAttemptTrace(context.Background(), attemptResult{}, decision, 1, 1, 1)
+	encoded, err := json.Marshal(trace)
 	if err != nil {
 		t.Fatalf("marshal routing trace: %v", err)
 	}
