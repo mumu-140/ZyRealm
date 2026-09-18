@@ -1,5 +1,7 @@
 # Octopus 自适应中转路由计划：先解决 80% 的真实故障
 
+> Historical snapshot: this document preserves the original design baseline. For current execution status and deferred items, use `docs/plans/README.md`; baseline-specific “当前/下一步” wording below is not live status.
+
 状态：**设计基线 / 尚未实现**  
 主题分支：`codex/adaptive-relay-routing-plan`  
 基线主线：`f0617d51dccab76dc0dec068956dfb852b5996b4`  
