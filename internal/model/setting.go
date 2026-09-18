@@ -53,6 +53,15 @@ type Setting struct {
 	Value string     `json:"value" gorm:"not null"`
 }
 
+func IsRetiredSettingKey(key SettingKey) bool {
+	switch key {
+	case SettingKeyCircuitBreakerThreshold, SettingKeyCircuitBreakerCooldown, SettingKeyCircuitBreakerMaxCooldown:
+		return true
+	default:
+		return false
+	}
+}
+
 func DefaultSettings() []Setting {
 	return []Setting{
 		{Key: SettingKeyProxyURL, Value: ""},
@@ -66,9 +75,6 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyRelayLogKeepEnabled, Value: "true"},           // 默认保留历史日志
 		{Key: SettingKeyRelayMaxProviderAttempts, Value: "20"},        // 默认单请求最多进入 20 个不同上游渠道
 		{Key: SettingKeyRelayMaxWireAttempts, Value: "20"},            // 默认单请求最多 20 次真实上游调用
-		{Key: SettingKeyCircuitBreakerThreshold, Value: "5"},          // 默认连续失败5次触发熔断
-		{Key: SettingKeyCircuitBreakerCooldown, Value: "60"},          // 默认基础冷却60秒
-		{Key: SettingKeyCircuitBreakerMaxCooldown, Value: "600"},      // 默认最大冷却600秒（10分钟）
 		{Key: SettingKeyResponsesWSEnabled, Value: "false"},           // 默认关闭 OpenAI Responses WS 新路径
 		{Key: SettingKeyResponsesWSDefaultMode, Value: "passthrough"}, // 启用后默认使用协议保真的 passthrough
 		{Key: SettingKeySSEHeartbeatInterval, Value: "0"},             // 默认禁用 SSE 流式心跳
@@ -94,10 +100,12 @@ func DefaultSettings() []Setting {
 }
 
 func (s *Setting) Validate() error {
+	if IsRetiredSettingKey(s.Key) {
+		return fmt.Errorf("setting has been retired")
+	}
 	switch s.Key {
 	case SettingKeyModelInfoUpdateInterval, SettingKeySyncLLMInterval, SettingKeySiteSyncInterval,
-		SettingKeySiteCheckinInterval, SettingKeyRelayLogKeepPeriod,
-		SettingKeyCircuitBreakerThreshold, SettingKeyCircuitBreakerCooldown, SettingKeyCircuitBreakerMaxCooldown:
+		SettingKeySiteCheckinInterval, SettingKeyRelayLogKeepPeriod:
 		_, err := strconv.Atoi(s.Value)
 		if err != nil {
 			return fmt.Errorf("setting value must be an integer")

@@ -18,6 +18,17 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+func activeSettings(settings []model.Setting) []model.Setting {
+	active := make([]model.Setting, 0, len(settings))
+	for _, setting := range settings {
+		if model.IsRetiredSettingKey(setting.Key) {
+			continue
+		}
+		active = append(active, setting)
+	}
+	return active
+}
+
 const (
 	dbDumpVersion = 1
 
@@ -88,6 +99,7 @@ func DBExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DB
 	if err := conn.Find(&d.Settings).Error; err != nil {
 		return nil, fmt.Errorf("export settings: %w", err)
 	}
+	d.Settings = activeSettings(d.Settings)
 	if err := conn.Find(&d.ProtocolRoutingConfigs).Error; err != nil {
 		return nil, fmt.Errorf("export protocol_routing_configs: %w", err)
 	}
@@ -596,8 +608,8 @@ func DBImportIncremental(ctx context.Context, dump *model.DBDump) (*model.DBImpo
 			res.RowsAffected["api_keys"]++
 		}
 
-		// 14. Settings (upsert by key - unchanged)
-		if n, err := createUpsertSettings(tx, dump.Settings); err != nil {
+		// 14. Settings (upsert active keys; retired compatibility keys stay tombstoned)
+		if n, err := createUpsertSettings(tx, activeSettings(dump.Settings)); err != nil {
 			return fmt.Errorf("import settings: %w", err)
 		} else {
 			res.RowsAffected["settings"] = n
@@ -1005,7 +1017,12 @@ func DBExportZip(ctx context.Context, w io.Writer, includeLogs, includeStats boo
 	if err := writeZipTable(ctx, zw, conn, "api_keys.json", &[]model.APIKey{}); err != nil {
 		return err
 	}
-	if err := writeZipTable(ctx, zw, conn, "settings.json", &[]model.Setting{}); err != nil {
+	var settings []model.Setting
+	if err := conn.Find(&settings).Error; err != nil {
+		return fmt.Errorf("zip read settings.json: %w", err)
+	}
+	settings = activeSettings(settings)
+	if err := writeZipJSON(zw, "settings.json", &settings); err != nil {
 		return err
 	}
 	if err := writeZipTable(ctx, zw, conn, "protocol_routing_configs.json", &[]model.ProtocolRoutingConfig{}); err != nil {

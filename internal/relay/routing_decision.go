@@ -53,7 +53,7 @@ const (
 )
 
 // RoutingDecision is the single policy result consumed by retry/failover,
-// runtime availability, outlier health, route-learning compatibility policy,
+// runtime availability, outlier health, managed-route learning policy,
 // and attempt tracing. Marker/status parsing remains behind the compatibility
 // classifiers, but one wire result is converted into this object exactly once
 // on the relay path.
@@ -65,6 +65,7 @@ type RoutingDecision struct {
 	Directive           routingDirective
 	RuntimeEffect       routingRuntimeEffect
 	OutlierScope        failureScope
+	RouteLearningCandidate bool
 	CircuitEffect       string
 	ReplaySafety        routingReplaySafety
 	SkipProvider        bool
@@ -99,6 +100,7 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		Directive:     routingDirectiveNextCandidate,
 		RuntimeEffect: routingRuntimeNone,
 		OutlierScope:  legacyScope,
+		RouteLearningCandidate: true,
 		CircuitEffect: "record_failure",
 		ReplaySafety:  routingReplaySafetyFor(result),
 	}
@@ -110,6 +112,7 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		decision.Directive = routingDirectiveComplete
 		decision.RuntimeEffect = routingRuntimeSuccessClear
 		decision.OutlierScope = scopeIgnore
+		decision.RouteLearningCandidate = false
 		decision.CircuitEffect = "success"
 		decision.ReplaySafety = routingReplaySafe
 		decision.Terminal = true
@@ -122,6 +125,7 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		decision.Directive = routingDirectiveTerminal
 		decision.RuntimeEffect = routingRuntimeNone
 		decision.OutlierScope = scopeIgnore
+		decision.RouteLearningCandidate = false
 		decision.CircuitEffect = "none"
 		decision.SkipProvider = false
 		decision.RetrySameCredential = false
@@ -142,6 +146,7 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		decision.FailureScope = routingScopeNone
 		decision.Directive = routingDirectiveTerminal
 		decision.OutlierScope = scopeIgnore
+		decision.RouteLearningCandidate = false
 		decision.CircuitEffect = "none"
 		decision.ReplaySafety = routingReplayClientCanceled
 		decision.Terminal = true
@@ -153,6 +158,7 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		decision.FailureScope = routingScopeNone
 		decision.Directive = routingDirectiveTerminal
 		decision.OutlierScope = scopeIgnore
+		decision.RouteLearningCandidate = false
 		decision.CircuitEffect = "none"
 		decision.Terminal = true
 		decision.SkipProvider = isProviderAttemptBudgetExceeded(result.Err)
@@ -165,6 +171,7 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		decision.FailureScope = routingScopeProviderModel
 		decision.RuntimeEffect = routingRuntimeModelSuspect
 		decision.OutlierScope = scopeIgnore
+		decision.RouteLearningCandidate = false
 		decision.CircuitEffect = "none"
 		decision.SkipProvider = true
 		if result.Written || result.ResetConversation {
@@ -195,7 +202,8 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 			decision.Directive = routingDirectiveTerminal
 			decision.Terminal = true
 			decision.ReplaySafety = routingReplayCommitted
-			decision.CircuitEffect = "none"
+			decision.RouteLearningCandidate = false
+		decision.CircuitEffect = "none"
 		} else if result.DispatchState == dispatchMaybeSent {
 			// The request may already be executing upstream even though no first
 			// token arrived. Treat cross-provider failover as an unknown-outcome
@@ -215,6 +223,7 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		decision.RuleID = "downstream_committed"
 		decision.Directive = routingDirectiveTerminal
 		decision.RuntimeEffect = routingRuntimeNone
+		decision.RouteLearningCandidate = false
 		decision.CircuitEffect = "none"
 		decision.ReplaySafety = routingReplayCommitted
 		decision.SkipProvider = false
@@ -240,10 +249,12 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		decision.Directive = routingDirectiveRotateCredential
 		decision.RuntimeEffect = routingRuntimeCredentialCooldown
 		decision.OutlierScope = scopeIgnore
+		decision.RouteLearningCandidate = false
 		decision.CircuitEffect = "none"
 	case failureDomainModelCapability:
 		decision.FailureScope = routingScopeProviderModel
 		decision.OutlierScope = scopeIgnore
+		decision.RouteLearningCandidate = false
 		decision.CircuitEffect = "none"
 		if decision.RuleID == "model_not_priced" || decision.RuleID == "reasoning_effort_unsupported" {
 			decision.Directive = routingDirectiveNextProvider
@@ -274,10 +285,12 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		if decision.ContentPolicy {
 			decision.Directive = routingDirectiveTerminal
 			decision.OutlierScope = scopeIgnore
-			decision.CircuitEffect = "none"
+			decision.RouteLearningCandidate = false
+		decision.CircuitEffect = "none"
 			decision.Terminal = true
 		} else if status >= 400 && status < 500 {
-			decision.CircuitEffect = "none"
+			decision.RouteLearningCandidate = false
+		decision.CircuitEffect = "none"
 		}
 	default:
 		if isRetryableStatus(result.StatusCode) {
