@@ -73,9 +73,6 @@ func TestHandleAttemptResultAmbiguousCancellationSkipsProviderOnceWithoutHardPen
 	if state := availability.CandidateState(providerA, modelName, time.Now()); state != availability.StateSuspect {
 		t.Fatalf("provider A runtime state = %v, want soft suspect evidence", state)
 	}
-	if tripped, _ := balancer.IsTripped(providerA, keyA, modelName); tripped {
-		t.Fatalf("ambiguous transport cancellation must not trip the hard key/model circuit")
-	}
 	if !iterator.Next() {
 		t.Fatalf("expected provider B to remain available after request-local skip of provider A")
 	}

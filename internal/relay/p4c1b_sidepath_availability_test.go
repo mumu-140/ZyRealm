@@ -110,6 +110,41 @@ func newP4C1BWSRoute(t *testing.T, ctx context.Context, upstreamURL, suffix stri
 // response. A real processWSResponseCreate round always forces stream=true; a
 // direct runWSRelay success fixture without that wrapper would exercise the
 // ordinary Gin non-stream renderer with req.c == nil, which is not the live WS
+func newP4C1BWSRelayRequest(t *testing.T, ctx context.Context, route p4c1bRoute, apiKeyID int) (*relayRequest, *model.Group) {
+	t.Helper()
+	clientConn, serverConn := newTestWSConnPair(t)
+	t.Cleanup(func() {
+		clientConn.Close(websocket.StatusNormalClosure, "")
+		serverConn.Close(websocket.StatusNormalClosure, "")
+	})
+
+	rawBody := []byte(`{"model":"` + route.group.Name + `","messages":[{"role":"user","content":"hi"}]}`)
+	newInternal := func() *transformerModel.InternalLLMRequest {
+		return &transformerModel.InternalLLMRequest{
+			Model:        route.group.Name,
+			RawAPIFormat: transformerModel.APIFormatOpenAIChatCompletion,
+			Messages: []transformerModel.Message{{
+				Role: "user", Content: transformerModel.MessageContent{Content: stringPtr("hi")},
+			}},
+		}
+	}
+	req, group, err := newWSRelayRequest(
+		ctx,
+		serverConn,
+		inbound.Get(inbound.InboundTypeOpenAIChat),
+		apiKeyID,
+		route.group.Name,
+		newInternal(),
+		newInternal(),
+		nil,
+		rawBody,
+	)
+	if err != nil {
+		t.Fatalf("newWSRelayRequest failed: %v", err)
+	}
+	return req, group
+}
+
 func newP4C1BWarmupRoute(t *testing.T, ctx context.Context, upstreamURL, suffix string) p4c1bRoute {
 	t.Helper()
 	upstreamModel := "p4c1b-warmup-upstream-" + suffix

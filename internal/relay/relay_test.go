@@ -1892,8 +1892,7 @@ func TestHandleResponsesCompactSuccessKeyedByUpstreamModel(t *testing.T) {
 }
 
 // TestHandleResponsesCompactFailureOutlierKeyedByUpstreamModel verifies that
-// Compact keeps passive failure evidence on the actual upstream model while
-// the retired legacy circuit remains untouched.
+// Compact keeps passive failure evidence on the actual upstream model.
 func TestHandleResponsesCompactFailureOutlierKeyedByUpstreamModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := setupRelayTestDB(t)
@@ -1924,7 +1923,6 @@ func TestHandleResponsesCompactFailureOutlierKeyedByUpstreamModel(t *testing.T) 
 		t.Fatalf("ChannelCreate failed: %v", err)
 	}
 	outlierwindow.ClearChannel(channel.ID)
-	keyID := channel.Keys[0].ID
 
 	group := &model.Group{Name: requestModel, Mode: model.GroupModeFailover}
 	if err := op.GroupCreate(group, ctx); err != nil {
@@ -1957,12 +1955,6 @@ func TestHandleResponsesCompactFailureOutlierKeyedByUpstreamModel(t *testing.T) 
 		t.Fatalf("请求模型键不应产生健康样本，got %#v", stats)
 	}
 
-	if tripped, _ := balancer.IsTripped(channel.ID, keyID, upstreamModel); tripped {
-		t.Fatal("Compact failure must not mutate the retired legacy circuit for the upstream model")
-	}
-	if tripped, _ := balancer.IsTripped(channel.ID, keyID, requestModel); tripped {
-		t.Fatal("Compact failure must not mutate the retired legacy circuit for the request model")
-	}
 }
 
 func setupRelayTestDB(t *testing.T) context.Context {
