@@ -10,33 +10,6 @@ import (
 	"github.com/bestruirui/octopus/internal/relay/balancer"
 )
 
-func circuitFailureKind(retryEnabled bool, statusCode int) balancer.FailureKind {
-	if retryEnabled && isPassthroughStatus(statusCode) {
-		return balancer.FailureSoftRateLimit
-	}
-	// Request, credential and capability semantics are not provider-health
-	// evidence. Their dedicated routing/runtime policy decides whether to stop,
-	// rotate a credential, or switch provider; the breaker should not learn a
-	// hard outage from generic 4xx envelopes such as misleading 401/403 errors.
-	if statusCode >= 400 && statusCode < 500 {
-		return balancer.FailureIgnore
-	}
-	return balancer.FailureHard
-}
-
-// circuitFailureKindForDecision makes RoutingDecision the gate for breaker
-// evidence. The legacy status classifier is retained only to preserve the
-// existing hard-vs-soft distinction after policy has explicitly allowed circuit
-// learning; it no longer decides whether an outcome belongs in the breaker.
-func circuitFailureKindForDecision(decision RoutingDecision, retryEnabled bool, statusCode int) balancer.FailureKind {
-	switch decision.CircuitEffect {
-	case "none", "success":
-		return balancer.FailureIgnore
-	default:
-		return circuitFailureKind(retryEnabled, statusCode)
-	}
-}
-
 // attempt 统一管理一次通道尝试的完整生命周期
 func (ra *relayAttempt) attempt() attemptResult {
 	span := ra.iter.StartAttempt(ra.channel.ID, ra.usedKey.ID, ra.channel.Name)
@@ -99,7 +72,6 @@ func (ra *relayAttempt) finishSuccessfulAttempt(span *balancer.AttemptSpan, stat
 	op.StatsChannelUpdate(ra.channel.ID, dbmodel.StatsMetrics{
 		WaitTime: span.Duration().Milliseconds(), RequestSuccess: 1,
 	})
-	balancer.RecordSuccess(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
 	balancer.SetSticky(ra.apiKeyID, ra.requestModel, ra.channel.ID, ra.usedKey.ID)
 	return result
 }

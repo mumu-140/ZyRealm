@@ -1572,7 +1572,7 @@ func TestHandlerUsesNextKeyWhenFirstCredentialIsCooling(t *testing.T) {
 	}
 }
 
-func TestGeneric500LegacyCircuitWriteDoesNotBlockRelayAdmission(t *testing.T) {
+func TestGeneric500DoesNotWriteLegacyCircuitOrBlockRelayAdmission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := setupRelayTestDB(t)
 
@@ -1643,17 +1643,20 @@ func TestGeneric500LegacyCircuitWriteDoesNotBlockRelayAdmission(t *testing.T) {
 	if hits.Load() != 2 {
 		t.Fatalf("expected two upstream generic-500 calls, got %d", hits.Load())
 	}
-	if !balancer.PeekItemTripped(channel.ID, "breaker-model") {
-		t.Fatal("test precondition: compatibility circuit write must be open")
+	if balancer.PeekItemTripped(channel.ID, "breaker-model") {
+		t.Fatal("generic 500 must not mutate the retired legacy circuit")
+	}
+	if state := availability.CandidateState(channel.ID, "breaker-model", time.Now()); state != availability.StateAvailable {
+		t.Fatalf("generic 500 runtime state = %v, want available", state)
 	}
 
 	phase.Store(1)
 	resp3 := makeRequest(`{"model":"relay-inert-legacy-circuit-group","messages":[{"role":"user","content":"third"}]}`)
 	if resp3.Code != http.StatusOK {
-		t.Fatalf("legacy circuit write must not block relay admission, got status %d body %s", resp3.Code, resp3.Body.String())
+		t.Fatalf("retired legacy circuit must not affect relay admission, got status %d body %s", resp3.Code, resp3.Body.String())
 	}
 	if hits.Load() != 3 {
-		t.Fatalf("expected request to reach upstream despite open legacy circuit, got %d total hits", hits.Load())
+		t.Fatalf("expected request to reach upstream after legacy circuit writer retirement, got %d total hits", hits.Load())
 	}
 	if !strings.Contains(resp3.Body.String(), `"content":"ok"`) {
 		t.Fatalf("expected successful response body, got %s", resp3.Body.String())
@@ -1903,9 +1906,10 @@ func TestHandleResponsesCompactSuccessKeyedByUpstreamModel(t *testing.T) {
 	}
 }
 
-// TestHandleResponsesCompactFailureKeyedByUpstreamModel 失败路径同键：
-// 熔断与健康度都必须写在上游模型名下，balancer 的读侧（IsTripped / PeekItemTripped）才能命中。
-func TestHandleResponsesCompactFailureKeyedByUpstreamModel(t *testing.T) {
+// TestHandleResponsesCompactFailureOutlierKeyedByUpstreamModel verifies that
+// Compact keeps passive failure evidence on the actual upstream model while
+// the retired legacy circuit remains untouched.
+func TestHandleResponsesCompactFailureOutlierKeyedByUpstreamModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := setupRelayTestDB(t)
 
@@ -1913,11 +1917,6 @@ func TestHandleResponsesCompactFailureKeyedByUpstreamModel(t *testing.T) {
 		requestModel  = "relay-compact-fail-group"
 		upstreamModel = "compact-upstream-fail-model"
 	)
-
-	// 阈值降到 1：一次失败即熔断，不必构造 5 次上游调用
-	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerThreshold, 1); err != nil {
-		t.Fatalf("SettingSetInt failed: %v", err)
-	}
 
 	var hits atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1973,15 +1972,11 @@ func TestHandleResponsesCompactFailureKeyedByUpstreamModel(t *testing.T) {
 		t.Fatalf("请求模型键不应产生健康样本，got %#v", stats)
 	}
 
-	if tripped, _ := balancer.IsTripped(channel.ID, keyID, upstreamModel); !tripped {
-		t.Fatal("上游模型键未熔断：compact 的失败上报读不到，等于熔断对 compact 失效")
+	if tripped, _ := balancer.IsTripped(channel.ID, keyID, upstreamModel); tripped {
+		t.Fatal("Compact failure must not mutate the retired legacy circuit for the upstream model")
 	}
 	if tripped, _ := balancer.IsTripped(channel.ID, keyID, requestModel); tripped {
-		t.Fatal("请求模型键不应产生熔断条目")
-	}
-	// 排序读侧同键：PeekItemTripped 按 (channelID, item.ModelName) 取
-	if !balancer.PeekItemTripped(channel.ID, upstreamModel) {
-		t.Fatal("PeekItemTripped 读不到 compact 写入的熔断状态")
+		t.Fatal("Compact failure must not mutate the retired legacy circuit for the request model")
 	}
 }
 

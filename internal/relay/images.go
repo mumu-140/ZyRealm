@@ -252,7 +252,6 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 						WaitTime:       span.Duration().Milliseconds(),
 						RequestSuccess: 1,
 					})
-					balancer.RecordSuccess(channel.ID, usedKey.ID, upstreamModel)
 					balancer.SetSticky(apiKeyID, requestModel, channel.ID, usedKey.ID)
 					metrics.SaveWithChannelStats(ctx, true, nil, iter.Attempts(), false)
 					return true
@@ -273,8 +272,6 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 					return true
 				}
 
-				failureKind := circuitFailureKindForDecision(decision, group.RetryEnabled, statusCode)
-				balancer.RecordFailure(channel.ID, usedKey.ID, upstreamModel, failureKind)
 				if decision.Domain == failureDomainCredential {
 					recordCredentialRoutingFailureRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, result, now)
 				}
