@@ -60,8 +60,8 @@ const (
 )
 
 // RoutingDecision is the single policy result consumed by retry/failover,
-// runtime availability, outlier health, route-learning compatibility policy,
-// and attempt tracing. Marker/status parsing remains behind the compatibility
+// runtime availability, outlier health, route-learning policy, and attempt
+// tracing. Marker/status parsing remains behind the compatibility
 // classifiers, but one wire result is converted into this object exactly once
 // on the relay path.
 type RoutingDecision struct {
@@ -99,15 +99,15 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 	hasAlternative := request != nil && request.iter != nil && request.iter.HasAlternativeProvider(channelID)
 
 	decision := RoutingDecision{
-		Valid:         true,
-		Domain:        domain,
-		RuleID:        routingRuleID(domain, status, text),
-		FailureScope:  routingScopeFor(domain, legacyScope),
-		Directive:     routingDirectiveNextCandidate,
-		RuntimeEffect: routingRuntimeNone,
-		OutlierScope:  legacyScope,
+		Valid:               true,
+		Domain:              domain,
+		RuleID:              routingRuleID(domain, status, text),
+		FailureScope:        routingScopeFor(domain, legacyScope),
+		Directive:           routingDirectiveNextCandidate,
+		RuntimeEffect:       routingRuntimeNone,
+		OutlierScope:        legacyScope,
 		RouteLearningEffect: routingRouteLearningCandidate,
-		ReplaySafety:  routingReplaySafetyFor(result),
+		ReplaySafety:        routingReplaySafetyFor(result),
 	}
 
 	if result.Success {
