@@ -97,8 +97,8 @@ func TestCommittedStreamReadFailureStopsReplayButCarriesModelHealthEvidence(t *t
 	if decision.OutlierScope != scopeModel {
 		t.Fatalf("outlier scope = %v, want model", decision.OutlierScope)
 	}
-	if decision.CircuitEffect != "record_failure" {
-		t.Fatalf("circuit effect = %q, want record_failure", decision.CircuitEffect)
+	if decision.RouteLearningEffect != routingRouteLearningCandidate {
+		t.Fatalf("route-learning effect = %q, want candidate", decision.RouteLearningEffect)
 	}
 }
 
@@ -133,7 +133,7 @@ func TestCommittedNonStreamFailureRemainsRuntimeAndCircuitNeutral(t *testing.T) 
 	if !decision.Terminal || decision.ReplaySafety != routingReplayCommitted {
 		t.Fatalf("committed non-stream failure must still stop replay: %+v", decision)
 	}
-	if decision.RuntimeEffect != routingRuntimeNone || decision.CircuitEffect != "none" {
+	if decision.RuntimeEffect != routingRuntimeNone || decision.RouteLearningEffect != routingRouteLearningNone {
 		t.Fatalf("local committed failure must stay shared-health neutral: %+v", decision)
 	}
 }
