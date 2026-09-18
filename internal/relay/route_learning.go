@@ -31,12 +31,12 @@ func detectRouteMismatchTarget(inboundType inbound.InboundType, err error) (mode
 }
 
 
-// shouldLearnManagedRoute consumes an explicit route-learning signal from the
-// already-computed RoutingDecision. Retry/status preserve the historical
+// shouldLearnManagedRoute consumes the route-learning signal already projected
+// by AttemptCoordinator. Retry/status preserve the historical
 // hard-vs-soft distinction for passthrough throttling without borrowing health
 // or circuit-breaker semantics.
-func shouldLearnManagedRoute(decision RoutingDecision, retryEnabled bool, statusCode int) bool {
-	if !decision.RouteLearningCandidate {
+func shouldLearnManagedRoute(routeLearningCandidate bool, retryEnabled bool, statusCode int) bool {
+	if !routeLearningCandidate {
 		return false
 	}
 	if retryEnabled && isPassthroughStatus(statusCode) {
