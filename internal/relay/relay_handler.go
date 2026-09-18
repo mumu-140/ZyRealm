@@ -314,9 +314,21 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 	result = withRoutingDecision(ctx, h.request, channel.ID, result)
 	recordRuntimeAvailabilityEvidence(ctx, channel.ID, plan.UpstreamModel(), result, now)
 
+	coordination, ok := coordinateAttemptOutcome(result)
+	if !ok {
+		// withRoutingDecision above is the sole classifier for this path. Treat
+		// an invalid projection as an internal invariant violation rather than
+		// silently reclassifying inside the coordinator.
+		h.lastErr = result.Err
+		h.lastResult = result
+		h.metrics.SaveWithChannelStats(ctx, false, result.Err, h.iterator.Attempts(), false)
+		h.heartbeat.FlushOrError(h.c, http.StatusInternalServerError, "routing decision unavailable")
+		return true
+	}
+
 	decision := result.Decision
 	manualInterrupt := decision.RuleID == "manual_interrupt"
-	explicitContentPolicy := decision.ContentPolicy
+	explicitContentPolicy := coordination.Effects.ContentPolicy
 
 	if manualInterrupt {
 		h.lastErr = result.Err
@@ -333,7 +345,7 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 	// This includes ambiguous transport cancellation and first-token timeout: in
 	// both cases the upstream may already be executing the request. NOT_SENT
 	// failures remain free to fail over because duplicate execution is impossible.
-	if decision.ReplaySafety == routingReplayUnknownOutcome && decision.SkipProvider &&
+	if coordination.Disposition.ReplaySafety == routingReplayUnknownOutcome && coordination.Disposition.SkipProvider &&
 		h.iterator.HasAlternativeProvider(channel.ID) && !result.Written && !result.ResetConversation &&
 		h.request.attemptBudget != nil {
 		if !h.request.attemptBudget.tryUnknownCrossProviderReplay() {
@@ -346,7 +358,7 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 		}
 	}
 
-	if decision.SkipProvider || isProviderAttemptBudgetExceeded(result.Err) {
+	if coordination.Disposition.SkipProvider || isProviderAttemptBudgetExceeded(result.Err) {
 		// Request-local provider skipping is part of the unified decision. Shared
 		// runtime health remains separately scoped by RuntimeEffect.
 		h.iterator.SkipProvider(channel.ID)
@@ -356,7 +368,7 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 		// RoutingDecision is the single policy verdict. Downstream health effects
 		// consume its precomputed scopes/effects and do not reinterpret raw error
 		// text or status to decide whether evidence belongs in these systems.
-		reportOutlierDecision(channel.ID, plan.UpstreamModel(), decision.OutlierScope, result.StatusCode, now)
+		reportOutlierDecision(channel.ID, plan.UpstreamModel(), coordination.Effects.OutlierScope, result.StatusCode, now)
 		if shouldLearnManagedRoute(decision, h.group.RetryEnabled, result.StatusCode) {
 			maybeLearnManagedRoute(ctx, channel.ID, plan.UpstreamModel(), h.inboundType, result.Err)
 		}
