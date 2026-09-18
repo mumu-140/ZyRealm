@@ -174,8 +174,8 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 			continue
 		}
 
-		// 同渠道内按 Key 重试（容量 slot 覆盖全部 Key 尝试）。Images 保留原有
-		// GetChannelKey 排序，只把 credential/runtime eligibility 迁到统一 authority。
+		// 同渠道内按 Key 重试（容量 slot 覆盖全部 Key 尝试）。Credential
+		// eligibility + provider-local equal-weight fairness 由统一 scheduler 决定；
 		// outlierwindow 仍只记录渠道最终结果，不记录中间 Key 失败。
 		done := func() bool {
 			defer balancer.ReleaseChannel(channel.ID)
@@ -196,22 +196,9 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 					ExcludeKeyIDs:  excludeKeys,
 					PreferredKeyID: preferredKeyID,
 				}
-				usedKey := channel.GetChannelKey(selectOpts)
+				usedKey := selectFairChannelCredential(channel, selectOpts, iter, time.Now())
 				if usedKey.ChannelKey == "" {
 					break
-				}
-				if !availability.CredentialAvailableRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, time.Now()) {
-					excludeKeys[usedKey.ID] = struct{}{}
-					preferredKeyID = 0
-					iter.RecordDecision(model.RoutingDecisionEvent{
-						Stage:        model.DecisionStageCredential,
-						Outcome:      model.DecisionOutcomeRejected,
-						Reason:       model.DecisionReasonCredentialCooldown,
-						ChannelID:    channel.ID,
-						ChannelKeyID: usedKey.ID,
-						ChannelName:  channel.Name,
-					})
-					continue
 				}
 
 				log.Debugf("images request model %s, mode: %d, forwarding to channel: %s model: %s (attempt %d/%d, sticky=%t, stream=%t)",
