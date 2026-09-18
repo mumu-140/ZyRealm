@@ -208,10 +208,6 @@ func TestImagesHandlerDoesNotUseLegacyCircuitAsCredentialAdmission(t *testing.T)
 	ginTestMode(t)
 	ctx := setupRelayTestDB(t)
 
-	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerThreshold, 1); err != nil {
-		t.Fatalf("SettingSetInt threshold failed: %v", err)
-	}
-
 	var hits atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
@@ -223,7 +219,9 @@ func TestImagesHandlerDoesNotUseLegacyCircuitAsCredentialAdmission(t *testing.T)
 	group := &model.Group{Name: "public-image-ignore-legacy-circuit", Mode: model.GroupModeFailover}
 	created := persistImagesRoute(t, ctx, group, channel)[0]
 	key := created.Keys[0]
-	balancer.RecordFailure(created.ID, key.ID, "gpt-image-2", balancer.FailureHard)
+	for i := 0; i < 5; i++ {
+		balancer.RecordFailure(created.ID, key.ID, "gpt-image-2", balancer.FailureHard)
+	}
 	if tripped, _ := balancer.IsTripped(created.ID, key.ID, "gpt-image-2"); !tripped {
 		t.Fatal("test precondition: legacy circuit must be open")
 	}
