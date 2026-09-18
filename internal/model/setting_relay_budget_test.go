@@ -41,9 +41,9 @@ func TestRelayAttemptBudgetDefaultsAreTwenty(t *testing.T) {
 
 func TestCircuitBreakerSettingsAreRetired(t *testing.T) {
 	retired := []SettingKey{
-		SettingKeyCircuitBreakerThreshold,
-		SettingKeyCircuitBreakerCooldown,
-		SettingKeyCircuitBreakerMaxCooldown,
+		SettingKey("circuit_breaker_threshold"),
+		SettingKey("circuit_breaker_cooldown"),
+		SettingKey("circuit_breaker_max_cooldown"),
 	}
 
 	defaults := map[SettingKey]string{}

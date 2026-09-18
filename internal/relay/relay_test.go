@@ -1572,7 +1572,7 @@ func TestHandlerUsesNextKeyWhenFirstCredentialIsCooling(t *testing.T) {
 	}
 }
 
-func TestGeneric500DoesNotWriteLegacyCircuitOrBlockRelayAdmission(t *testing.T) {
+func TestGeneric500StaysRuntimeNeutralAndDoesNotBlockRelayAdmission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := setupRelayTestDB(t)
 
@@ -1590,7 +1590,7 @@ func TestGeneric500DoesNotWriteLegacyCircuitOrBlockRelayAdmission(t *testing.T) 
 	defer server.Close()
 
 	channel := &model.Channel{
-		Name:     "relay-inert-legacy-circuit",
+		Name:     "relay-generic-500-runtime-neutral",
 		Type:     outbound.OutboundTypeOpenAIChat,
 		Enabled:  true,
 		BaseUrls: []model.BaseUrl{{URL: server.URL + "/v1"}},
@@ -1602,7 +1602,7 @@ func TestGeneric500DoesNotWriteLegacyCircuitOrBlockRelayAdmission(t *testing.T) 
 	}
 
 	group := &model.Group{
-		Name:         "relay-inert-legacy-circuit-group",
+		Name:         "relay-generic-500-runtime-neutral-group",
 		Mode:         model.GroupModeFailover,
 		RetryEnabled: false,
 	}
@@ -1623,7 +1623,7 @@ func TestGeneric500DoesNotWriteLegacyCircuitOrBlockRelayAdmission(t *testing.T) 
 	}
 
 	for i := 0; i < 5; i++ {
-		resp := makeRequest(`{"model":"relay-inert-legacy-circuit-group","messages":[{"role":"user","content":"failure"}]}`)
+		resp := makeRequest(`{"model":"relay-generic-500-runtime-neutral-group","messages":[{"role":"user","content":"failure"}]}`)
 		if resp.Code != http.StatusInternalServerError {
 			t.Fatalf("generic 500 request %d: got status %d body %s", i+1, resp.Code, resp.Body.String())
 		}
@@ -1631,20 +1631,17 @@ func TestGeneric500DoesNotWriteLegacyCircuitOrBlockRelayAdmission(t *testing.T) 
 	if hits.Load() != 5 {
 		t.Fatalf("expected five upstream generic-500 calls, got %d", hits.Load())
 	}
-	if balancer.PeekItemTripped(channel.ID, "breaker-model") {
-		t.Fatal("generic 500 must not mutate the retired legacy circuit")
-	}
 	if state := availability.CandidateState(channel.ID, "breaker-model", time.Now()); state != availability.StateAvailable {
 		t.Fatalf("generic 500 runtime state = %v, want available", state)
 	}
 
 	phase.Store(1)
-	resp3 := makeRequest(`{"model":"relay-inert-legacy-circuit-group","messages":[{"role":"user","content":"third"}]}`)
+	resp3 := makeRequest(`{"model":"relay-generic-500-runtime-neutral-group","messages":[{"role":"user","content":"third"}]}`)
 	if resp3.Code != http.StatusOK {
-		t.Fatalf("retired legacy circuit must not affect relay admission, got status %d body %s", resp3.Code, resp3.Body.String())
+		t.Fatalf("generic 500 runtime evidence must not block relay admission, got status %d body %s", resp3.Code, resp3.Body.String())
 	}
 	if hits.Load() != 6 {
-		t.Fatalf("expected request to reach upstream after legacy circuit writer retirement, got %d total hits", hits.Load())
+		t.Fatalf("expected request to reach upstream after repeated runtime-neutral generic 500 responses, got %d total hits", hits.Load())
 	}
 	if !strings.Contains(resp3.Body.String(), `"content":"ok"`) {
 		t.Fatalf("expected successful response body, got %s", resp3.Body.String())

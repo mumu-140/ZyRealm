@@ -46,8 +46,8 @@ func TestRoutingDecisionReasoningCapabilityBeatsMisleadingAuthEnvelope(t *testin
 	if decision.Directive != routingDirectiveNextProvider || !decision.SkipProvider {
 		t.Fatalf("directive=%q skipProvider=%t, want immediate next provider", decision.Directive, decision.SkipProvider)
 	}
-	if decision.OutlierScope != scopeIgnore || decision.CircuitEffect != "none" {
-		t.Fatalf("capability must be health-neutral: outlier=%v circuit=%q", decision.OutlierScope, decision.CircuitEffect)
+	if decision.OutlierScope != scopeIgnore {
+		t.Fatalf("capability must be health-neutral: outlier=%v", decision.OutlierScope)
 	}
 	if decision.RouteLearningCandidate {
 		t.Fatal("model capability mismatch must not become managed-route learning evidence")
@@ -70,8 +70,8 @@ func TestRoutingDecisionGenericCapabilityBeatsMisleadingAuthEnvelope(t *testing.
 	if decision.Directive != routingDirectiveProtocolOrProvider || decision.SkipProvider {
 		t.Fatalf("directive=%q skipProvider=%t, want protocol fallback before provider failover", decision.Directive, decision.SkipProvider)
 	}
-	if decision.OutlierScope != scopeIgnore || decision.CircuitEffect != "none" {
-		t.Fatalf("capability must be health-neutral: outlier=%v circuit=%q", decision.OutlierScope, decision.CircuitEffect)
+	if decision.OutlierScope != scopeIgnore {
+		t.Fatalf("capability must be health-neutral: outlier=%v", decision.OutlierScope)
 	}
 }
 
@@ -156,7 +156,7 @@ func TestRoutingDecisionContentPolicyIsTerminalAndHealthNeutral(t *testing.T) {
 	if !decision.ContentPolicy || !decision.Terminal || decision.Directive != routingDirectiveTerminal {
 		t.Fatalf("content policy decision=%+v", decision)
 	}
-	if decision.OutlierScope != scopeIgnore || decision.CircuitEffect != "none" || decision.RuntimeEffect != routingRuntimeNone {
+	if decision.OutlierScope != scopeIgnore || decision.RuntimeEffect != routingRuntimeNone {
 		t.Fatalf("content policy must be health-neutral: %+v", decision)
 	}
 	if decision.RouteLearningCandidate {

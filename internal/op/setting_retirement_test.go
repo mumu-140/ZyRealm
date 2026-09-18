@@ -13,9 +13,9 @@ func TestRetiredCircuitSettingsStayOutOfActiveRuntimeAndExports(t *testing.T) {
     t.Cleanup(settingCache.Clear)
 
     retired := []model.Setting{
-        {Key: model.SettingKeyCircuitBreakerThreshold, Value: "9"},
-        {Key: model.SettingKeyCircuitBreakerCooldown, Value: "90"},
-        {Key: model.SettingKeyCircuitBreakerMaxCooldown, Value: "900"},
+        {Key: model.SettingKey("circuit_breaker_threshold"), Value: "9"},
+        {Key: model.SettingKey("circuit_breaker_cooldown"), Value: "90"},
+        {Key: model.SettingKey("circuit_breaker_max_cooldown"), Value: "900"},
     }
     for _, setting := range retired {
         if err := dbpkg.GetDB().Save(&setting).Error; err != nil {
@@ -48,9 +48,9 @@ func TestRetiredCircuitSettingsFromBackupAreIgnored(t *testing.T) {
     dump := &model.DBDump{
         Version: 1,
         Settings: []model.Setting{
-            {Key: model.SettingKeyCircuitBreakerThreshold, Value: "9"},
-            {Key: model.SettingKeyCircuitBreakerCooldown, Value: "90"},
-            {Key: model.SettingKeyCircuitBreakerMaxCooldown, Value: "900"},
+            {Key: model.SettingKey("circuit_breaker_threshold"), Value: "9"},
+            {Key: model.SettingKey("circuit_breaker_cooldown"), Value: "90"},
+            {Key: model.SettingKey("circuit_breaker_max_cooldown"), Value: "900"},
         },
     }
 
@@ -64,9 +64,9 @@ func TestRetiredCircuitSettingsFromBackupAreIgnored(t *testing.T) {
 
     var count int64
     keys := []model.SettingKey{
-        model.SettingKeyCircuitBreakerThreshold,
-        model.SettingKeyCircuitBreakerCooldown,
-        model.SettingKeyCircuitBreakerMaxCooldown,
+        model.SettingKey("circuit_breaker_threshold"),
+        model.SettingKey("circuit_breaker_cooldown"),
+        model.SettingKey("circuit_breaker_max_cooldown"),
     }
     if err := dbpkg.GetDB().Model(&model.Setting{}).Where("key IN ?", keys).Count(&count).Error; err != nil {
         t.Fatalf("count retired settings: %v", err)
