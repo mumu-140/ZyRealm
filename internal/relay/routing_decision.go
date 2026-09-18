@@ -277,9 +277,17 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 			decision.RouteLearningCandidate = false
 		}
 	default:
-		if isRetryableStatus(result.StatusCode) {
-			decision.Directive = routingDirectiveRetrySameCredential
-			decision.RetrySameCredential = true
+		if isRetryableStatus(status) {
+			// Generic 5xx is too ambiguous to poison shared runtime state, but when
+			// another request-eligible provider exists it is still more useful to
+			// search that provider than to spend same-key retries on this one.
+			if status >= 500 && status <= 599 && hasAlternative {
+				decision.Directive = routingDirectiveNextProvider
+				decision.SkipProvider = true
+			} else {
+				decision.Directive = routingDirectiveRetrySameCredential
+				decision.RetrySameCredential = true
+			}
 		}
 	}
 
