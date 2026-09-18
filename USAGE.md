@@ -26,7 +26,7 @@
 - [VIII. Step 4: Create an API Key and Connect Clients](#viii-step-4-create-an-api-key-and-connect-clients)
 - [IX. Manual Channels: Connecting Non-Site Providers](#ix-manual-channels-connecting-non-site-providers)
 - [X. Protocol Conversion](#x-protocol-conversion)
-- [XI. Load Balancing / Circuit Breaker / Retry / Logs](#xi-load-balancing--circuit-breaker--retry--logs)
+- [XI. Load Balancing / Runtime Recovery / Retry / Logs](#xi-load-balancing--runtime-recovery--retry--logs)
 - [XII. Settings Page Overview](#xii-settings-page-overview)
 - [XIII. Frequently Asked Questions](#xiii-frequently-asked-questions)
 - [XIV. Performance & Operations](#xiv-performance--operations)
@@ -437,26 +437,31 @@ Octopus supports **OpenAI Chat / OpenAI Responses / Anthropic** format interconv
 
 ---
 
-## XI. Load Balancing / Circuit Breaker / Retry / Logs
+## XI. Load Balancing / Runtime Recovery / Retry / Logs
 
 ### 11.1 Retry Rules (Frequently Asked)
 
-- Manual channel: **a Key returns 401** (auth failure) → **will not** retry other Keys in the same channel; instead **switches directly to the next channel**.
-- **429 / 5xx** and other retryable errors → depends on the group's **"Same Channel Retry"** toggle: if on, retries with the **same channel and same Key** first (count = max retries); after all retries fail, the status code is passed through to the client.
+Retry direction is determined by the canonical failure classification, not by HTTP status alone:
 
-### 11.2 Circuit Breaker
+- Explicit credential failures such as an invalid/disabled Key or credential-scoped quota error put that credential into cooldown and **rotate to another eligible Key in the same provider** while the request's credential-attempt ceiling allows it.
+- Provider-transient failures such as transport errors, Cloudflare/intercept pages, or provider 5xx failures **move to the next eligible provider** and apply provider runtime cooldown; they do not walk every Key in the failed provider.
+- Model-capacity failures normally move to another eligible provider. If there is no alternative provider and the failure is replay-safe/retryable, a bounded same-credential retry may be used.
+- Request/content-policy failures terminate, and a response that has already been committed downstream is never automatically replayed.
+- The group's **Same Channel Retry / Max Retries** setting is a retry ceiling used only when the routing directive allows a same-channel retry; it does not override the failure classifier.
 
-When a channel has **consecutive failures** reaching the threshold, it gets circuit-broken for a period. Cool-down time grows via **exponential backoff** (threshold / base cool-down / max cool-down are configurable in Settings → Circuit Breaker).
+### 11.2 Runtime Cooldown and Passive Recovery
 
-> How to tell if a channel is in circuit breaker cooldown? Go to **Logs** → expand an entry → **Retry Details** — you'll see a "circuit broken" marker and **countdown until recovery**.
+ZyRealm no longer uses the legacy configurable Circuit Breaker. Runtime admission is scoped to **provider**, **provider × model**, and **credential** state. A cooling candidate is filtered before balancing; when cooldown expires, the next real user request receives the passive half-open trial. Only one half-open trial is admitted for a recovering scope, and ZyRealm does not send synthetic LLM probe prompts.
+
+Trusted upstream recovery hints such as `Retry-After` may refine the cooldown within a bounded horizon.
 
 ### 11.3 Passive Outlier Retirement (Optional)
 
-Settings → Passive Outlier Retirement: Based on real request success/failure sequences, automatically **disables** (not deletes) continuously failing **site projected channels**. Auto-re-enables when probes recover. **Only affects site projected channels, disabled by default**.
+Settings → Passive Outlier Retirement: Based on real request success/failure sequences, automatically **disables** (not deletes) continuously failing **site projected channels**. Recovery checks may re-enable them. **Only affects site projected channels, disabled by default**.
 
 ### 11.4 What Log Cards Show
 
-Each log entry can be expanded to see: error message, **time to first token**, total duration, input/output tokens, cost, **retry details** (each attempt's success/failure/skip/circuit-break), and WS-related markers (passthrough/conversion/continuation/replay/fallback, etc.). Log cards also display **cache tokens** inline (e.g., `R 148K`), making it easy to see how much prompt cache was hit.
+Each log entry can be expanded to see error details, **time to first token**, total duration, input/output tokens, cost, per-attempt success/failure/skip information and WS markers. The Routing Inspector also exposes the failure domain/scope, retry directive, runtime effect, replay safety and routing decisions used by the adaptive relay. Log cards display **cache tokens** inline (for example, `R 148K`).
 
 ---
 
@@ -465,8 +470,7 @@ Each log entry can be expanded to see: error message, **time to first token**, t
 | Panel | Key Items |
 |-------|-----------|
 | **System** | Proxy address, **Statistics save interval (minutes)**, CORS whitelist, Responses WebSocket (default mode: passthrough/convert/off), SSE heartbeat, **Group health check** toggle |
-| **Circuit Breaker** | Trigger threshold, base cooldown, max cooldown (exponential backoff) |
-| **Passive Outlier Retirement** | Site projected channels only, disabled by default. Includes failure rate / min samples / consecutive failures / window parameters |
+| **Reliability** | Request routing budgets, group-health toggle, and passive outlier retirement controls for site projected channels |
 | **Channel Sync** | Auto-sync interval (hours), manual sync |
 | **Model Pricing** | Auto-update interval (hours), manual update (data from models.dev) |
 | **Site Automation** | Site auto-sync interval (hours), auto check-in interval (hours), manual full sync / full check-in |
@@ -510,10 +514,10 @@ Because **you haven't created a group yet**. In Octopus, "group name = available
 **Domain only**, e.g., `https://wzw.pp.ua` — **don't include** `/v1` or other paths.
 
 ### Q6. One channel has multiple Keys — how to rotate them?
-Use a **Manual Channel** and add multiple Keys inside it; then set the channel's **group "Session Affinity" to 0**. This way each Key's cumulative cost will tend to equalize — if each request costs about the same, it approximates rotation. Non-zero session affinity "sticks" to one Key. The manual channel panel shows each Key's usage cost — run a few requests and you'll see.
+Use a **Manual Channel** and add multiple Keys inside it. Live requests use a provider-local **equal-weight fair credential scheduler**; historical cost is not used to choose the next Key. Set the group's **Session Affinity to 0** for independent fair allocation. A non-zero affinity may prefer a sticky credential while it remains eligible.
 
 ### Q7. Does 401 / 429 automatically switch Keys?
-Manual channel with a Key returning **401 will not** retry other Keys — it switches directly to the next channel. **429** depends on whether the group has "Same Channel Retry" enabled — if so, it retries with the same channel and Key.
+ZyRealm does not route on status code alone. A **401 with explicit invalid/disabled credential evidence** cools that Key and rotates to another eligible Key. A **429** is classified by its markers: account/credential concurrency may rotate credentials, while model/provider capacity normally moves to another eligible provider. Same Channel Retry only bounds cases where the routing decision permits a same-channel retry.
 
 ### Q8. Log shows a different model name than configured, and billing is 0?
 Not a bug. The log shows the model name from the **upstream response's `model` field**. If upstream returns a date-suffixed variant (like `gpt-5.4-mini-2026-03-17`) and you haven't priced it, billing will be 0. Go to the **Pricing** page and **set a custom price** for that name. This is uncommon and acceptable.
@@ -559,6 +563,6 @@ First confirm the **upstream provider itself** is configured correctly (the same
 <div align="center">
 
 For fork-specific questions not covered in this guide, open an issue in
-[mumu-140/octopus-concurrency](https://github.com/mumu-140/octopus-concurrency).
+[mumu-140/ZyRealm](https://github.com/mumu-140/ZyRealm).
 
 </div>
