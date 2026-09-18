@@ -29,8 +29,8 @@ func assertManualInterruptDecision(t *testing.T, result attemptResult, wantRepla
 	if decision.OutlierScope != scopeIgnore {
 		t.Fatalf("outlier scope=%v, want ignore", decision.OutlierScope)
 	}
-	if decision.CircuitEffect != "none" {
-		t.Fatalf("circuit effect=%q, want none", decision.CircuitEffect)
+	if decision.RouteLearningEffect != routingRouteLearningNone {
+		t.Fatalf("route-learning effect=%q, want none", decision.RouteLearningEffect)
 	}
 	if decision.SkipProvider || decision.RetrySameCredential {
 		t.Fatalf("manual interrupt must not retry/failover: skipProvider=%t retrySame=%t", decision.SkipProvider, decision.RetrySameCredential)
