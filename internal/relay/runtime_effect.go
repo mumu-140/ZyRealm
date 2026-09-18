@@ -49,10 +49,9 @@ func applyRuntimeAvailabilityEffect(
 	}
 }
 
-// recordRuntimeAvailabilityEvidence is the compatibility path for callers that
-// have not migrated to AttemptCoordinator yet. Raw/unit-test results may still
-// synthesize one RoutingDecision here; Core HTTP and WS use
-// applyRuntimeAvailabilityEffect directly from the coordinator projection.
+// recordRuntimeAvailabilityEvidence is a compatibility/test helper for callers
+// that start from a raw attemptResult. The live Core, Images, Compact, and WS
+// paths apply runtime effects directly from the coordinator projection.
 func recordRuntimeAvailabilityEvidence(
 	ctx context.Context,
 	channelID int,
