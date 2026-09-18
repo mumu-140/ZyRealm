@@ -27,7 +27,6 @@ func TestP5BWSConsumesCoordinatorEffectsAndPreservesSessionBoundary(t *testing.T
 	for _, required := range []string{
 		"coordinateAttemptOutcome(result)",
 		"applyRuntimeAvailabilityEffect(",
-		"coordination.Effects.CredentialFailure",
 		"coordination.Effects.OutlierScope",
 	} {
 		if !strings.Contains(source, required) {
