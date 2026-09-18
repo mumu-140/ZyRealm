@@ -359,7 +359,7 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 		reportOutlierDecision(channel.ID, plan.UpstreamModel(), decision.OutlierScope, result.StatusCode, now)
 		failureKind := circuitFailureKindForDecision(decision, h.group.RetryEnabled, result.StatusCode)
 		balancer.RecordFailure(channel.ID, key.ID, plan.UpstreamModel(), failureKind)
-		if failureKind == balancer.FailureHard {
+		if shouldLearnManagedRoute(decision, h.group.RetryEnabled, result.StatusCode) {
 			maybeLearnManagedRoute(ctx, channel.ID, plan.UpstreamModel(), h.inboundType, result.Err)
 		}
 	}
