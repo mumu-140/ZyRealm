@@ -187,19 +187,27 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 				preferredKeyID = iter.StickyKeyID()
 			}
 
+			var usedKey model.ChannelKey
+			selectNextCredential := func() bool {
+				selected := selectFairChannelCredential(channel, model.ChannelKeySelectOptions{
+					ExcludeKeyIDs:  excludeKeys,
+					PreferredKeyID: preferredKeyID,
+				}, iter, time.Now())
+				if selected.ChannelKey == "" {
+					return false
+				}
+				usedKey = selected
+				return true
+			}
+			if !selectNextCredential() {
+				return false
+			}
+
 			var channelLastErr error
 			var channelLastStatus int
 			var channelLastEffects attemptEffectPlan
 
 			for upstreamStarts < maxUpstreamStarts {
-				selectOpts := model.ChannelKeySelectOptions{
-					ExcludeKeyIDs:  excludeKeys,
-					PreferredKeyID: preferredKeyID,
-				}
-				usedKey := selectFairChannelCredential(channel, selectOpts, iter, time.Now())
-				if usedKey.ChannelKey == "" {
-					break
-				}
 
 				log.Debugf("images request model %s, mode: %d, forwarding to channel: %s model: %s (attempt %d/%d, sticky=%t, stream=%t)",
 					requestModel, group.Mode, channel.Name, upstreamModel,
@@ -271,14 +279,15 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 				switch resolveSidepathDirective(coordination.Disposition) {
 				case sidepathDirectiveRetrySameCredential:
 					if upstreamStarts < maxUpstreamStarts {
-						preferredKeyID = usedKey.ID
 						continue
 					}
 				case sidepathDirectiveRotateCredential:
 					if upstreamStarts < maxUpstreamStarts {
 						excludeKeys[usedKey.ID] = struct{}{}
 						preferredKeyID = 0
-						continue
+						if selectNextCredential() {
+							continue
+						}
 					}
 				case sidepathDirectiveNextProvider:
 					iter.SkipProvider(channel.ID)
