@@ -12,9 +12,8 @@ type attemptDisposition struct {
 }
 
 // attemptEffectPlan is the side-effect projection of an already-computed
-// RoutingDecision. Applying these effects remains the caller's responsibility
-// in P5A; later slices may centralize application only after behavior parity is
-// proven for each transport path.
+// RoutingDecision. The coordinator remains a pure projection; each transport
+// boundary applies the projected effects explicitly after its wire attempt.
 type attemptEffectPlan struct {
 	RuntimeEffect          routingRuntimeEffect
 	OutlierScope           failureScope
@@ -28,7 +27,7 @@ type attemptCoordination struct {
 	Effects     attemptEffectPlan
 }
 
-// coordinateAttemptOutcome establishes the P5 coordinator boundary.
+// coordinateAttemptOutcome establishes the transport-neutral coordinator boundary.
 //
 // The input MUST already contain a valid RoutingDecision. This function is a
 // pure projection: it never synthesizes, reclassifies, or overrides routing
