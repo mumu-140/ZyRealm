@@ -237,10 +237,6 @@ func TestImagesHandlerClientCancellationDoesNotPolluteHealth(t *testing.T) {
 	created := persistImagesRoute(t, ctx, group, channel)[0]
 	keyID := created.Keys[0].ID
 	outlierwindow.Clear(created.ID, "gpt-image-2")
-	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerThreshold, 1); err != nil {
-		t.Fatalf("SettingSetInt threshold failed: %v", err)
-	}
-
 	recorder, c := newImagesTestContext(
 		"/v1/images/generations",
 		[]byte(`{"model":"public-image-cancel","prompt":"draw"}`),
@@ -298,10 +294,6 @@ func TestImagesHandlerTruncatedSSECountsAsUnhealthy(t *testing.T) {
 	created := persistImagesRoute(t, ctx, group, channel)[0]
 	keyID := created.Keys[0].ID
 	outlierwindow.Clear(created.ID, "gpt-image-2")
-	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerThreshold, 1); err != nil {
-		t.Fatalf("SettingSetInt threshold failed: %v", err)
-	}
-
 	recorder, c := newImagesTestContext(
 		"/v1/images/generations",
 		[]byte(`{"model":"public-image-truncated","prompt":"draw","stream":true}`),
