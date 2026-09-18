@@ -1,7 +1,7 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
-import { Gauge, Hash, HeartPulse, Network, ShieldCheck, Timer, TimerOff, type LucideIcon } from 'lucide-react';
+import { Gauge, HeartPulse, Network, ShieldCheck, type LucideIcon } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { SettingKey } from '@/api/endpoints/setting';
@@ -117,27 +117,6 @@ export function SettingReliability() {
             <SettingRow icon={HeartPulse} label={t('groupHealth.label')} tooltip={t('groupHealth.description')}>
                 <Switch checked={groupHealth.enabled} onCheckedChange={groupHealth.toggle} />
             </SettingRow>
-
-            {/* 熔断器 */}
-            <SettingSection title={t('circuitBreaker.title')} tooltip={t('circuitBreaker.hint')} />
-            <NumberFieldRow
-                settingKey={SettingKey.CircuitBreakerThreshold}
-                label={t('circuitBreaker.threshold.label')}
-                placeholder={t('circuitBreaker.threshold.placeholder')}
-                icon={Hash}
-            />
-            <NumberFieldRow
-                settingKey={SettingKey.CircuitBreakerCooldown}
-                label={t('circuitBreaker.cooldown.label')}
-                placeholder={t('circuitBreaker.cooldown.placeholder')}
-                icon={Timer}
-            />
-            <NumberFieldRow
-                settingKey={SettingKey.CircuitBreakerMaxCooldown}
-                label={t('circuitBreaker.maxCooldown.label')}
-                placeholder={t('circuitBreaker.maxCooldown.placeholder')}
-                icon={TimerOff}
-            />
 
             {/* 被动离群退役 */}
             <SettingSection title={t('outlierRetirement.title')} tooltip={t('outlierRetirement.hint')} />
