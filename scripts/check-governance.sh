@@ -111,6 +111,28 @@ check_manual_contracts() {
     fi
 }
 
+check_project_identity() {
+    local github_repo
+
+    github_repo="$(read_state '.repository.github')"
+    [ "$github_repo" = "mumu-140/ZyRealm" ] \
+        || fail "repository identity is $github_repo, expected mumu-140/ZyRealm"
+
+    require_document_text "$ROOT_DIR/AGENTS.md" "mumu-140/ZyRealm"
+    require_document_text "$ROOT_DIR/docs/octopus-production.md" \
+        "mumu-140/ZyRealm" "ghcr.io/mumu-140/zyrealm"
+
+    grep -Fq 'readonly IMAGE_REPOSITORY="ghcr.io/mumu-140/zyrealm"' \
+        "$ROOT_DIR/scripts/build-production-image.sh" \
+        || fail "production build image repository is not ZyRealm GHCR"
+    grep -Fq 'SOURCE_URL=https://github.com/mumu-140/ZyRealm' \
+        "$ROOT_DIR/scripts/build-production-image.sh" \
+        || fail "production build source URL is not ZyRealm"
+    grep -Fq 'GHCR_IMAGE: ghcr.io/mumu-140/zyrealm' \
+        "$ROOT_DIR/.github/workflows/release.yaml" \
+        || fail "release workflow GHCR image is not ZyRealm"
+}
+
 check_versions() {
     local version
     local go_version
@@ -202,6 +224,7 @@ check_repository() {
         || fail "invalid production state schema"
     check_required_files
     check_manual_contracts
+    check_project_identity
     check_versions
     check_git_truth
     check_sensitive_files
