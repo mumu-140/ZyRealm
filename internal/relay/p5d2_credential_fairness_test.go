@@ -88,6 +88,48 @@ func TestP5D2SidepathCredentialSelectionUsesFairScheduler(t *testing.T) {
 	}
 }
 
+func TestP5D2ImagesSameCredentialRetryDoesNotRechargeFairLedger(t *testing.T) {
+	images := p5d2Source(t, "images.go")
+
+	selection := strings.Index(images, "selectFairChannelCredential(")
+	retryLoop := strings.Index(images, "for upstreamStarts < maxUpstreamStarts {")
+	if selection < 0 || retryLoop < 0 {
+		t.Fatalf("missing Images fairness selection or retry loop")
+	}
+	if selection > retryLoop {
+		t.Fatal("Images must charge fair credential selection before the retry loop so RETRY_SAME_CREDENTIAL reuses the current key")
+	}
+
+	sameStart := strings.Index(images, "case sidepathDirectiveRetrySameCredential:")
+	rotateStart := strings.Index(images, "case sidepathDirectiveRotateCredential:")
+	if sameStart < 0 || rotateStart < 0 || rotateStart <= sameStart {
+		t.Fatal("missing Images sidepath retry directive branches")
+	}
+	sameBranch := images[sameStart:rotateStart]
+	if strings.Contains(sameBranch, "selectFairChannelCredential(") || strings.Contains(sameBranch, "selectNextCredential(") {
+		t.Fatal("Images RETRY_SAME_CREDENTIAL must not select or charge another credential")
+	}
+}
+
+func TestP5D2WSRuntimeAdmissionPrecedesFairCredentialCharge(t *testing.T) {
+	ws := p5d2Source(t, "ws_client.go")
+	runStart := strings.Index(ws, "func runWSRelay(")
+	runEnd := strings.Index(ws, "\nfunc finalizeWSRelay(")
+	if runStart < 0 || runEnd < 0 || runEnd <= runStart {
+		t.Fatal("cannot isolate runWSRelay")
+	}
+	runWS := ws[runStart:runEnd]
+
+	admission := strings.Index(runWS, "availability.AcquireCandidate(")
+	selection := strings.Index(runWS, "selectFairChannelCredential(")
+	if admission < 0 || selection < 0 {
+		t.Fatal("missing WS runtime admission or fair credential selection")
+	}
+	if selection < admission {
+		t.Fatal("WS must pass runtime admission before charging the credential fairness ledger")
+	}
+}
+
 func TestP5D2ImagesCredentialPoolIsEven(t *testing.T) {
 	ginTestMode(t)
 	ctx := setupRelayTestDB(t)
