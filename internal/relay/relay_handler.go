@@ -221,8 +221,12 @@ func (h *relayHandler) processCandidate() bool {
 		availability.ReleaseLease(runtimeLease, time.Now())
 	}()
 
-	excludedKeyIDs := make(map[int]struct{}, defaultMaxCredentialsPerProvider)
-	for credentialAttempt := 0; credentialAttempt < defaultMaxCredentialsPerProvider; credentialAttempt++ {
+	credentialAttemptLimit := defaultMaxCredentialsPerProvider
+	if !h.iterator.HasAlternativeProvider(channel.ID) && len(channel.Keys) > credentialAttemptLimit {
+		credentialAttemptLimit = len(channel.Keys)
+	}
+	excludedKeyIDs := make(map[int]struct{}, credentialAttemptLimit)
+	for credentialAttempt := 0; credentialAttempt < credentialAttemptLimit; credentialAttempt++ {
 		// Capacity is reserved before fair credential selection. A saturated
 		// provider therefore cannot consume credential scheduling progress.
 		if !h.reserveCandidateCapacity(channel) {
@@ -262,7 +266,7 @@ func (h *relayHandler) processCandidate() bool {
 			excludedKeyIDs[key.ID] = struct{}{}
 			h.lastErr = result.Err
 			h.lastResult = result
-			if credentialAttempt+1 >= defaultMaxCredentialsPerProvider {
+			if credentialAttempt+1 >= credentialAttemptLimit {
 				h.iterator.SkipProvider(channel.ID)
 				return false
 			}
