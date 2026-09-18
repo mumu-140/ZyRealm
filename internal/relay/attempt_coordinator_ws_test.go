@@ -50,11 +50,15 @@ func TestP5BWSConsumesCoordinatorEffectsWithoutRetryMigration(t *testing.T) {
 		"budget := 15 * time.Second",
 		"maxChannelAttempts > 3",
 		"result.ResetConversation",
-		"retryViaFreshUpstreamWS",
 	} {
 		if !strings.Contains(source, invariant) {
 			t.Fatalf("P5B changed WS retry/session invariant %q", invariant)
 		}
+	}
+
+	transportSource := p5bSource(t, "relay_websocket.go")
+	if !strings.Contains(transportSource, "retryViaFreshUpstreamWS") {
+		t.Fatal("P5B must preserve WS reconnect/redial transport path")
 	}
 }
 
