@@ -206,10 +206,6 @@ func TestP4C1BCompactIgnoresLegacyCircuitForCredentialAdmission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	availability.Reset()
 	ctx := setupRelayTestDB(t)
-	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerThreshold, 1); err != nil {
-		t.Fatalf("SettingSetInt threshold failed: %v", err)
-	}
-
 	var hits atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
@@ -219,7 +215,9 @@ func TestP4C1BCompactIgnoresLegacyCircuitForCredentialAdmission(t *testing.T) {
 
 	route := newP4C1BCompactRoute(t, ctx, server.URL, "ignore-legacy-circuit", []model.ChannelKey{{Enabled: true, ChannelKey: "compact-key"}})
 	key := route.channel.Keys[0]
-	balancer.RecordFailure(route.channel.ID, key.ID, route.upstreamModel, balancer.FailureHard)
+	for i := 0; i < 5; i++ {
+		balancer.RecordFailure(route.channel.ID, key.ID, route.upstreamModel, balancer.FailureHard)
+	}
 	if tripped, _ := balancer.IsTripped(route.channel.ID, key.ID, route.upstreamModel); !tripped {
 		t.Fatal("test precondition: legacy circuit must be open")
 	}
@@ -284,10 +282,6 @@ func TestP4C1BWSRelayIgnoresLegacyCircuitForCredentialAdmission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	availability.Reset()
 	ctx := setupRelayTestDB(t)
-	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerThreshold, 1); err != nil {
-		t.Fatalf("SettingSetInt threshold failed: %v", err)
-	}
-
 	var hits atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)
@@ -297,7 +291,9 @@ func TestP4C1BWSRelayIgnoresLegacyCircuitForCredentialAdmission(t *testing.T) {
 
 	route := newP4C1BWSRoute(t, ctx, server.URL, "ignore-legacy-circuit", []model.ChannelKey{{Enabled: true, ChannelKey: "ws-key"}})
 	key := route.channel.Keys[0]
-	balancer.RecordFailure(route.channel.ID, key.ID, route.upstreamModel, balancer.FailureHard)
+	for i := 0; i < 5; i++ {
+		balancer.RecordFailure(route.channel.ID, key.ID, route.upstreamModel, balancer.FailureHard)
+	}
 	if tripped, _ := balancer.IsTripped(route.channel.ID, key.ID, route.upstreamModel); !tripped {
 		t.Fatal("test precondition: legacy circuit must be open")
 	}
