@@ -1656,7 +1656,7 @@ func TestGeneric500DoesNotWriteLegacyCircuitOrBlockRelayAdmission(t *testing.T) 
 		t.Fatalf("retired legacy circuit must not affect relay admission, got status %d body %s", resp3.Code, resp3.Body.String())
 	}
 	if hits.Load() != 3 {
-		t.Fatalf("expected request to reach upstream despite open legacy circuit, got %d total hits", hits.Load())
+		t.Fatalf("expected request to reach upstream after legacy circuit writer retirement, got %d total hits", hits.Load())
 	}
 	if !strings.Contains(resp3.Body.String(), `"content":"ok"`) {
 		t.Fatalf("expected successful response body, got %s", resp3.Body.String())
