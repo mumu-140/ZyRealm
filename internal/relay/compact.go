@@ -156,26 +156,12 @@ func HandleResponsesCompact(c *gin.Context) {
 			}
 			var usedKey dbmodel.ChannelKey
 			selectNextCredential := func() bool {
-				for {
-					candidate := channel.GetChannelKey(selectOpts)
-					if candidate.ChannelKey == "" {
-						return false
-					}
-					if availability.CredentialAvailableRevision(channel.ID, candidate.ID, candidate.CredentialRevision, time.Now()) {
-						usedKey = candidate
-						return true
-					}
-					selectOpts.ExcludeKeyIDs[candidate.ID] = struct{}{}
-					selectOpts.PreferredKeyID = 0
-					iter.RecordDecision(dbmodel.RoutingDecisionEvent{
-						Stage:        dbmodel.DecisionStageCredential,
-						Outcome:      dbmodel.DecisionOutcomeRejected,
-						Reason:       dbmodel.DecisionReasonCredentialCooldown,
-						ChannelID:    channel.ID,
-						ChannelKeyID: candidate.ID,
-						ChannelName:  channel.Name,
-					})
+				candidate := selectFairChannelCredential(channel, selectOpts, iter, time.Now())
+				if candidate.ChannelKey == "" {
+					return false
 				}
+				usedKey = candidate
+				return true
 			}
 			if !selectNextCredential() {
 				if len(selectOpts.ExcludeKeyIDs) == 0 {
