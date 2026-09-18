@@ -42,6 +42,19 @@ func p5d2FunctionBody(t *testing.T, source, startMarker, endMarker string) strin
 	return source[start : start+len(startMarker)+end]
 }
 
+func p5d2Between(t *testing.T, source, startMarker, endMarker string) string {
+	t.Helper()
+	start := strings.Index(source, startMarker)
+	if start < 0 {
+		t.Fatalf("missing segment start %q", startMarker)
+	}
+	relEnd := strings.Index(source[start+len(startMarker):], endMarker)
+	if relEnd < 0 {
+		t.Fatalf("missing segment end %q", endMarker)
+	}
+	return source[start : start+len(startMarker)+relEnd]
+}
+
 func p5d2CountHits(t *testing.T, hits map[string]int, mu *sync.Mutex, keys ...string) {
 	t.Helper()
 	mu.Lock()
@@ -77,6 +90,17 @@ func TestP5D2LiveSidepathsUseFairCredentialSelection(t *testing.T) {
 	}
 	if strings.Contains(runWS, "channel.GetChannelKey(") {
 		t.Fatal("WS live routing still uses TotalCost credential selection")
+	}
+
+	for name, source := range map[string]string{
+		"Images": images,
+		"Compact": compact,
+		"WebSocket": runWS,
+	} {
+		sameRetry := p5d2Between(t, source, "case sidepathDirectiveRetrySameCredential:", "case sidepathDirectiveRotateCredential:")
+		if strings.Contains(sameRetry, "selectNextCredential(") || strings.Contains(sameRetry, "selectFairChannelCredential(") {
+			t.Fatalf("%s same-credential retry must reuse the current key without charging another fair allocation", name)
+		}
 	}
 
 	warmup := p5d2FunctionBody(t, ws, "func bestEffortWarmupUpstreamWS(", "\nfunc extractWSRequestModel(")
