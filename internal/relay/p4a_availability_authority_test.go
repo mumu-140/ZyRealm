@@ -12,7 +12,7 @@ import (
 	"github.com/bestruirui/octopus/internal/relay/balancer"
 )
 
-func TestRoutingDecisionGeneric500StaysRuntimeNeutralDuringLegacyCircuitCompatibility(t *testing.T) {
+func TestRoutingDecisionGeneric500StaysRuntimeNeutralAfterCircuitWriterRetirement(t *testing.T) {
 	result := attemptResult{
 		Err:        errors.New("channel failed"),
 		StatusCode: http.StatusInternalServerError,
@@ -27,11 +27,11 @@ func TestRoutingDecisionGeneric500StaysRuntimeNeutralDuringLegacyCircuitCompatib
 	if decision.OutlierScope != scopeChannel {
 		t.Fatalf("outlier scope = %v, want channel statistical evidence", decision.OutlierScope)
 	}
-	// P4C1 removes circuit admission reads but deliberately keeps compatibility
-	// writes for one migration step. Generic 5xx remains low-confidence/passive
-	// evidence rather than being promoted into an availability cooldown.
+	// P4C2B retires live breaker writes. CircuitEffect remains a compatibility
+	// policy/trace token until P4C3, while generic 5xx stays low-confidence
+	// passive evidence rather than being promoted into an availability cooldown.
 	if decision.CircuitEffect != "record_failure" {
-		t.Fatalf("circuit effect = %q, want temporary compatibility write", decision.CircuitEffect)
+		t.Fatalf("circuit effect = %q, want retained compatibility token", decision.CircuitEffect)
 	}
 }
 
