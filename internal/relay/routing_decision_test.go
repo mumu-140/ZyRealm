@@ -25,6 +25,9 @@ func TestRoutingDecisionProviderTransient(t *testing.T) {
 	if decision.OutlierScope != scopeChannel {
 		t.Fatalf("outlier scope=%v, want channel", decision.OutlierScope)
 	}
+	if !decision.RouteLearningCandidate {
+		t.Fatal("provider transient must remain eligible for managed-route learning")
+	}
 }
 
 func TestRoutingDecisionReasoningCapabilityBeatsMisleadingAuthEnvelope(t *testing.T) {
@@ -45,6 +48,9 @@ func TestRoutingDecisionReasoningCapabilityBeatsMisleadingAuthEnvelope(t *testin
 	}
 	if decision.OutlierScope != scopeIgnore || decision.CircuitEffect != "none" {
 		t.Fatalf("capability must be health-neutral: outlier=%v circuit=%q", decision.OutlierScope, decision.CircuitEffect)
+	}
+	if decision.RouteLearningCandidate {
+		t.Fatal("model capability mismatch must not become managed-route learning evidence")
 	}
 }
 
@@ -85,6 +91,9 @@ func TestRoutingDecisionCredentialConcurrencyRotatesWithoutSameKeyRetry(t *testi
 	if decision.RuntimeEffect != routingRuntimeCredentialCooldown {
 		t.Fatalf("runtime effect=%q, want credential cooldown", decision.RuntimeEffect)
 	}
+	if decision.RouteLearningCandidate {
+		t.Fatal("credential failure must not become managed-route learning evidence")
+	}
 }
 
 func TestRoutingDecisionSingleProviderCapacityKeepsBoundedSameKeyRetry(t *testing.T) {
@@ -99,6 +108,9 @@ func TestRoutingDecisionSingleProviderCapacityKeepsBoundedSameKeyRetry(t *testin
 	}
 	if decision.Directive != routingDirectiveRetrySameCredential || !decision.RetrySameCredential {
 		t.Fatalf("directive=%q retrySame=%t, want bounded same credential retry", decision.Directive, decision.RetrySameCredential)
+	}
+	if !decision.RouteLearningCandidate {
+		t.Fatal("model-capacity outcome must preserve the pre-P4C3 route-learning candidate signal")
 	}
 }
 
@@ -129,6 +141,9 @@ func TestRoutingDecisionFirstTokenTimeoutIsModelScoped(t *testing.T) {
 	if decision.RuntimeEffect != routingRuntimeModelCooldown || decision.Directive != routingDirectiveNextProvider {
 		t.Fatalf("runtime=%q directive=%q", decision.RuntimeEffect, decision.Directive)
 	}
+	if !decision.RouteLearningCandidate {
+		t.Fatal("first-token timeout must remain managed-route learning evidence")
+	}
 }
 
 func TestRoutingDecisionContentPolicyIsTerminalAndHealthNeutral(t *testing.T) {
@@ -143,5 +158,8 @@ func TestRoutingDecisionContentPolicyIsTerminalAndHealthNeutral(t *testing.T) {
 	}
 	if decision.OutlierScope != scopeIgnore || decision.CircuitEffect != "none" || decision.RuntimeEffect != routingRuntimeNone {
 		t.Fatalf("content policy must be health-neutral: %+v", decision)
+	}
+	if decision.RouteLearningCandidate {
+		t.Fatal("content-policy failure must not become managed-route learning evidence")
 	}
 }

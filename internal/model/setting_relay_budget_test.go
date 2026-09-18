@@ -38,3 +38,25 @@ func TestRelayAttemptBudgetDefaultsAreTwenty(t *testing.T) {
 		}
 	}
 }
+
+func TestCircuitBreakerSettingsAreRetired(t *testing.T) {
+	retired := []SettingKey{
+		SettingKeyCircuitBreakerThreshold,
+		SettingKeyCircuitBreakerCooldown,
+		SettingKeyCircuitBreakerMaxCooldown,
+	}
+
+	defaults := map[SettingKey]string{}
+	for _, setting := range DefaultSettings() {
+		defaults[setting.Key] = setting.Value
+	}
+
+	for _, key := range retired {
+		if _, ok := defaults[key]; ok {
+			t.Fatalf("retired setting %s must not be seeded as an active default", key)
+		}
+		if err := (Setting{Key: key, Value: "1"}).Validate(); err == nil {
+			t.Fatalf("retired setting %s must be rejected by validation", key)
+		}
+	}
+}
