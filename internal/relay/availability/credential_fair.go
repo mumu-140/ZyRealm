@@ -52,6 +52,118 @@ func credentialFairLess(ledger *credentialFairLedger, leftID, rightID int) bool 
 	return leftID < rightID
 }
 
+type credentialFairPreviewMember struct {
+	progress     uint64
+	lastSelected uint64
+}
+
+func previewCredentialMember(ledger *credentialFairLedger, candidate dbmodel.ChannelKey) credentialFairPreviewMember {
+	member := ledger.members[candidate.ID]
+	if member == nil || member.revision != normalizeCredentialRevision(candidate.CredentialRevision) {
+		return credentialFairPreviewMember{progress: ledger.watermark}
+	}
+	progress := member.progress
+	if !member.eligible && progress < ledger.watermark {
+		progress = ledger.watermark
+	}
+	return credentialFairPreviewMember{
+		progress:     progress,
+		lastSelected: member.lastSelected,
+	}
+}
+
+func credentialFairPreviewLess(members map[int]credentialFairPreviewMember, leftID, rightID int) bool {
+	left := members[leftID]
+	right := members[rightID]
+	if left.progress != right.progress {
+		return left.progress < right.progress
+	}
+	if left.lastSelected != right.lastSelected {
+		return left.lastSelected < right.lastSelected
+	}
+	return leftID < rightID
+}
+
+// PeekCredentialFair predicts the credential that SelectCredentialFair would
+// choose from the current provider ledger without charging an allocation or
+// changing ledger membership/eligibility. It is intended for observational
+// work such as WS connection warmup; the subsequent live request performs the
+// real, charged selection.
+func PeekCredentialFair(channelID int, candidates []dbmodel.ChannelKey, preferredKeyID int) dbmodel.ChannelKey {
+	if channelID <= 0 || len(candidates) == 0 {
+		return dbmodel.ChannelKey{}
+	}
+
+	byID := make(map[int]dbmodel.ChannelKey, len(candidates))
+	candidateIDs := make([]int, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.ID <= 0 || !candidate.Enabled || candidate.ChannelKey == "" {
+			continue
+		}
+		byID[candidate.ID] = candidate
+		candidateIDs = append(candidateIDs, candidate.ID)
+	}
+	if len(candidateIDs) == 0 {
+		return dbmodel.ChannelKey{}
+	}
+	if preferredKeyID > 0 {
+		if preferred, ok := byID[preferredKeyID]; ok {
+			return preferred
+		}
+	}
+
+	credentialFairRuntime.mu.Lock()
+	ledger := credentialFairRuntime.ledgers[channelID]
+	credentialFairRuntime.mu.Unlock()
+	if ledger == nil {
+		selectedID := candidateIDs[0]
+		for _, candidateID := range candidateIDs[1:] {
+			if candidateID < selectedID {
+				selectedID = candidateID
+			}
+		}
+		return byID[selectedID]
+	}
+
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+
+	preview := make(map[int]credentialFairPreviewMember, len(candidateIDs))
+	effectiveLastMember := ledger.lastMember
+	effectiveConsecutive := ledger.consecutive
+	for _, candidateID := range candidateIDs {
+		candidate := byID[candidateID]
+		member := ledger.members[candidateID]
+		if member != nil && member.revision != normalizeCredentialRevision(candidate.CredentialRevision) && effectiveLastMember == candidateID {
+			effectiveLastMember = 0
+			effectiveConsecutive = 0
+		}
+		preview[candidateID] = previewCredentialMember(ledger, candidate)
+	}
+
+	selectedID := candidateIDs[0]
+	for _, candidateID := range candidateIDs[1:] {
+		if credentialFairPreviewLess(preview, candidateID, selectedID) {
+			selectedID = candidateID
+		}
+	}
+	if len(candidateIDs) > 1 && effectiveLastMember == selectedID && effectiveConsecutive >= credentialMaxConsecutive {
+		alternativeID := 0
+		for _, candidateID := range candidateIDs {
+			if candidateID == selectedID {
+				continue
+			}
+			if alternativeID == 0 || credentialFairPreviewLess(preview, candidateID, alternativeID) {
+				alternativeID = candidateID
+			}
+		}
+		if alternativeID != 0 {
+			selectedID = alternativeID
+		}
+	}
+	return byID[selectedID]
+}
+
 // SelectCredentialFair performs equal-weight fair scheduling inside one
 // provider/channel only. New credentials and new CredentialRevision identities
 // enter at the current provider watermark instead of progress zero, preventing
