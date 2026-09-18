@@ -55,7 +55,8 @@ func TestCircuitBreakerSettingsAreRetired(t *testing.T) {
 		if _, ok := defaults[key]; ok {
 			t.Fatalf("retired setting %s must not be seeded as an active default", key)
 		}
-		if err := (Setting{Key: key, Value: "1"}).Validate(); err == nil {
+		setting := Setting{Key: key, Value: "1"}
+		if err := setting.Validate(); err == nil {
 			t.Fatalf("retired setting %s must be rejected by validation", key)
 		}
 	}
