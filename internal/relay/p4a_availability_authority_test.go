@@ -12,7 +12,7 @@ import (
 	"github.com/bestruirui/octopus/internal/relay/balancer"
 )
 
-func TestRoutingDecisionGeneric500StaysRuntimeNeutralDuringCircuitTraceCompatibility(t *testing.T) {
+func TestRoutingDecisionGeneric500StaysRuntimeNeutralWithRouteLearningCandidate(t *testing.T) {
 	result := attemptResult{
 		Err:        errors.New("channel failed"),
 		StatusCode: http.StatusInternalServerError,
@@ -27,11 +27,10 @@ func TestRoutingDecisionGeneric500StaysRuntimeNeutralDuringCircuitTraceCompatibi
 	if decision.OutlierScope != scopeChannel {
 		t.Fatalf("outlier scope = %v, want channel statistical evidence", decision.OutlierScope)
 	}
-	// CircuitEffect remains a route-learning/trace compatibility field through
-	// P4C2B. Generic 5xx stays low-confidence/passive evidence rather than being
-	// promoted into an availability cooldown.
-	if decision.CircuitEffect != "record_failure" {
-		t.Fatalf("circuit effect = %q, want route-learning/trace compatibility signal", decision.CircuitEffect)
+	// Generic 5xx stays low-confidence/passive runtime evidence while remaining
+	// eligible for managed-route mismatch learning.
+	if decision.RouteLearningEffect != routingRouteLearningCandidate {
+		t.Fatalf("route-learning effect = %q, want candidate", decision.RouteLearningEffect)
 	}
 }
 
