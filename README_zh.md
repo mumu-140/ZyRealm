@@ -53,7 +53,7 @@ Octopus 提供了优秀的聚合、协议转换和管理基础。ZyRealm 保留�
 - **Retry-After 恢复**：识别上游恢复时间提示，并进行有上限的等待和冷却。
 - **Anthropic 兼容增强**：对 HTTP 200 假成功、MessageContent schema 不兼容等情况进行语义校验和安全 failover。
 - **逐次尝试追踪**：真实 wire attempt 会记录 RoutingDecision、失败域和恢复动作。
-- **可配置请求预算**：单请求真实上游尝试上限可配置到 20，同时保留独立的 Provider budget 与 unknown-outcome replay guard。
+- **可配置请求预算**：Provider 与真实上游发送预算默认均为 20，管理员可设置任意正整数；unknown-outcome 跨 Provider 重放仍由独立安全预算严格限制。
 - **站点 / 渠道 / 模型 / 分组 / 价格管理**。
 - **OpenAI Chat / Responses / Images、Anthropic Messages 与相关 WebSocket relay 支持**。
 
@@ -128,10 +128,10 @@ ZyRealm 可以通过统一模型分组向客户端提供：
 当前有三个不同概念的预算，不能混为一谈：
 
 1. **Provider budget**：限制一个客户端请求最多进入多少个不同供应商。
-2. **Wire-attempt budget**：限制真实发送到上游的次数，可配置，硬上限为 20。
+2. **Wire-attempt budget**：限制真实发送到上游的次数，默认 20；应用层只要求为正整数，不设置产品级硬上限。
 3. **Unknown-outcome replay budget**：对“上游可能已经执行但结果未知”的跨 Provider 重放保持严格限制，降低重复执行风险。
 
-Disabled、runtime cooldown、并发已满、RPM 已满、circuit 不可用等本地 skip 没有真正发送上游，因此不会消耗 wire attempt。
+Disabled、runtime cooldown、passive half-open lease 正忙、并发已满、RPM 已满等本地 skip 没有真正发送上游，因此不会消耗 wire attempt。
 
 ## 为什么代码里还有 Octopus？
 

@@ -1,4 +1,4 @@
-# Octopus 生产部署手册
+# ZyRealm 生产部署手册
 
 本文件是 fwq57ys 上 Octopus 的唯一现行生产手册，回答“生产对象分别负责什么、候选怎么验、
 切换怎么做、什么必须禁止、失败时如何停止和回滚”。仓库最高规则见 `AGENTS.md`，开发修改
@@ -11,7 +11,7 @@
 
 | 对象 | 规范位置/名称 | 职责 | 使用边界 |
 | --- | --- | --- | --- |
-| GitHub | `mumu-140/octopus-concurrency` | 远端源码、CI、Release、GHCR | 不移动公开 tag，不重写 `main` |
+| GitHub | `mumu-140/ZyRealm` | 远端源码、CI、Release、GHCR | 不移动公开 tag，不重写 `main` |
 | 规范源码 | `/opt/octopus-mumu/` | 唯一开发、测试、构建、提交入口 | 不放真实数据，不直接承担生产运行 |
 | 受管 Compose | `deploy/fwq57ys/compose.yaml` | 生产目标声明 | 只声明精确镜像、host 网络和正式挂载 |
 | 发布目标与运行状态 | `deploy/fwq57ys/production-state.json` | staging 目标 release/image + 切换后 live 指纹 | 必须标明阶段，不把 staging 声称为已运行 |
@@ -66,6 +66,11 @@ scripts/check-governance.sh --live
 
 ## 当前基线与不变量
 
+项目/仓库身份与 live 运行镜像必须分开理解：GitHub 与新发布镜像命名空间已经统一为
+`mumu-140/ZyRealm` / `ghcr.io/mumu-140/zyrealm`；如果当前生产仍运行历史
+`octopus-concurrency` 镜像，则继续以 `production-state.json` 和实时 inspect 为准，
+直到下一次明确获批的发布/切换。治理整理不得伪造一次部署。
+
 运行指纹（版本、应用源码、image ID、容器 ID、StartedAt、restart count、回滚快照路径）只读
 `deploy/fwq57ys/production-state.json` 与实时 `docker inspect`，本手册不复制这些数值。以下是
 与版本无关的不变量，动其中任何一条都算生产变更：
@@ -75,7 +80,7 @@ scripts/check-governance.sh --live
 | 容器名 | `octopus`，唯一对外服务容器；候选与回滚容器不得复用此名 |
 | 网络与监听 | `host` / `0.0.0.0:35276`；不改回 bridge，不加端口映射 |
 | 数据挂载 | `/opt/octopus/data:/app/data` 读写，且只挂给生产容器 |
-| 镜像引用 | `mumu-140/octopus-concurrency:v<major>.<minor>.<patch>-mumu.<revision>`，Compose `pull_policy: never`，切换前显式拉取并核对 image ID |
+| 镜像引用 | `ghcr.io/mumu-140/zyrealm:v<major>.<minor>.<patch>-mumu.<revision>`，Compose `pull_policy: never`，切换前显式拉取并核对 image ID |
 | Compose | 受管 `deploy/fwq57ys/compose.yaml` 与生产副本 `/opt/octopus/docker-compose.yml` 逐字一致 |
 | 公网入口 | `https://octopus.muaiword.com`（Cloudflare Tunnel → caddy-gateway `127.0.0.1:27057` → `35276`）；常态关闭，用时经 fwq57ys `~/software/cloudflared/cf-octopus on|off` 开关 |
 | 时区 | 镜像内 `TZ=Asia/Shanghai`，决定小时级统计分桶时区，不得删除 |
@@ -113,7 +118,7 @@ coverage 必须为 `completed`；30 天或累计查询超出可回填历史时�
 
 GHCR 是发布分发源。包为私有时，拉取凭据必须具备 `read:packages`，凭据不得进入仓库、日志
 或聊天。遇到 `401 unauthorized` 或 `403` 时停止并修复包读取权限；不得静默改用 Docker Hub
-同名镜像、旧 tag、本地重建或上游镜像。拉取 `ghcr.io/mumu-140/octopus-concurrency:<version>`
+同名镜像、旧 tag、本地重建或上游镜像。拉取 `ghcr.io/mumu-140/zyrealm:<version>`
 后先核对 OCI 和 image ID，再按受管 Compose 所需的精确本地引用使用。
 
 明确禁止：

@@ -47,9 +47,6 @@ jobs:
           touch static/out/.keep
 
       - name: Vet
-        # go vet 在 .9 基线即存在 internal/relay/protocol_attempt.go copylocks 告警,
-        # 修复涉及 WS 同通道重试语义, 不在当前范围; 因此本步只产出云端证据, 不作门禁。
-        continue-on-error: true
         run: go vet ./...
 
       - name: Test
