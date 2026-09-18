@@ -256,7 +256,8 @@ func (h *relayHandler) processCandidate() bool {
 			usedPlan = result.Plan
 		}
 
-		if result.Decision.Domain == failureDomainCredential {
+		coordination, coordinationOK := coordinateAttemptOutcome(result)
+		if coordinationOK && coordination.Effects.CredentialFailure {
 			recordCredentialRoutingFailureRevision(channel.ID, key.ID, key.CredentialRevision, result, time.Now())
 			excludedKeyIDs[key.ID] = struct{}{}
 			h.lastErr = result.Err
@@ -312,7 +313,6 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 	ctx := h.request.requestContext()
 	now := time.Now()
 	result = withRoutingDecision(ctx, h.request, channel.ID, result)
-	recordRuntimeAvailabilityEvidence(ctx, channel.ID, plan.UpstreamModel(), result, now)
 
 	coordination, ok := coordinateAttemptOutcome(result)
 	if !ok {
@@ -325,6 +325,8 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 		h.heartbeat.FlushOrError(h.c, http.StatusInternalServerError, "routing decision unavailable")
 		return true
 	}
+
+	applyRuntimeAvailabilityEffect(channel.ID, plan.UpstreamModel(), result, coordination.Effects, now)
 
 	decision := result.Decision
 	manualInterrupt := decision.RuleID == "manual_interrupt"
@@ -369,7 +371,7 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 		// consume its precomputed scopes/effects and do not reinterpret raw error
 		// text or status to decide whether evidence belongs in these systems.
 		reportOutlierDecision(channel.ID, plan.UpstreamModel(), coordination.Effects.OutlierScope, result.StatusCode, now)
-		if shouldLearnManagedRoute(decision, h.group.RetryEnabled, result.StatusCode) {
+		if shouldLearnManagedRoute(coordination.Effects.RouteLearningCandidate, h.group.RetryEnabled, result.StatusCode) {
 			maybeLearnManagedRoute(ctx, channel.ID, plan.UpstreamModel(), h.inboundType, result.Err)
 		}
 	}
