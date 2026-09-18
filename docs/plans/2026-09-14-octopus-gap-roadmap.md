@@ -1,6 +1,6 @@
 # Octopus Gap Adoption Roadmap
 
-> Status: staged adoption index. P0.1, P0.1H, P0.2, P0.3, the historical Routing Inspector (#27), and P1P passthrough semantic hardening + OpenAI Chat same-format coverage are merged and verified on `main`. The next work is a fresh post-P1P Embeddings/Images source audit before any broader passthrough or schema-heavy P1 change.
+> Status: **HISTORICAL SNAPSHOT**. This roadmap preserves the adoption sequence at its original baseline and is no longer the source of live `NEXT` work. Use `docs/plans/README.md` plus the current `main` source for execution status.
 >
 > Current verified runtime baseline: ZyRealm `main@5b773f13f84734eb222ad99e35b5840c69d2f188`, with merged-tree CI run `35051237424` all green. This roadmap closeout performs no deployment or production-state change.
 
