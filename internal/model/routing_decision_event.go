@@ -1,6 +1,6 @@
 package model
 
-const RoutingDecisionTraceVersion = "routing-decisions-v1"
+const RoutingDecisionTraceVersion = "routing-decisions-v2"
 
 // RoutingDecisionStage identifies where a routing fact was observed. These
 // values are persisted in RelayLog.Attempts and therefore form a stable API
