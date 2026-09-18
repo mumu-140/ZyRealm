@@ -14,7 +14,8 @@ type AttemptRoutingTrace struct {
 	RuntimeEffect        string                 `json:"runtime_effect,omitempty"`
 	RuntimeState         string                 `json:"runtime_state,omitempty"`
 	CooldownUntil        int64                  `json:"cooldown_until,omitempty"`
-	CircuitEffect        string                 `json:"circuit_effect,omitempty"`
+	RouteLearningEffect  string                 `json:"route_learning_effect,omitempty"`
+	CircuitEffect        string                 `json:"circuit_effect,omitempty"` // Deprecated: decode compatibility for historical attempt JSON.
 	OutlierEffect        string                 `json:"outlier_effect,omitempty"`
 	ReplaySafety         string                 `json:"replay_safety,omitempty"`
 	DispatchState        string                 `json:"dispatch_state,omitempty"`
