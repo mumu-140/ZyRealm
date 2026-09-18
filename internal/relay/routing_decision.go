@@ -53,7 +53,7 @@ const (
 )
 
 // RoutingDecision is the single policy result consumed by retry/failover,
-// runtime availability, outlier health, legacy circuit compatibility writes,
+// runtime availability, outlier health, route-learning compatibility policy,
 // and attempt tracing. Marker/status parsing remains behind the compatibility
 // classifiers, but one wire result is converted into this object exactly once
 // on the relay path.
