@@ -22,9 +22,6 @@ const (
 	SettingKeyRelayMaxProviderAttempts         SettingKey = "relay_max_provider_attempts"          // 单请求最多进入的不同上游渠道数，>=1
 	SettingKeyRelayMaxWireAttempts             SettingKey = "relay_max_wire_attempts"              // 单请求真实上游发送次数预算，>=1
 	SettingKeyCORSAllowOrigins                 SettingKey = "cors_allow_origins"                   // 跨域白名单(逗号分隔, 如 "example.com,example2.com"). 为空不允许跨域, "*"允许所有
-	SettingKeyCircuitBreakerThreshold          SettingKey = "circuit_breaker_threshold"            // 熔断触发阈值（连续失败次数）
-	SettingKeyCircuitBreakerCooldown           SettingKey = "circuit_breaker_cooldown"             // 熔断基础冷却时间（秒）
-	SettingKeyCircuitBreakerMaxCooldown        SettingKey = "circuit_breaker_max_cooldown"         // 熔断最大冷却时间（秒），指数退避上限
 	SettingKeyResponsesWSEnabled               SettingKey = "responses_ws_enabled"                 // 是否启用 OpenAI Responses WS 上游能力（仅客户端 WS 入站）
 	SettingKeyResponsesWSDefaultMode           SettingKey = "responses_ws_default_mode"            // OpenAI Responses WS 默认模式：off/transform/passthrough
 	SettingKeySSEHeartbeatInterval             SettingKey = "sse_heartbeat_interval"               // SSE 流式心跳间隔（秒），0 表示禁用
@@ -55,7 +52,7 @@ type Setting struct {
 
 func IsRetiredSettingKey(key SettingKey) bool {
 	switch key {
-	case SettingKeyCircuitBreakerThreshold, SettingKeyCircuitBreakerCooldown, SettingKeyCircuitBreakerMaxCooldown:
+	case "circuit_breaker_threshold", "circuit_breaker_cooldown", "circuit_breaker_max_cooldown":
 		return true
 	default:
 		return false
