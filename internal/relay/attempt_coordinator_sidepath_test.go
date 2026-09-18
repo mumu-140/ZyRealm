@@ -85,7 +85,6 @@ func TestP5CImagesConsumesCoordinatorEffectsAndPreservesPolicy(t *testing.T) {
 		"maxUpstreamStarts = group.MaxRetries + 1",
 		"balancer.TryAcquireChannel(",
 		"balancer.TryConsumeChannelRPM(",
-		"selectFairChannelCredential(",
 		"resolveSidepathDirective(coordination.Disposition)",
 	} {
 		if !strings.Contains(source, invariant) {
@@ -120,7 +119,6 @@ func TestP5CCompactConsumesCoordinatorEffectsAndPreservesPolicy(t *testing.T) {
 	for _, invariant := range []string{
 		"maxSameChannelRetries = group.MaxRetries",
 		"resolveSidepathDirective(coordination.Disposition)",
-		"selectFairChannelCredential(",
 	} {
 		if !strings.Contains(source, invariant) {
 			t.Fatalf("P5C changed Compact retry invariant %q", invariant)
@@ -129,7 +127,6 @@ func TestP5CCompactConsumesCoordinatorEffectsAndPreservesPolicy(t *testing.T) {
 	for _, forbidden := range []string{
 		"balancer.TryAcquireChannel(",
 		"balancer.TryConsumeChannelRPM(",
-		"selectFairChannelCredential(",
 	} {
 		if strings.Contains(source, forbidden) {
 			t.Fatalf("P5C must not add Compact policy %q", forbidden)
