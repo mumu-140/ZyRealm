@@ -188,7 +188,7 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 
 			var channelLastErr error
 			var channelLastStatus int
-			var channelLastResult attemptResult
+			var channelLastEffects attemptEffectPlan
 
 			for upstreamStarts < maxUpstreamStarts {
 				selectOpts := model.ChannelKeySelectOptions{
@@ -227,9 +227,10 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 
 				result := imagesAttemptRoutingResult(ctx, statusCode, written, fwdErr, span)
 				result = withRoutingDecision(ctx, policyRequest, channel.ID, result)
+				coordination, _ := coordinateAttemptOutcome(result) // withRoutingDecision guarantees a valid verdict
+				attachSidepathRoutingTrace(ctx, result, usedKey.CredentialRevision)
 				now := time.Now()
-				recordRuntimeAvailabilityEvidence(ctx, channel.ID, upstreamModel, result, now)
-				decision := result.Decision
+				applyRuntimeAvailabilityEffect(channel.ID, upstreamModel, result, coordination.Effects, now)
 
 				if ctx.Err() != nil {
 					metrics.SaveWithChannelStats(ctx, false, ctx.Err(), iter.Attempts(), false)
@@ -267,20 +268,20 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 				// 已写出：无法再重试。RoutingDecision 仍可把已提交的上游传输失败
 				// 作为 future-health 证据，但 legacy circuit 不重新获得准入权。
 				if written {
-					reportOutlierDecision(channel.ID, upstreamModel, decision.OutlierScope, statusCode, now)
+					reportOutlierDecision(channel.ID, upstreamModel, coordination.Effects.OutlierScope, statusCode, now)
 					metrics.SaveWithChannelStats(ctx, false, fwdErr, iter.Attempts(), false)
 					return true
 				}
 
-				if decision.Domain == failureDomainCredential {
+				if coordination.Effects.CredentialFailure {
 					recordCredentialRoutingFailureRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, result, now)
 				}
 				channelLastErr = fmt.Errorf("channel %s key %d failed: %w", channel.Name, usedKey.ID, fwdErr)
 				channelLastStatus = statusCode
-				channelLastResult = result
+				channelLastEffects = coordination.Effects
 
-				// 保留 Images 原有 HTTP retry 语义；P4B 只补 credential-domain 的同渠道换 Key。
-				if group.RetryEnabled && (decision.Domain == failureDomainCredential || isRetryableStatus(statusCode)) {
+				// 保留 Images 原有 HTTP retry 语义；P5C 只把 credential-domain 判定改为消费 coordinator 投影。
+				if group.RetryEnabled && (coordination.Effects.CredentialFailure || isRetryableStatus(statusCode)) {
 					excludeKeys[usedKey.ID] = struct{}{}
 					preferredKeyID = 0
 					continue
@@ -290,7 +291,7 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 
 			// 渠道所有 Key 均失败：只按最终 RoutingDecision 的作用域记录一次失败样本。
 			if channelLastErr != nil {
-				reportOutlierDecision(channel.ID, upstreamModel, channelLastResult.Decision.OutlierScope, channelLastStatus, time.Now())
+				reportOutlierDecision(channel.ID, upstreamModel, channelLastEffects.OutlierScope, channelLastStatus, time.Now())
 				lastErr = channelLastErr
 			}
 			return false

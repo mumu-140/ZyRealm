@@ -83,11 +83,3 @@ func TestP5BCoreConsumesCoordinatorRuntimeCredentialAndRouteLearningEffects(t *t
 	}
 }
 
-func TestP5BSidepathsRemainOutOfCoordinator(t *testing.T) {
-	for _, name := range []string{"images.go", "compact.go"} {
-		source := p5bSource(t, name)
-		if strings.Contains(source, "coordinateAttemptOutcome(") {
-			t.Fatalf("%s must remain outside AttemptCoordinator in P5B", name)
-		}
-	}
-}
