@@ -11,9 +11,7 @@ import (
 	"time"
 
 	"github.com/bestruirui/octopus/internal/model"
-	"github.com/bestruirui/octopus/internal/op"
 	"github.com/bestruirui/octopus/internal/relay/availability"
-	"github.com/bestruirui/octopus/internal/relay/balancer"
 )
 
 func TestImagesHandlerSkipsCredentialInAvailabilityCooldown(t *testing.T) {
@@ -201,49 +199,6 @@ func TestImagesHandlerCommittedStreamFailureCreatesModelCooldownWithoutReplay(t 
 	}
 	if state := availability.CandidateState(created.ID, "gpt-image-2", time.Now()); state != availability.StateCooldown {
 		t.Fatalf("runtime state after committed stream failure = %v, want model cooldown", state)
-	}
-}
-
-func TestImagesHandlerDoesNotUseLegacyCircuitAsCredentialAdmission(t *testing.T) {
-	ginTestMode(t)
-	ctx := setupRelayTestDB(t)
-
-	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerThreshold, 1); err != nil {
-		t.Fatalf("SettingSetInt threshold failed: %v", err)
-	}
-
-	var hits atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits.Add(1)
-		writeImagesSuccess(w)
-	}))
-	defer server.Close()
-
-	channel := newImagesTestChannel("image-ignore-legacy-circuit", server.URL)
-	group := &model.Group{Name: "public-image-ignore-legacy-circuit", Mode: model.GroupModeFailover}
-	created := persistImagesRoute(t, ctx, group, channel)[0]
-	key := created.Keys[0]
-	balancer.RecordFailure(created.ID, key.ID, "gpt-image-2", balancer.FailureHard)
-	if tripped, _ := balancer.IsTripped(created.ID, key.ID, "gpt-image-2"); !tripped {
-		t.Fatal("test precondition: legacy circuit must be open")
-	}
-	if !availability.CredentialAvailableRevision(created.ID, key.ID, key.CredentialRevision, time.Now()) {
-		t.Fatal("test precondition: credential availability must remain healthy")
-	}
-
-	recorder, c := newImagesTestContext(
-		"/v1/images/generations",
-		[]byte(`{"model":"public-image-ignore-legacy-circuit","prompt":"draw"}`),
-		"application/json",
-	)
-	c.Set("api_key_id", 2006)
-	ImagesHandler("/images/generations", c)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; Images credential admission must ignore legacy circuit state; body=%s", recorder.Code, recorder.Body.String())
-	}
-	if got := hits.Load(); got != 1 {
-		t.Fatalf("upstream hits = %d, want 1", got)
 	}
 }
 

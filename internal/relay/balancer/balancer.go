@@ -288,8 +288,8 @@ func (b *P2C) Candidates(items []model.GroupItem) []model.GroupItem {
 	return result
 }
 
-// ItemUpstreamModel 返回候选项的上游模型名，作为 runtime health、outlier 统计以及
-// legacy circuit 兼容写入的一致模型键。GroupItem.ModelName 为空时（历史数据未配置映射）
+// ItemUpstreamModel 返回候选项的上游模型名，作为 runtime health 与 outlier 统计的一致模型键。
+// GroupItem.ModelName 为空时（历史数据未配置映射）
 // 退回请求模型名。
 func ItemUpstreamModel(item model.GroupItem, requestModel string) string {
 	if item.ModelName != "" {
@@ -335,7 +335,6 @@ const minHealthSamples = 8 // 与 outlierwindow defaultConfig.MinSamples 对齐
 // Reset clears in-memory balancer and shared runtime state for tests.
 func Reset() {
 	rotationCounters = sync.Map{}
-	globalBreaker = sync.Map{}
 	globalSession = sync.Map{}
 	globalConcurrency = sync.Map{}
 	globalChannelRate = sync.Map{}

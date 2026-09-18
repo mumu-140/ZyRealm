@@ -235,12 +235,7 @@ func TestImagesHandlerClientCancellationDoesNotPolluteHealth(t *testing.T) {
 		MaxRetries:   3,
 	}
 	created := persistImagesRoute(t, ctx, group, channel)[0]
-	keyID := created.Keys[0].ID
 	outlierwindow.Clear(created.ID, "gpt-image-2")
-	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerThreshold, 1); err != nil {
-		t.Fatalf("SettingSetInt threshold failed: %v", err)
-	}
-
 	recorder, c := newImagesTestContext(
 		"/v1/images/generations",
 		[]byte(`{"model":"public-image-cancel","prompt":"draw"}`),
@@ -270,9 +265,6 @@ func TestImagesHandlerClientCancellationDoesNotPolluteHealth(t *testing.T) {
 	if got := balancer.CurrentChannelConcurrency(created.ID); got != 0 {
 		t.Fatalf("channel concurrency = %d, want 0", got)
 	}
-	if tripped, _ := balancer.IsTripped(created.ID, keyID, "gpt-image-2"); tripped {
-		t.Fatal("client cancellation tripped circuit breaker")
-	}
 	if stats := outlierwindow.Evaluate(created.ID, "gpt-image-2", time.Now()); stats.Samples != 0 {
 		t.Fatalf("client cancellation added outlier sample: %+v", stats)
 	}
@@ -282,7 +274,7 @@ func TestImagesHandlerClientCancellationDoesNotPolluteHealth(t *testing.T) {
 }
 
 // 截断 SSE：上游已开始写出但流中断，是上游故障的强信号，必须计入渠道-模型健康窗口；
-// 但因已写出无法重试，不应触发熔断。
+// 但因已写出无法重试；健康证据仅进入统一 availability/outlier 路径。
 func TestImagesHandlerTruncatedSSECountsAsUnhealthy(t *testing.T) {
 	ginTestMode(t)
 	ctx := setupRelayTestDB(t)
@@ -296,12 +288,7 @@ func TestImagesHandlerTruncatedSSECountsAsUnhealthy(t *testing.T) {
 	channel.MaxConcurrency = 1
 	group := &model.Group{Name: "public-image-truncated", Mode: model.GroupModeFailover}
 	created := persistImagesRoute(t, ctx, group, channel)[0]
-	keyID := created.Keys[0].ID
 	outlierwindow.Clear(created.ID, "gpt-image-2")
-	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerThreshold, 1); err != nil {
-		t.Fatalf("SettingSetInt threshold failed: %v", err)
-	}
-
 	recorder, c := newImagesTestContext(
 		"/v1/images/generations",
 		[]byte(`{"model":"public-image-truncated","prompt":"draw","stream":true}`),
@@ -315,9 +302,6 @@ func TestImagesHandlerTruncatedSSECountsAsUnhealthy(t *testing.T) {
 	}
 	if got := balancer.CurrentChannelConcurrency(created.ID); got != 0 {
 		t.Fatalf("channel concurrency = %d, want 0", got)
-	}
-	if tripped, _ := balancer.IsTripped(created.ID, keyID, "gpt-image-2"); tripped {
-		t.Fatal("truncated SSE tripped circuit breaker")
 	}
 	stats := outlierwindow.Evaluate(created.ID, "gpt-image-2", time.Now())
 	if stats.Samples != 1 || stats.Failures != 1 {

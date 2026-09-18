@@ -38,7 +38,6 @@ type AttemptSummary struct {
 	RuntimeEffect        string `json:"runtime_effect,omitempty"`
 	RuntimeState         string `json:"runtime_state,omitempty"`
 	CooldownUntil        int64  `json:"cooldown_until,omitempty"`
-	CircuitEffect        string `json:"circuit_effect,omitempty"`
 	OutlierEffect        string `json:"outlier_effect,omitempty"`
 	ReplaySafety         string `json:"replay_safety,omitempty"`
 	DispatchState        string `json:"dispatch_state,omitempty"`
@@ -161,7 +160,6 @@ func summarizeAttempt(attempt model.ChannelAttempt) AttemptSummary {
 		RuntimeEffect:        trace.RuntimeEffect,
 		RuntimeState:         trace.RuntimeState,
 		CooldownUntil:        trace.CooldownUntil,
-		CircuitEffect:        trace.CircuitEffect,
 		OutlierEffect:        trace.OutlierEffect,
 		ReplaySafety:         trace.ReplaySafety,
 		DispatchState:        trace.DispatchState,
@@ -186,7 +184,7 @@ func selectFinalRoute(attempts []model.ChannelAttempt) *RouteSummary {
 			return &route
 		}
 	}
-	// On failure, expose the last real failed dispatch. Skipped/circuit/capacity
+	// On failure, expose the last real failed dispatch. Skipped/capacity/rate-limit
 	// records explain eligibility but are not themselves a final upstream route.
 	for i := len(attempts) - 1; i >= 0; i-- {
 		attempt := attempts[i]

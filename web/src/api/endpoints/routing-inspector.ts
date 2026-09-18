@@ -38,7 +38,6 @@ export interface RoutingAttemptSummary extends RoutingRouteSummary {
     runtime_effect?: string;
     runtime_state?: string;
     cooldown_until?: number;
-    circuit_effect?: string;
     outlier_effect?: string;
     replay_safety?: string;
     dispatch_state?: string;

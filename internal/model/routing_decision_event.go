@@ -36,7 +36,6 @@ const (
 	DecisionReasonRuntimeSuspect       RoutingDecisionReason = "runtime_suspect"
 	DecisionReasonCredentialCooldown   RoutingDecisionReason = "credential_cooldown"
 	DecisionReasonCapabilityNegative   RoutingDecisionReason = "capability_negative"
-	DecisionReasonCircuitBreak         RoutingDecisionReason = "circuit_break"
 	DecisionReasonCapacity             RoutingDecisionReason = "capacity"
 	DecisionReasonRateLimit            RoutingDecisionReason = "rate_limit"
 	DecisionReasonProtocolIncompatible RoutingDecisionReason = "protocol_incompatible"

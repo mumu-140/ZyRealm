@@ -97,8 +97,8 @@ func TestCommittedStreamReadFailureStopsReplayButCarriesModelHealthEvidence(t *t
 	if decision.OutlierScope != scopeModel {
 		t.Fatalf("outlier scope = %v, want model", decision.OutlierScope)
 	}
-	if decision.CircuitEffect != "record_failure" {
-		t.Fatalf("circuit effect = %q, want record_failure", decision.CircuitEffect)
+	if !decision.RouteLearningCandidate {
+		t.Fatal("committed upstream stream failure must remain managed-route learning evidence")
 	}
 }
 
@@ -119,7 +119,7 @@ func TestCommittedStreamReadFailureCoolsOnlyAffectedModel(t *testing.T) {
 	}
 }
 
-func TestCommittedNonStreamFailureRemainsRuntimeAndCircuitNeutral(t *testing.T) {
+func TestCommittedNonStreamFailureRemainsRuntimeNeutral(t *testing.T) {
 	result := attemptResult{
 		Written:         true,
 		Err:             errors.New("transform error: invalid downstream encoding"),
@@ -133,7 +133,7 @@ func TestCommittedNonStreamFailureRemainsRuntimeAndCircuitNeutral(t *testing.T) 
 	if !decision.Terminal || decision.ReplaySafety != routingReplayCommitted {
 		t.Fatalf("committed non-stream failure must still stop replay: %+v", decision)
 	}
-	if decision.RuntimeEffect != routingRuntimeNone || decision.CircuitEffect != "none" {
-		t.Fatalf("local committed failure must stay shared-health neutral: %+v", decision)
+	if decision.RuntimeEffect != routingRuntimeNone || decision.RouteLearningCandidate {
+		t.Fatalf("local committed failure must stay runtime and route-learning neutral: %+v", decision)
 	}
 }

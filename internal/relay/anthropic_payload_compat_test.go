@@ -35,8 +35,8 @@ func TestAnthropicPayloadSchemaMismatchRoutesAsCapability(t *testing.T) {
 	if decision.Terminal {
 		t.Fatal("schema incompatibility must remain failover-eligible before delivery")
 	}
-	if decision.OutlierScope != scopeIgnore || decision.CircuitEffect != "none" {
-		t.Fatalf("schema incompatibility must be health-neutral: %+v", decision)
+	if decision.OutlierScope != scopeIgnore || decision.RouteLearningCandidate {
+		t.Fatalf("schema incompatibility must be health and route-learning neutral: %+v", decision)
 	}
 }
 

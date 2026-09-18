@@ -234,22 +234,6 @@
       "label": "Group Health Checks",
       "description": "When enabled, show the home health summary, group-card health status, and allow manual health checks."
     },
-    "circuitBreaker": {
-      "title": "Circuit Breaker",
-      "threshold": {
-        "label": "Failure Threshold (consecutive failures)",
-        "placeholder": "Enter threshold"
-      },
-      "cooldown": {
-        "label": "Base Cooldown (seconds)",
-        "placeholder": "Enter cooldown in seconds"
-      },
-      "maxCooldown": {
-        "label": "Max Cooldown (seconds)",
-        "placeholder": "Enter max cooldown in seconds"
-      },
-      "hint": "When a channel fails consecutively up to the threshold, circuit breaker trips. Cooldown grows exponentially up to the max cooldown"
-    },
     "outlierRetirement": {
       "title": "Passive Outlier Retirement",
       "hint": "Temporarily disables site projected channels that keep failing on real requests (disabled, never deleted), then probes them periodically and re-enables them once they recover. Before disabling, sibling channels of the same site are cross-checked and a probe request confirms the failure to avoid false positives; at least one enabled channel is always kept per account. Applies only to site projected channels. Off by default.",

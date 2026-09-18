@@ -45,7 +45,6 @@ func TestRoutingDecisionEventContractValues(t *testing.T) {
 		DecisionReasonRuntimeSuspect:     "runtime_suspect",
 		DecisionReasonCredentialCooldown: "credential_cooldown",
 		DecisionReasonCapabilityNegative: "capability_negative",
-		DecisionReasonCircuitBreak:       "circuit_break",
 		DecisionReasonCapacity:           "capacity",
 		DecisionReasonRateLimit:          "rate_limit",
 		DecisionReasonProtocolIncompatible: "protocol_incompatible",

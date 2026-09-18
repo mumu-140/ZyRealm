@@ -15,6 +15,9 @@ var settingCache = cache.New[model.SettingKey, string](16)
 func SettingList(ctx context.Context) ([]model.Setting, error) {
 	settings := make([]model.Setting, 0, settingCache.Len())
 	for key, value := range settingCache.GetAll() {
+		if model.IsRetiredSettingKey(key) {
+			continue
+		}
 		settings = append(settings, model.Setting{
 			Key:   key,
 			Value: value,
@@ -24,6 +27,9 @@ func SettingList(ctx context.Context) ([]model.Setting, error) {
 }
 
 func SettingGetString(key model.SettingKey) (string, error) {
+	if model.IsRetiredSettingKey(key) {
+		return "", fmt.Errorf("setting not found")
+	}
 	setting, ok := settingCache.Get(key)
 	if !ok {
 		return "", fmt.Errorf("setting not found")
@@ -32,6 +38,9 @@ func SettingGetString(key model.SettingKey) (string, error) {
 }
 
 func SettingSetString(key model.SettingKey, value string) error {
+	if model.IsRetiredSettingKey(key) {
+		return fmt.Errorf("setting not found")
+	}
 	valueCache, ok := settingCache.Get(key)
 	if !ok {
 		return fmt.Errorf("setting not found")
@@ -51,6 +60,9 @@ func SettingSetString(key model.SettingKey, value string) error {
 }
 
 func SettingGetInt(key model.SettingKey) (int, error) {
+	if model.IsRetiredSettingKey(key) {
+		return 0, fmt.Errorf("setting not found")
+	}
 	setting, ok := settingCache.Get(key)
 	if !ok {
 		return 0, fmt.Errorf("setting not found")
@@ -59,6 +71,9 @@ func SettingGetInt(key model.SettingKey) (int, error) {
 }
 
 func SettingGetBool(key model.SettingKey) (bool, error) {
+	if model.IsRetiredSettingKey(key) {
+		return false, fmt.Errorf("setting not found")
+	}
 	setting, ok := settingCache.Get(key)
 	if !ok {
 		for _, defaultSetting := range model.DefaultSettings() {
@@ -72,6 +87,9 @@ func SettingGetBool(key model.SettingKey) (bool, error) {
 }
 
 func SettingSetInt(key model.SettingKey, value int) error {
+	if model.IsRetiredSettingKey(key) {
+		return fmt.Errorf("setting not found")
+	}
 	valueCache, ok := settingCache.Get(key)
 	if !ok {
 		return fmt.Errorf("setting not found")
@@ -104,6 +122,10 @@ func settingRefreshCache(ctx context.Context) error {
 
 	existingKeys := make(map[model.SettingKey]bool)
 	for _, setting := range settings {
+		if model.IsRetiredSettingKey(setting.Key) {
+			settingCache.Del(setting.Key)
+			continue
+		}
 		existingKeys[setting.Key] = true
 	}
 
@@ -123,6 +145,9 @@ func settingRefreshCache(ctx context.Context) error {
 		settings = append(settings, missingSettings...)
 	}
 	for _, setting := range settings {
+		if model.IsRetiredSettingKey(setting.Key) {
+			continue
+		}
 		settingCache.Set(setting.Key, setting.Value)
 	}
 	return nil
