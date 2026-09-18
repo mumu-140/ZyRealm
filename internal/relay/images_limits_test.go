@@ -99,7 +99,7 @@ func TestImagesHandlerEnforcesChannelRPM(t *testing.T) {
 	}
 }
 
-func TestImagesHandlerFailsOverToNextKeyWithinChannel(t *testing.T) {
+func TestImagesHandlerGeneric500RetriesSameCredential(t *testing.T) {
 	ginTestMode(t)
 	ctx := setupRelayTestDB(t)
 	var (
@@ -116,50 +116,43 @@ func TestImagesHandlerFailsOverToNextKeyWithinChannel(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Retry-After", "1")
 		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = io.WriteString(w, `{"error":{"message":"first key failed"}}`)
+		_, _ = io.WriteString(w, `{"error":{"message":"generic upstream failure"}}`)
 	}))
 	defer server.Close()
 
-	channel := newImagesTestChannel("image-key-failover", server.URL)
+	channel := newImagesTestChannel("image-key-same-retry", server.URL)
 	channel.Keys = []model.ChannelKey{
 		{Enabled: true, ChannelKey: "image-key-one", TotalCost: 0},
 		{Enabled: true, ChannelKey: "image-key-two", TotalCost: 1},
 	}
 	group := &model.Group{
-		Name:         "public-image-key-failover",
+		Name:         "public-image-key-same-retry",
 		Mode:         model.GroupModeFailover,
 		RetryEnabled: true,
-		MaxRetries:   2,
+		MaxRetries:   1,
 	}
-	created := persistImagesRoute(t, ctx, group, channel)[0]
-	outlierwindow.Clear(created.ID, "gpt-image-2")
+	persistImagesRoute(t, ctx, group, channel)
 
 	recorder, c := newImagesTestContext(
 		"/v1/images/generations",
-		[]byte(`{"model":"public-image-key-failover","prompt":"draw"}`),
+		[]byte(`{"model":"public-image-key-same-retry","prompt":"draw"}`),
 		"application/json",
 	)
 	c.Set("api_key_id", 1003)
 	ImagesHandler("/images/generations", c)
 
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 after same-credential retry; body=%s", recorder.Code, recorder.Body.String())
 	}
 	mu.Lock()
 	gotAuths := append([]string(nil), auths...)
 	mu.Unlock()
-	wantAuths := []string{"Bearer image-key-one", "Bearer image-key-two"}
+	wantAuths := []string{"Bearer image-key-one", "Bearer image-key-one"}
 	if fmt.Sprint(gotAuths) != fmt.Sprint(wantAuths) {
 		t.Fatalf("authorization sequence = %v, want %v", gotAuths, wantAuths)
 	}
-	stats := outlierwindow.Evaluate(created.ID, "gpt-image-2", time.Now())
-	if stats.Samples != 1 || stats.Failures != 0 {
-		t.Fatalf("outlier stats = %+v, want one successful sample", stats)
-	}
 }
-
 func TestImagesHandlerCapsTotalUpstreamStartsAcrossManyCandidates(t *testing.T) {
 	ginTestMode(t)
 	ctx := setupRelayTestDB(t)

@@ -105,6 +105,7 @@ func HandleResponsesCompact(c *gin.Context) {
 	var lastErr error
 	var lastStatusCode int
 	var lastRetryAfter time.Duration
+	var stopRouting bool
 
 	maxSameChannelRetries := 1
 	if group.RetryEnabled {
@@ -154,27 +155,29 @@ func HandleResponsesCompact(c *gin.Context) {
 				PreferredKeyID: iter.StickyKeyID(),
 			}
 			var usedKey dbmodel.ChannelKey
-			for {
-				usedKey = channel.GetChannelKey(selectOpts)
-				if usedKey.ChannelKey == "" {
-					break
+			selectNextCredential := func() bool {
+				for {
+					candidate := channel.GetChannelKey(selectOpts)
+					if candidate.ChannelKey == "" {
+						return false
+					}
+					if availability.CredentialAvailableRevision(channel.ID, candidate.ID, candidate.CredentialRevision, time.Now()) {
+						usedKey = candidate
+						return true
+					}
+					selectOpts.ExcludeKeyIDs[candidate.ID] = struct{}{}
+					selectOpts.PreferredKeyID = 0
+					iter.RecordDecision(dbmodel.RoutingDecisionEvent{
+						Stage:        dbmodel.DecisionStageCredential,
+						Outcome:      dbmodel.DecisionOutcomeRejected,
+						Reason:       dbmodel.DecisionReasonCredentialCooldown,
+						ChannelID:    channel.ID,
+						ChannelKeyID: candidate.ID,
+						ChannelName:  channel.Name,
+					})
 				}
-				if availability.CredentialAvailableRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, time.Now()) {
-					break
-				}
-				selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
-				selectOpts.PreferredKeyID = 0
-				iter.RecordDecision(dbmodel.RoutingDecisionEvent{
-					Stage:        dbmodel.DecisionStageCredential,
-					Outcome:      dbmodel.DecisionOutcomeRejected,
-					Reason:       dbmodel.DecisionReasonCredentialCooldown,
-					ChannelID:    channel.ID,
-					ChannelKeyID: usedKey.ID,
-					ChannelName:  channel.Name,
-				})
-				usedKey = dbmodel.ChannelKey{}
 			}
-			if usedKey.ChannelKey == "" {
+			if !selectNextCredential() {
 				if len(selectOpts.ExcludeKeyIDs) == 0 {
 					iter.Skip(channel.ID, 0, channel.Name, "no available key")
 				}
@@ -194,9 +197,11 @@ func HandleResponsesCompact(c *gin.Context) {
 			var success bool
 			var result attemptResult
 			var coordination attemptCoordination
+			delaySameCredential := false
 
+		attemptLoop:
 			for retryNum := 0; retryNum < maxSameChannelRetries; retryNum++ {
-				if retryNum > 0 {
+				if retryNum > 0 && delaySameCredential {
 					delay := computeBackoff(retryNum, retryAfter)
 					select {
 					case <-ctx.Done():
@@ -215,9 +220,27 @@ func HandleResponsesCompact(c *gin.Context) {
 					success = true
 					break
 				}
-				if !isRetryableStatus(statusCode) {
-					break
+
+				switch resolveSidepathDirective(coordination.Disposition) {
+				case sidepathDirectiveRetrySameCredential:
+					if retryNum+1 < maxSameChannelRetries {
+						delaySameCredential = true
+						continue
+					}
+				case sidepathDirectiveRotateCredential:
+					recordCredentialRoutingFailureRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, result, time.Now())
+					selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
+					selectOpts.PreferredKeyID = 0
+					if retryNum+1 < maxSameChannelRetries && selectNextCredential() {
+						delaySameCredential = false
+						continue
+					}
+				case sidepathDirectiveNextProvider:
+					iter.SkipProvider(channel.ID)
+				case sidepathDirectiveStop:
+					stopRouting = true
 				}
+				break attemptLoop
 			}
 
 			usedKey.StatusCode = statusCode
@@ -238,9 +261,6 @@ func HandleResponsesCompact(c *gin.Context) {
 				return true
 			}
 
-			if coordination.Effects.CredentialFailure {
-				recordCredentialRoutingFailureRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, result, now)
-			}
 			op.StatsChannelUpdate(channel.ID, dbmodel.StatsMetrics{RequestFailed: 1})
 			reportOutlierDecision(channel.ID, upstreamModel, coordination.Effects.OutlierScope, statusCode, now)
 			lastErr = attemptErr
@@ -250,6 +270,9 @@ func HandleResponsesCompact(c *gin.Context) {
 		}()
 		if done {
 			return
+		}
+		if stopRouting {
+			break
 		}
 	}
 

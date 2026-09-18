@@ -568,27 +568,29 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 		}
 
 		var usedKey dbmodel.ChannelKey
-		for {
-			usedKey = channel.GetChannelKey(selectOpts)
-			if usedKey.ChannelKey == "" {
-				break
+		selectNextCredential := func() bool {
+			for {
+				candidate := channel.GetChannelKey(selectOpts)
+				if candidate.ChannelKey == "" {
+					return false
+				}
+				if availability.CredentialAvailableRevision(channel.ID, candidate.ID, candidate.CredentialRevision, time.Now()) {
+					usedKey = candidate
+					return true
+				}
+				selectOpts.ExcludeKeyIDs[candidate.ID] = struct{}{}
+				selectOpts.PreferredKeyID = 0
+				req.iter.RecordDecision(dbmodel.RoutingDecisionEvent{
+					Stage:        dbmodel.DecisionStageCredential,
+					Outcome:      dbmodel.DecisionOutcomeRejected,
+					Reason:       dbmodel.DecisionReasonCredentialCooldown,
+					ChannelID:    channel.ID,
+					ChannelKeyID: candidate.ID,
+					ChannelName:  channel.Name,
+				})
 			}
-			if availability.CredentialAvailableRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, time.Now()) {
-				break
-			}
-			selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
-			selectOpts.PreferredKeyID = 0
-			req.iter.RecordDecision(dbmodel.RoutingDecisionEvent{
-				Stage:        dbmodel.DecisionStageCredential,
-				Outcome:      dbmodel.DecisionOutcomeRejected,
-				Reason:       dbmodel.DecisionReasonCredentialCooldown,
-				ChannelID:    channel.ID,
-				ChannelKeyID: usedKey.ID,
-				ChannelName:  channel.Name,
-			})
-			usedKey = dbmodel.ChannelKey{}
 		}
-		if usedKey.ChannelKey == "" {
+		if !selectNextCredential() {
 			if len(selectOpts.ExcludeKeyIDs) == 0 {
 				req.iter.Skip(channel.ID, 0, channel.Name, "no available key")
 			}
@@ -608,8 +610,12 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 			defer availability.ReleaseLease(runtimeLease, time.Now())
 
 			var result attemptResult
+			var coordination attemptCoordination
+			delaySameCredential := false
+
+		attemptLoop:
 			for retryNum := 0; retryNum < maxSameChannelRetries; retryNum++ {
-				if retryNum > 0 {
+				if retryNum > 0 && delaySameCredential {
 					delay := computeBackoff(retryNum, result.RetryAfter)
 					select {
 					case <-relayCtx.Done():
@@ -639,23 +645,42 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 				if isManualInterrupt(req.requestContext(), result.Err) {
 					return wsRelayResult{Canceled: true, Err: contextError(req.requestContext())}, true
 				}
-				if result.Success || result.Written || result.Canceled || result.ResetConversation || !isRetryableStatus(result.StatusCode) {
+				result = withRoutingDecision(req.requestContext(), req, channel.ID, result)
+				var ok bool
+				coordination, ok = coordinateAttemptOutcome(result)
+				if !ok {
+					invariantErr := result.Err
+					if invariantErr == nil {
+						invariantErr = fmt.Errorf("routing decision unavailable")
+					}
+					return wsRelayResult{Err: invariantErr}, true
+				}
+
+				if result.Success || result.Written || result.Canceled || result.ResetConversation {
 					break
 				}
+
+				switch resolveSidepathDirective(coordination.Disposition) {
+				case sidepathDirectiveRetrySameCredential:
+					if retryNum+1 < maxSameChannelRetries {
+						delaySameCredential = true
+						continue
+					}
+				case sidepathDirectiveRotateCredential:
+					recordCredentialRoutingFailureRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, result, time.Now())
+					selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
+					selectOpts.PreferredKeyID = 0
+					if retryNum+1 < maxSameChannelRetries && selectNextCredential() {
+						delaySameCredential = false
+						continue
+					}
+				case sidepathDirectiveNextProvider:
+					req.iter.SkipProvider(channel.ID)
+				case sidepathDirectiveStop:
+				}
+				break attemptLoop
 			}
 
-			// relayAttempt already produced the canonical RoutingDecision. Project
-			// its effects through AttemptCoordinator without moving WS retry/session
-			// policy into the coordinator.
-			result = withRoutingDecision(req.requestContext(), req, channel.ID, result)
-			coordination, ok := coordinateAttemptOutcome(result)
-			if !ok {
-				invariantErr := result.Err
-				if invariantErr == nil {
-					invariantErr = fmt.Errorf("routing decision unavailable")
-				}
-				return wsRelayResult{Err: invariantErr}, true
-			}
 			now := time.Now()
 			applyRuntimeAvailabilityEffect(channel.ID, upstreamModel, result, coordination.Effects, now)
 
@@ -669,9 +694,6 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 				return wsRelayResult{Success: true, ResponseID: respID}, true
 			}
 
-			if coordination.Effects.CredentialFailure {
-				recordCredentialRoutingFailureRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, result, now)
-			}
 			if !result.Canceled {
 				reportOutlierDecision(channel.ID, upstreamModel, coordination.Effects.OutlierScope, result.StatusCode, now)
 			}
@@ -683,6 +705,9 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 			}
 			if result.Canceled || result.Written {
 				return wsRelayResult{Written: result.Written, Canceled: result.Canceled, Err: result.Err}, true
+			}
+			if resolveSidepathDirective(coordination.Disposition) == sidepathDirectiveStop {
+				return wsRelayResult{Err: result.Err}, true
 			}
 			lastErr = result.Err
 			lastResult = result

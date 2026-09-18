@@ -64,7 +64,6 @@ func TestP5CImagesConsumesCoordinatorEffectsAndPreservesPolicy(t *testing.T) {
 	for _, required := range []string{
 		"coordinateAttemptOutcome(result)",
 		"applyRuntimeAvailabilityEffect(",
-		"coordination.Effects.CredentialFailure",
 		"coordination.Effects.OutlierScope",
 		"attachSidepathRoutingTrace(",
 	} {
@@ -87,7 +86,7 @@ func TestP5CImagesConsumesCoordinatorEffectsAndPreservesPolicy(t *testing.T) {
 		"balancer.TryAcquireChannel(",
 		"balancer.TryConsumeChannelRPM(",
 		"channel.GetChannelKey(",
-		"isRetryableStatus(statusCode)",
+		"resolveSidepathDirective(coordination.Disposition)",
 	} {
 		if !strings.Contains(source, invariant) {
 			t.Fatalf("P5C changed Images retry/admission invariant %q", invariant)
@@ -101,7 +100,6 @@ func TestP5CCompactConsumesCoordinatorEffectsAndPreservesPolicy(t *testing.T) {
 	for _, required := range []string{
 		"coordinateAttemptOutcome(result)",
 		"applyRuntimeAvailabilityEffect(",
-		"coordination.Effects.CredentialFailure",
 		"coordination.Effects.OutlierScope",
 		"attachSidepathRoutingTrace(",
 	} {
@@ -121,7 +119,7 @@ func TestP5CCompactConsumesCoordinatorEffectsAndPreservesPolicy(t *testing.T) {
 
 	for _, invariant := range []string{
 		"maxSameChannelRetries = group.MaxRetries",
-		"isRetryableStatus(statusCode)",
+		"resolveSidepathDirective(coordination.Disposition)",
 		"channel.GetChannelKey(",
 	} {
 		if !strings.Contains(source, invariant) {

@@ -21,13 +21,12 @@ func p5bSource(t *testing.T, name string) string {
 	return string(data)
 }
 
-func TestP5BWSConsumesCoordinatorEffectsWithoutRetryMigration(t *testing.T) {
+func TestP5BWSConsumesCoordinatorEffectsAndPreservesSessionBoundary(t *testing.T) {
 	source := p5bSource(t, "ws_client.go")
 
 	for _, required := range []string{
 		"coordinateAttemptOutcome(result)",
 		"applyRuntimeAvailabilityEffect(",
-		"coordination.Effects.CredentialFailure",
 		"coordination.Effects.OutlierScope",
 	} {
 		if !strings.Contains(source, required) {
@@ -44,9 +43,9 @@ func TestP5BWSConsumesCoordinatorEffectsWithoutRetryMigration(t *testing.T) {
 		}
 	}
 
-	// These transport/session gates are intentionally NOT migrated in P5B.
+	// P5D1 may converge retry direction, but these WS session/replay gates remain transport-owned.
 	for _, invariant := range []string{
-		"isRetryableStatus(result.StatusCode)",
+		"resolveSidepathDirective(coordination.Disposition)",
 		"budget := 15 * time.Second",
 		"maxChannelAttempts > 3",
 		"result.ResetConversation",
