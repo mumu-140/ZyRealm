@@ -668,17 +668,6 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 			if !result.Canceled {
 				reportOutlierDecision(channel.ID, upstreamModel, decision.OutlierScope, result.StatusCode, now)
 			}
-			if !result.Written && !result.Canceled && !result.ResetConversation {
-				failureKind := circuitFailureKindForDecision(decision, group.RetryEnabled, result.StatusCode)
-				// Preserve the legacy exact-replay shadow signal until P4C2 decouples
-				// route learning from the breaker. This no longer participates in
-				// admission after P4C1b.
-				if replayExact && result.StatusCode == http.StatusServiceUnavailable && isNoAvailableAccountError(relayErrorMessage(result.Err)) {
-					failureKind = balancer.FailureHard
-				}
-				balancer.RecordFailure(channel.ID, usedKey.ID, upstreamModel, failureKind)
-			}
-
 			if result.ResetConversation {
 				if publicErr, ok := classifyWSPublicError(result.Err, result.StatusCode); ok {
 					return wsRelayResult{ResetConversation: publicErr.ResetConversation, Err: result.Err, PublicError: &publicErr}, true
