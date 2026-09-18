@@ -557,6 +557,12 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 
 		req.internalRequest.Model = upstreamModel
 
+		runtimeLease, runtimeEligible := availability.AcquireCandidate(channel.ID, upstreamModel, time.Now())
+		if !runtimeEligible {
+			req.iter.Skip(channel.ID, 0, channel.Name, "runtime cooldown or half-open lease busy")
+			continue
+		}
+
 		selectOpts := dbmodel.ChannelKeySelectOptions{
 			ExcludeKeyIDs:  make(map[int]struct{}),
 			PreferredKeyID: req.iter.StickyKeyID(),
@@ -572,15 +578,10 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 			return true
 		}
 		if !selectNextCredential() {
+			availability.ReleaseLease(runtimeLease, time.Now())
 			if len(selectOpts.ExcludeKeyIDs) == 0 {
 				req.iter.Skip(channel.ID, 0, channel.Name, "no available key")
 			}
-			continue
-		}
-
-		runtimeLease, runtimeEligible := availability.AcquireCandidate(channel.ID, upstreamModel, time.Now())
-		if !runtimeEligible {
-			req.iter.Skip(channel.ID, 0, channel.Name, "runtime cooldown or half-open lease busy")
 			continue
 		}
 
