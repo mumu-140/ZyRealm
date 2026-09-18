@@ -85,7 +85,7 @@ func TestP5CImagesConsumesCoordinatorEffectsAndPreservesPolicy(t *testing.T) {
 		"maxUpstreamStarts = group.MaxRetries + 1",
 		"balancer.TryAcquireChannel(",
 		"balancer.TryConsumeChannelRPM(",
-		"channel.GetChannelKey(",
+		"selectFairChannelCredential(",
 		"resolveSidepathDirective(coordination.Disposition)",
 	} {
 		if !strings.Contains(source, invariant) {
@@ -120,7 +120,7 @@ func TestP5CCompactConsumesCoordinatorEffectsAndPreservesPolicy(t *testing.T) {
 	for _, invariant := range []string{
 		"maxSameChannelRetries = group.MaxRetries",
 		"resolveSidepathDirective(coordination.Disposition)",
-		"channel.GetChannelKey(",
+		"selectFairChannelCredential(",
 	} {
 		if !strings.Contains(source, invariant) {
 			t.Fatalf("P5C changed Compact retry invariant %q", invariant)
