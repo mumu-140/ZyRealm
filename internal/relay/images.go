@@ -114,6 +114,7 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 		lastErr         error
 		capacitySkipped bool
 		rateSkipped     bool
+		stopRouting     bool
 	)
 
 	maxUpstreamStarts := 1
@@ -280,11 +281,22 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 				channelLastStatus = statusCode
 				channelLastEffects = coordination.Effects
 
-				// 保留 Images 原有 HTTP retry 语义；P5C 只把 credential-domain 判定改为消费 coordinator 投影。
-				if group.RetryEnabled && (coordination.Effects.CredentialFailure || isRetryableStatus(statusCode)) {
-					excludeKeys[usedKey.ID] = struct{}{}
-					preferredKeyID = 0
-					continue
+				switch resolveSidepathDirective(coordination.Disposition) {
+				case sidepathDirectiveRetrySameCredential:
+					if upstreamStarts < maxUpstreamStarts {
+						preferredKeyID = usedKey.ID
+						continue
+					}
+				case sidepathDirectiveRotateCredential:
+					if upstreamStarts < maxUpstreamStarts {
+						excludeKeys[usedKey.ID] = struct{}{}
+						preferredKeyID = 0
+						continue
+					}
+				case sidepathDirectiveNextProvider:
+					iter.SkipProvider(channel.ID)
+				case sidepathDirectiveStop:
+					stopRouting = true
 				}
 				break
 			}
@@ -299,6 +311,9 @@ func ImagesHandler(endpoint string, c *gin.Context) {
 
 		if done {
 			return
+		}
+		if stopRouting {
+			break
 		}
 
 		capacitySkipped = false
