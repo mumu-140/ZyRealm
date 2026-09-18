@@ -1576,16 +1576,6 @@ func TestGeneric500DoesNotWriteLegacyCircuitOrBlockRelayAdmission(t *testing.T) 
 	gin.SetMode(gin.TestMode)
 	ctx := setupRelayTestDB(t)
 
-	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerThreshold, 2); err != nil {
-		t.Fatalf("SettingSetInt threshold failed: %v", err)
-	}
-	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerCooldown, 60); err != nil {
-		t.Fatalf("SettingSetInt cooldown failed: %v", err)
-	}
-	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerMaxCooldown, 60); err != nil {
-		t.Fatalf("SettingSetInt max cooldown failed: %v", err)
-	}
-
 	var hits atomic.Int32
 	var phase atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1632,16 +1622,14 @@ func TestGeneric500DoesNotWriteLegacyCircuitOrBlockRelayAdmission(t *testing.T) 
 		return recorder
 	}
 
-	resp1 := makeRequest(`{"model":"relay-inert-legacy-circuit-group","messages":[{"role":"user","content":"first"}]}`)
-	if resp1.Code != http.StatusInternalServerError {
-		t.Fatalf("expected first generic 500 to pass through, got status %d body %s", resp1.Code, resp1.Body.String())
+	for i := 0; i < 5; i++ {
+		resp := makeRequest(`{"model":"relay-inert-legacy-circuit-group","messages":[{"role":"user","content":"failure"}]}`)
+		if resp.Code != http.StatusInternalServerError {
+			t.Fatalf("generic 500 request %d: got status %d body %s", i+1, resp.Code, resp.Body.String())
+		}
 	}
-	resp2 := makeRequest(`{"model":"relay-inert-legacy-circuit-group","messages":[{"role":"user","content":"second"}]}`)
-	if resp2.Code != http.StatusInternalServerError {
-		t.Fatalf("expected second generic 500 to pass through, got status %d body %s", resp2.Code, resp2.Body.String())
-	}
-	if hits.Load() != 2 {
-		t.Fatalf("expected two upstream generic-500 calls, got %d", hits.Load())
+	if hits.Load() != 5 {
+		t.Fatalf("expected five upstream generic-500 calls, got %d", hits.Load())
 	}
 	if balancer.PeekItemTripped(channel.ID, "breaker-model") {
 		t.Fatal("generic 500 must not mutate the retired legacy circuit")
@@ -1655,7 +1643,7 @@ func TestGeneric500DoesNotWriteLegacyCircuitOrBlockRelayAdmission(t *testing.T) 
 	if resp3.Code != http.StatusOK {
 		t.Fatalf("retired legacy circuit must not affect relay admission, got status %d body %s", resp3.Code, resp3.Body.String())
 	}
-	if hits.Load() != 3 {
+	if hits.Load() != 6 {
 		t.Fatalf("expected request to reach upstream after legacy circuit writer retirement, got %d total hits", hits.Load())
 	}
 	if !strings.Contains(resp3.Body.String(), `"content":"ok"`) {
