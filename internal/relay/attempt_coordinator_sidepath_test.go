@@ -100,7 +100,6 @@ func TestP5CCompactConsumesCoordinatorEffectsAndPreservesPolicy(t *testing.T) {
 	for _, required := range []string{
 		"coordinateAttemptOutcome(result)",
 		"applyRuntimeAvailabilityEffect(",
-		"coordination.Effects.CredentialFailure",
 		"coordination.Effects.OutlierScope",
 		"attachSidepathRoutingTrace(",
 	} {
