@@ -1572,19 +1572,9 @@ func TestHandlerUsesNextKeyWhenFirstCredentialIsCooling(t *testing.T) {
 	}
 }
 
-func TestGeneric500LegacyCircuitWriteDoesNotBlockRelayAdmission(t *testing.T) {
+func TestGeneric500RemainsRuntimeNeutralAndDoesNotBlockRelayAdmission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := setupRelayTestDB(t)
-
-	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerThreshold, 2); err != nil {
-		t.Fatalf("SettingSetInt threshold failed: %v", err)
-	}
-	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerCooldown, 60); err != nil {
-		t.Fatalf("SettingSetInt cooldown failed: %v", err)
-	}
-	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerMaxCooldown, 60); err != nil {
-		t.Fatalf("SettingSetInt max cooldown failed: %v", err)
-	}
 
 	var hits atomic.Int32
 	var phase atomic.Int32
@@ -1600,7 +1590,7 @@ func TestGeneric500LegacyCircuitWriteDoesNotBlockRelayAdmission(t *testing.T) {
 	defer server.Close()
 
 	channel := &model.Channel{
-		Name:     "relay-inert-legacy-circuit",
+		Name:     "relay-generic500-runtime-neutral",
 		Type:     outbound.OutboundTypeOpenAIChat,
 		Enabled:  true,
 		BaseUrls: []model.BaseUrl{{URL: server.URL + "/v1"}},
@@ -1612,7 +1602,7 @@ func TestGeneric500LegacyCircuitWriteDoesNotBlockRelayAdmission(t *testing.T) {
 	}
 
 	group := &model.Group{
-		Name:         "relay-inert-legacy-circuit-group",
+		Name:         "relay-generic500-runtime-neutral-group",
 		Mode:         model.GroupModeFailover,
 		RetryEnabled: false,
 	}
@@ -1632,28 +1622,31 @@ func TestGeneric500LegacyCircuitWriteDoesNotBlockRelayAdmission(t *testing.T) {
 		return recorder
 	}
 
-	resp1 := makeRequest(`{"model":"relay-inert-legacy-circuit-group","messages":[{"role":"user","content":"first"}]}`)
+	resp1 := makeRequest(`{"model":"relay-generic500-runtime-neutral-group","messages":[{"role":"user","content":"first"}]}`)
 	if resp1.Code != http.StatusInternalServerError {
 		t.Fatalf("expected first generic 500 to pass through, got status %d body %s", resp1.Code, resp1.Body.String())
 	}
-	resp2 := makeRequest(`{"model":"relay-inert-legacy-circuit-group","messages":[{"role":"user","content":"second"}]}`)
+	resp2 := makeRequest(`{"model":"relay-generic500-runtime-neutral-group","messages":[{"role":"user","content":"second"}]}`)
 	if resp2.Code != http.StatusInternalServerError {
 		t.Fatalf("expected second generic 500 to pass through, got status %d body %s", resp2.Code, resp2.Body.String())
 	}
 	if hits.Load() != 2 {
 		t.Fatalf("expected two upstream generic-500 calls, got %d", hits.Load())
 	}
-	if !balancer.PeekItemTripped(channel.ID, "breaker-model") {
-		t.Fatal("test precondition: compatibility circuit write must be open")
+	if state := availability.CandidateState(channel.ID, "breaker-model", time.Now()); state != availability.StateAvailable {
+		t.Fatalf("generic 500 promoted into runtime health state %v, want available", state)
+	}
+	if balancer.PeekItemTripped(channel.ID, "breaker-model") {
+		t.Fatal("generic 500 still wrote legacy circuit state")
 	}
 
 	phase.Store(1)
-	resp3 := makeRequest(`{"model":"relay-inert-legacy-circuit-group","messages":[{"role":"user","content":"third"}]}`)
+	resp3 := makeRequest(`{"model":"relay-generic500-runtime-neutral-group","messages":[{"role":"user","content":"third"}]}`)
 	if resp3.Code != http.StatusOK {
-		t.Fatalf("legacy circuit write must not block relay admission, got status %d body %s", resp3.Code, resp3.Body.String())
+		t.Fatalf("generic 500 history must not block the next relay admission, got status %d body %s", resp3.Code, resp3.Body.String())
 	}
 	if hits.Load() != 3 {
-		t.Fatalf("expected request to reach upstream despite open legacy circuit, got %d total hits", hits.Load())
+		t.Fatalf("expected third request to reach upstream, got %d total hits", hits.Load())
 	}
 	if !strings.Contains(resp3.Body.String(), `"content":"ok"`) {
 		t.Fatalf("expected successful response body, got %s", resp3.Body.String())
@@ -1903,8 +1896,9 @@ func TestHandleResponsesCompactSuccessKeyedByUpstreamModel(t *testing.T) {
 	}
 }
 
-// TestHandleResponsesCompactFailureKeyedByUpstreamModel 失败路径同键：
-// 熔断与健康度都必须写在上游模型名下，balancer 的读侧（IsTripped / PeekItemTripped）才能命中。
+// TestHandleResponsesCompactFailureKeyedByUpstreamModel verifies that passive
+// failure evidence remains keyed by GroupItem.ModelName after legacy breaker
+// writers retire. Generic HTTP 500 remains runtime-neutral.
 func TestHandleResponsesCompactFailureKeyedByUpstreamModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := setupRelayTestDB(t)
@@ -1913,11 +1907,6 @@ func TestHandleResponsesCompactFailureKeyedByUpstreamModel(t *testing.T) {
 		requestModel  = "relay-compact-fail-group"
 		upstreamModel = "compact-upstream-fail-model"
 	)
-
-	// 阈值降到 1：一次失败即熔断，不必构造 5 次上游调用
-	if err := op.SettingSetInt(model.SettingKeyCircuitBreakerThreshold, 1); err != nil {
-		t.Fatalf("SettingSetInt failed: %v", err)
-	}
 
 	var hits atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1940,7 +1929,6 @@ func TestHandleResponsesCompactFailureKeyedByUpstreamModel(t *testing.T) {
 		t.Fatalf("ChannelCreate failed: %v", err)
 	}
 	outlierwindow.ClearChannel(channel.ID)
-	keyID := channel.Keys[0].ID
 
 	group := &model.Group{Name: requestModel, Mode: model.GroupModeFailover}
 	if err := op.GroupCreate(group, ctx); err != nil {
@@ -1960,28 +1948,22 @@ func TestHandleResponsesCompactFailureKeyedByUpstreamModel(t *testing.T) {
 	HandleResponsesCompact(c)
 
 	if recorder.Code != http.StatusInternalServerError {
-		t.Fatalf("上游 500 应原样返回，got status %d body %s", recorder.Code, recorder.Body.String())
+		t.Fatalf("upstream 500 should pass through, got status %d body %s", recorder.Code, recorder.Body.String())
 	}
 	if hits.Load() != 1 {
-		t.Fatalf("上游调用次数 = %d, want 1（RetryEnabled 关闭时不应重试）", hits.Load())
+		t.Fatalf("upstream hits = %d, want 1 with retry disabled", hits.Load())
 	}
-
 	if stats := outlierwindow.Evaluate(channel.ID, upstreamModel, time.Now()); stats.Samples != 1 || stats.Failures != 1 {
-		t.Fatalf("上游模型键失败样本 = %#v, want 1 失败样本", stats)
+		t.Fatalf("upstream-model passive failure evidence = %#v, want 1 failure sample", stats)
 	}
 	if stats := outlierwindow.Evaluate(channel.ID, requestModel, time.Now()); stats.Samples != 0 {
-		t.Fatalf("请求模型键不应产生健康样本，got %#v", stats)
+		t.Fatalf("request-model key must not receive passive health samples, got %#v", stats)
 	}
-
-	if tripped, _ := balancer.IsTripped(channel.ID, keyID, upstreamModel); !tripped {
-		t.Fatal("上游模型键未熔断：compact 的失败上报读不到，等于熔断对 compact 失效")
+	if state := availability.CandidateState(channel.ID, upstreamModel, time.Now()); state != availability.StateAvailable {
+		t.Fatalf("generic 500 promoted into runtime state %v, want available", state)
 	}
-	if tripped, _ := balancer.IsTripped(channel.ID, keyID, requestModel); tripped {
-		t.Fatal("请求模型键不应产生熔断条目")
-	}
-	// 排序读侧同键：PeekItemTripped 按 (channelID, item.ModelName) 取
-	if !balancer.PeekItemTripped(channel.ID, upstreamModel) {
-		t.Fatal("PeekItemTripped 读不到 compact 写入的熔断状态")
+	if balancer.PeekItemTripped(channel.ID, upstreamModel) {
+		t.Fatal("Compact generic 500 still wrote legacy circuit state")
 	}
 }
 
