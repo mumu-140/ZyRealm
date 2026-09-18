@@ -31,13 +31,11 @@ func detectRouteMismatchTarget(inboundType inbound.InboundType, err error) (mode
 }
 
 
-// shouldLearnManagedRoute preserves the existing managed-route learning gate
-// without depending on the legacy circuit-breaker FailureKind taxonomy.
-// RoutingDecision remains the policy verdict; retry/status only preserve the
-// historical hard-vs-soft distinction for passthrough throttling.
+// shouldLearnManagedRoute consumes the explicit route-learning policy chosen
+// by RoutingDecision. Retry/status preserve the historical soft passthrough
+// exclusion without reintroducing breaker terminology or raw-error parsing.
 func shouldLearnManagedRoute(decision RoutingDecision, retryEnabled bool, statusCode int) bool {
-	switch decision.CircuitEffect {
-	case "none", "success":
+	if decision.RouteLearningEffect != routingRouteLearningCandidate {
 		return false
 	}
 	if retryEnabled && isPassthroughStatus(statusCode) {
