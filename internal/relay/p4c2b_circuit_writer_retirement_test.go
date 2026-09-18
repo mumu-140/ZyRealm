@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,9 +22,8 @@ func setP4C2BCircuitThresholdOne(t *testing.T) {
 	}
 }
 
-func newP4C2BCoreRoute(t *testing.T, upstreamURL, name string) (*model.Channel, *model.Group) {
+func newP4C2BCoreRoute(t *testing.T, ctx context.Context, upstreamURL, name string) (*model.Channel, *model.Group) {
 	t.Helper()
-	ctx := setupRelayTestDB(t)
 	channel := &model.Channel{
 		Name:     name + "-channel",
 		Type:     outbound.OutboundTypeOpenAIChat,
@@ -60,6 +60,7 @@ func runP4C2BCore(t *testing.T, modelName string) *httptest.ResponseRecorder {
 
 func TestP4C2BCoreFailureDoesNotWriteLegacyCircuit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	ctx := setupRelayTestDB(t)
 	setP4C2BCircuitThresholdOne(t)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -69,7 +70,7 @@ func TestP4C2BCoreFailureDoesNotWriteLegacyCircuit(t *testing.T) {
 	}))
 	defer server.Close()
 
-	channel, group := newP4C2BCoreRoute(t, server.URL, "p4c2b-core-failure")
+	channel, group := newP4C2BCoreRoute(t, ctx, server.URL, "p4c2b-core-failure")
 	recorder := runP4C2BCore(t, group.Name)
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500; body=%s", recorder.Code, recorder.Body.String())
@@ -81,6 +82,7 @@ func TestP4C2BCoreFailureDoesNotWriteLegacyCircuit(t *testing.T) {
 
 func TestP4C2BCoreSuccessDoesNotClearLegacyCircuit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	ctx := setupRelayTestDB(t)
 	setP4C2BCircuitThresholdOne(t)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -89,7 +91,7 @@ func TestP4C2BCoreSuccessDoesNotClearLegacyCircuit(t *testing.T) {
 	}))
 	defer server.Close()
 
-	channel, group := newP4C2BCoreRoute(t, server.URL, "p4c2b-core-success")
+	channel, group := newP4C2BCoreRoute(t, ctx, server.URL, "p4c2b-core-success")
 	key := channel.Keys[0]
 	balancer.RecordFailure(channel.ID, key.ID, group.Name, balancer.FailureHard)
 	if !balancer.PeekItemTripped(channel.ID, group.Name) {
