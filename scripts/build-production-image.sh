@@ -2,7 +2,7 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-readonly IMAGE_REPOSITORY="mumu-140/octopus-concurrency"
+readonly IMAGE_REPOSITORY="ghcr.io/mumu-140/zyrealm"
 
 fail() {
     printf '错误：%s\n' "$1" >&2
@@ -48,7 +48,7 @@ DOCKER_BUILDKIT=1 docker build \
     --build-arg "SOURCE_TREE=$SOURCE_TREE" \
     --build-arg "BUILD_TIME=$BUILD_TIME" \
     --build-arg "GIT_AUTHOR=mumu-140" \
-    --build-arg "SOURCE_URL=https://github.com/mumu-140/octopus-concurrency" \
+    --build-arg "SOURCE_URL=https://github.com/mumu-140/ZyRealm" \
     "."
 
 docker image inspect "$IMAGE" --format 'id={{.Id}} version={{index .Config.Labels "org.opencontainers.image.version"}} revision={{index .Config.Labels "org.opencontainers.image.revision"}} created={{index .Config.Labels "org.opencontainers.image.created"}}'
