@@ -228,6 +228,7 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 			decision.FailureScope = routingScopeProviderModel
 			decision.RuntimeEffect = routingRuntimeModelCooldown
 			decision.OutlierScope = scopeModel
+			decision.RouteLearningCandidate = true
 		}
 		return decision
 	}
