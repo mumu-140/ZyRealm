@@ -357,8 +357,6 @@ func (h *relayHandler) handleAttemptResult(channel *dbmodel.Channel, key dbmodel
 		// consume its precomputed scopes/effects and do not reinterpret raw error
 		// text or status to decide whether evidence belongs in these systems.
 		reportOutlierDecision(channel.ID, plan.UpstreamModel(), decision.OutlierScope, result.StatusCode, now)
-		failureKind := circuitFailureKindForDecision(decision, h.group.RetryEnabled, result.StatusCode)
-		balancer.RecordFailure(channel.ID, key.ID, plan.UpstreamModel(), failureKind)
 		if shouldLearnManagedRoute(decision, h.group.RetryEnabled, result.StatusCode) {
 			maybeLearnManagedRoute(ctx, channel.ID, plan.UpstreamModel(), h.inboundType, result.Err)
 		}
