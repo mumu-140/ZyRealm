@@ -192,6 +192,8 @@ func HandleResponsesCompact(c *gin.Context) {
 			var statusCode int
 			var retryAfter time.Duration
 			var success bool
+			var result attemptResult
+			var coordination attemptCoordination
 
 			for retryNum := 0; retryNum < maxSameChannelRetries; retryNum++ {
 				if retryNum > 0 {
@@ -204,7 +206,11 @@ func HandleResponsesCompact(c *gin.Context) {
 					}
 				}
 
-				statusCode, retryAfter, attemptErr = forwardResponsesCompact(c, metrics, iter, channel, usedKey, attemptBody, upstreamModel)
+				var span *balancer.AttemptSpan
+				statusCode, retryAfter, attemptErr, span = forwardResponsesCompact(c, metrics, iter, channel, usedKey, attemptBody, upstreamModel)
+				result = compactAttemptRoutingResult(ctx, policyRequest, channel.ID, statusCode, retryAfter, attemptErr, span)
+				coordination, _ = coordinateAttemptOutcome(result) // compactAttemptRoutingResult guarantees a valid verdict
+				attachSidepathRoutingTrace(ctx, result, usedKey.CredentialRevision)
 				if attemptErr == nil {
 					success = true
 					break
@@ -218,10 +224,8 @@ func HandleResponsesCompact(c *gin.Context) {
 			usedKey.LastUseTimeStamp = time.Now().Unix()
 			op.ChannelKeyUpdate(usedKey)
 
-			result := compactAttemptRoutingResult(ctx, policyRequest, channel.ID, statusCode, retryAfter, attemptErr, nil)
 			now := time.Now()
-			recordRuntimeAvailabilityEvidence(ctx, channel.ID, upstreamModel, result, now)
-			decision := result.Decision
+			applyRuntimeAvailabilityEffect(channel.ID, upstreamModel, result, coordination.Effects, now)
 
 			if success {
 				availability.RecordCredentialSuccessRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, now)
@@ -234,11 +238,11 @@ func HandleResponsesCompact(c *gin.Context) {
 				return true
 			}
 
-			if decision.Domain == failureDomainCredential {
+			if coordination.Effects.CredentialFailure {
 				recordCredentialRoutingFailureRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, result, now)
 			}
 			op.StatsChannelUpdate(channel.ID, dbmodel.StatsMetrics{RequestFailed: 1})
-			reportOutlierDecision(channel.ID, upstreamModel, decision.OutlierScope, statusCode, now)
+			reportOutlierDecision(channel.ID, upstreamModel, coordination.Effects.OutlierScope, statusCode, now)
 			lastErr = attemptErr
 			lastStatusCode = statusCode
 			lastRetryAfter = retryAfter
@@ -280,12 +284,12 @@ func supportsResponsesCompact(channelType outbound.OutboundType) bool {
 // forwardResponsesCompact 发一次上游请求。requestBody 已按 upstreamModel 改写过 model 字段，
 // upstreamModel 同时作为计量口径：主链路（relay_request.go）也是用实际发出去的上游模型名
 // 计 token 与实际模型，compact 用请求模型名会让日志里的「实际使用模型」变成客户端模型名。
-func forwardResponsesCompact(c *gin.Context, metrics *RelayMetrics, iter *balancer.Iterator, channel *dbmodel.Channel, usedKey dbmodel.ChannelKey, requestBody []byte, upstreamModel string) (int, time.Duration, error) {
+func forwardResponsesCompact(c *gin.Context, metrics *RelayMetrics, iter *balancer.Iterator, channel *dbmodel.Channel, usedKey dbmodel.ChannelKey, requestBody []byte, upstreamModel string) (int, time.Duration, error, *balancer.AttemptSpan) {
 	span := iter.StartAttempt(channel.ID, usedKey.ID, channel.Name)
 	request, err := buildResponsesCompactRequest(c.Request.Context(), channel, usedKey.ChannelKey, requestBody)
 	if err != nil {
 		span.End(dbmodel.AttemptFailed, 0, err.Error())
-		return 0, 0, fmt.Errorf("failed to create compact request: %w", err)
+		return 0, 0, fmt.Errorf("failed to create compact request: %w", err), span
 	}
 	metrics.SetTransportRequestPayload(requestBody, upstreamModel)
 	copyProxyHeaders(c.Request.Header, channel, request.Header)
@@ -293,21 +297,21 @@ func forwardResponsesCompact(c *gin.Context, metrics *RelayMetrics, iter *balanc
 	response, err := sendCompactRequest(channel, request)
 	if err != nil {
 		span.End(dbmodel.AttemptFailed, 0, err.Error())
-		return 0, 0, fmt.Errorf("failed to send compact request: %w", err)
+		return 0, 0, fmt.Errorf("failed to send compact request: %w", err), span
 	}
 	defer response.Body.Close()
 
 	body, readErr := io.ReadAll(response.Body)
 	if readErr != nil {
 		span.End(dbmodel.AttemptFailed, response.StatusCode, readErr.Error())
-		return response.StatusCode, 0, fmt.Errorf("failed to read compact response body: %w", readErr)
+		return response.StatusCode, 0, fmt.Errorf("failed to read compact response body: %w", readErr), span
 	}
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		retryAfter := parseRetryAfter(response.Header.Get("Retry-After"))
 		statusCode := normalizeUpstreamStatusCode(response.StatusCode, string(body))
 		span.End(dbmodel.AttemptFailed, statusCode, string(body))
-		return statusCode, retryAfter, fmt.Errorf("upstream error: %d: %s", response.StatusCode, string(body))
+		return statusCode, retryAfter, fmt.Errorf("upstream error: %d: %s", response.StatusCode, string(body)), span
 	}
 
 	copyProxyResponseHeaders(c.Writer.Header(), response.Header)
@@ -323,7 +327,7 @@ func forwardResponsesCompact(c *gin.Context, metrics *RelayMetrics, iter *balanc
 	}
 
 	span.End(dbmodel.AttemptSuccess, response.StatusCode, "")
-	return response.StatusCode, 0, nil
+	return response.StatusCode, 0, nil, span
 }
 
 // compactBodyForModel 把请求体的 model 字段改写为该候选的上游模型名，其余字段原样保留。
