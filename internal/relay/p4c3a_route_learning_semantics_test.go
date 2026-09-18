@@ -44,3 +44,9 @@ func TestP4C3ANewAttemptTraceUsesRouteLearningEffect(t *testing.T) {
 		t.Fatalf("new routing trace must not emit circuit_effect: %s", body)
 	}
 }
+
+func TestP4C3ARouteLearningTraceBumpsDecisionVersion(t *testing.T) {
+	if dbmodel.RoutingDecisionTraceVersion != "routing-decisions-v2" {
+		t.Fatalf("decision trace version = %q, want routing-decisions-v2", dbmodel.RoutingDecisionTraceVersion)
+	}
+}
