@@ -390,14 +390,9 @@ func bestEffortWarmupUpstreamWS(
 		}
 
 		for {
-			usedKey := channel.GetChannelKey(selectOpts)
+			usedKey := peekFairChannelCredential(channel, selectOpts, time.Now())
 			if usedKey.ChannelKey == "" {
 				break
-			}
-			if !availability.CredentialAvailableRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, time.Now()) {
-				selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
-				selectOpts.PreferredKeyID = 0
-				continue
 			}
 
 			if err := warmupUpstreamWSConnection(ctx, channel, usedKey); err != nil {
@@ -569,26 +564,12 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 
 		var usedKey dbmodel.ChannelKey
 		selectNextCredential := func() bool {
-			for {
-				candidate := channel.GetChannelKey(selectOpts)
-				if candidate.ChannelKey == "" {
-					return false
-				}
-				if availability.CredentialAvailableRevision(channel.ID, candidate.ID, candidate.CredentialRevision, time.Now()) {
-					usedKey = candidate
-					return true
-				}
-				selectOpts.ExcludeKeyIDs[candidate.ID] = struct{}{}
-				selectOpts.PreferredKeyID = 0
-				req.iter.RecordDecision(dbmodel.RoutingDecisionEvent{
-					Stage:        dbmodel.DecisionStageCredential,
-					Outcome:      dbmodel.DecisionOutcomeRejected,
-					Reason:       dbmodel.DecisionReasonCredentialCooldown,
-					ChannelID:    channel.ID,
-					ChannelKeyID: candidate.ID,
-					ChannelName:  channel.Name,
-				})
+			candidate := selectFairChannelCredential(channel, selectOpts, req.iter, time.Now())
+			if candidate.ChannelKey == "" {
+				return false
 			}
+			usedKey = candidate
+			return true
 		}
 		if !selectNextCredential() {
 			if len(selectOpts.ExcludeKeyIDs) == 0 {
