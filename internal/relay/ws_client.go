@@ -644,13 +644,20 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 				}
 			}
 
-			// relayAttempt already produced the canonical RoutingDecision. Consume
-			// that verdict here instead of reclassifying status/error text in the WS
-			// orchestrator.
+			// relayAttempt already produced the canonical RoutingDecision. Project
+			// its effects through AttemptCoordinator without moving WS retry/session
+			// policy into the coordinator.
 			result = withRoutingDecision(req.requestContext(), req, channel.ID, result)
+			coordination, ok := coordinateAttemptOutcome(result)
+			if !ok {
+				invariantErr := result.Err
+				if invariantErr == nil {
+					invariantErr = fmt.Errorf("routing decision unavailable")
+				}
+				return wsRelayResult{Err: invariantErr}, true
+			}
 			now := time.Now()
-			recordRuntimeAvailabilityEvidence(req.requestContext(), channel.ID, upstreamModel, result, now)
-			decision := result.Decision
+			applyRuntimeAvailabilityEffect(channel.ID, upstreamModel, result, coordination.Effects, now)
 
 			if result.Success {
 				availability.RecordCredentialSuccessRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, now)
@@ -662,11 +669,11 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 				return wsRelayResult{Success: true, ResponseID: respID}, true
 			}
 
-			if decision.Domain == failureDomainCredential {
+			if coordination.Effects.CredentialFailure {
 				recordCredentialRoutingFailureRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, result, now)
 			}
 			if !result.Canceled {
-				reportOutlierDecision(channel.ID, upstreamModel, decision.OutlierScope, result.StatusCode, now)
+				reportOutlierDecision(channel.ID, upstreamModel, coordination.Effects.OutlierScope, result.StatusCode, now)
 			}
 			if result.ResetConversation {
 				if publicErr, ok := classifyWSPublicError(result.Err, result.StatusCode); ok {
