@@ -1,5 +1,7 @@
 # Octopus 自适应路由最终评审：对照 GPT-Load 与真实故障库
 
+> Historical snapshot: this review records the pre-implementation design state. Current routing authority is the source on `main`; see `docs/plans/README.md` for completed P4/P5 slices and remaining deferred differences.
+
 状态：**最终设计补充 / 覆盖原计划中冲突项**  
 基线：`main@f0617d51dccab76dc0dec068956dfb852b5996b4`  
 原计划：`docs/plans/adaptive-relay-routing-80-percent-plan.md`  
