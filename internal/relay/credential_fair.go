@@ -54,3 +54,38 @@ func selectFairChannelCredential(
 
 	return availability.SelectCredentialFair(channel.ID, candidates, options.PreferredKeyID)
 }
+
+// peekFairChannelCredential mirrors live fair credential eligibility for
+// observational WS warmup without charging the provider-local fairness ledger.
+// It intentionally emits no routing decision events because warmup is not a
+// live relay attempt.
+func peekFairChannelCredential(
+	channel *dbmodel.Channel,
+	options dbmodel.ChannelKeySelectOptions,
+	now time.Time,
+) dbmodel.ChannelKey {
+	if channel == nil {
+		return dbmodel.ChannelKey{}
+	}
+	if options.ExcludeKeyIDs == nil {
+		options.ExcludeKeyIDs = make(map[int]struct{})
+	}
+
+	candidates := make([]dbmodel.ChannelKey, 0, len(channel.Keys))
+	for _, key := range channel.Keys {
+		if key.ID <= 0 || !key.Enabled || key.ChannelKey == "" {
+			continue
+		}
+		if _, excluded := options.ExcludeKeyIDs[key.ID]; excluded {
+			continue
+		}
+		if !availability.CredentialAvailableRevision(channel.ID, key.ID, key.CredentialRevision, now) {
+			options.ExcludeKeyIDs[key.ID] = struct{}{}
+			continue
+		}
+		candidates = append(candidates, key)
+	}
+
+	return availability.PeekCredentialFair(channel.ID, candidates, options.PreferredKeyID)
+}
+

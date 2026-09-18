@@ -156,3 +156,31 @@ func TestCredentialFairConcurrentSelectionsAreAtomic(t *testing.T) {
 		t.Fatalf("concurrent distribution=%v, want 300/300", counts)
 	}
 }
+
+func TestCredentialFairPeekDoesNotChargeLedger(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+
+	keys := []dbmodel.ChannelKey{fairTestKey(1, 1), fairTestKey(2, 1)}
+
+	if got := SelectCredentialFair(91, keys, 0).ID; got != 1 {
+		t.Fatalf("first live selection=%d, want 1", got)
+	}
+	if got := PeekCredentialFair(91, keys, 0).ID; got != 2 {
+		t.Fatalf("first peek=%d, want 2", got)
+	}
+	if got := PeekCredentialFair(91, keys, 0).ID; got != 2 {
+		t.Fatalf("second peek=%d, want 2; peek must not charge allocation", got)
+	}
+	if got := SelectCredentialFair(91, keys, 0).ID; got != 2 {
+		t.Fatalf("live selection after peeks=%d, want 2", got)
+	}
+
+	if got := PeekCredentialFair(91, keys, 1).ID; got != 1 {
+		t.Fatalf("preferred peek=%d, want 1", got)
+	}
+	if got := SelectCredentialFair(91, keys, 0).ID; got != 1 {
+		t.Fatalf("selection after preferred peek=%d, want 1; preferred peek must not mutate progress", got)
+	}
+}
+

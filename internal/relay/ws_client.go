@@ -390,14 +390,9 @@ func bestEffortWarmupUpstreamWS(
 		}
 
 		for {
-			usedKey := channel.GetChannelKey(selectOpts)
+			usedKey := peekFairChannelCredential(channel, selectOpts, time.Now())
 			if usedKey.ChannelKey == "" {
 				break
-			}
-			if !availability.CredentialAvailableRevision(channel.ID, usedKey.ID, usedKey.CredentialRevision, time.Now()) {
-				selectOpts.ExcludeKeyIDs[usedKey.ID] = struct{}{}
-				selectOpts.PreferredKeyID = 0
-				continue
 			}
 
 			if err := warmupUpstreamWSConnection(ctx, channel, usedKey); err != nil {
@@ -562,6 +557,12 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 
 		req.internalRequest.Model = upstreamModel
 
+		runtimeLease, runtimeEligible := availability.AcquireCandidate(channel.ID, upstreamModel, time.Now())
+		if !runtimeEligible {
+			req.iter.Skip(channel.ID, 0, channel.Name, "runtime cooldown or half-open lease busy")
+			continue
+		}
+
 		selectOpts := dbmodel.ChannelKeySelectOptions{
 			ExcludeKeyIDs:  make(map[int]struct{}),
 			PreferredKeyID: req.iter.StickyKeyID(),
@@ -569,37 +570,18 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 
 		var usedKey dbmodel.ChannelKey
 		selectNextCredential := func() bool {
-			for {
-				candidate := channel.GetChannelKey(selectOpts)
-				if candidate.ChannelKey == "" {
-					return false
-				}
-				if availability.CredentialAvailableRevision(channel.ID, candidate.ID, candidate.CredentialRevision, time.Now()) {
-					usedKey = candidate
-					return true
-				}
-				selectOpts.ExcludeKeyIDs[candidate.ID] = struct{}{}
-				selectOpts.PreferredKeyID = 0
-				req.iter.RecordDecision(dbmodel.RoutingDecisionEvent{
-					Stage:        dbmodel.DecisionStageCredential,
-					Outcome:      dbmodel.DecisionOutcomeRejected,
-					Reason:       dbmodel.DecisionReasonCredentialCooldown,
-					ChannelID:    channel.ID,
-					ChannelKeyID: candidate.ID,
-					ChannelName:  channel.Name,
-				})
+			candidate := selectFairChannelCredential(channel, selectOpts, req.iter, time.Now())
+			if candidate.ChannelKey == "" {
+				return false
 			}
+			usedKey = candidate
+			return true
 		}
 		if !selectNextCredential() {
+			availability.ReleaseLease(runtimeLease, time.Now())
 			if len(selectOpts.ExcludeKeyIDs) == 0 {
 				req.iter.Skip(channel.ID, 0, channel.Name, "no available key")
 			}
-			continue
-		}
-
-		runtimeLease, runtimeEligible := availability.AcquireCandidate(channel.ID, upstreamModel, time.Now())
-		if !runtimeEligible {
-			req.iter.Skip(channel.ID, 0, channel.Name, "runtime cooldown or half-open lease busy")
 			continue
 		}
 
