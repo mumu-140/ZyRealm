@@ -33,8 +33,8 @@ func selectFairChannelCredential(
 			continue
 		}
 		// Credential availability is the sole shared admission authority for all
-		// credential revisions. Secret replacement already advances the revision,
-		// so a legacy breaker entry must not become a second eligibility gate.
+		// credential revisions. Secret replacement advances the revision, so stale
+		// runtime state from the superseded credential identity cannot gate the new key.
 		if !availability.CredentialAvailableRevision(channel.ID, key.ID, key.CredentialRevision, now) {
 			options.ExcludeKeyIDs[key.ID] = struct{}{}
 			if iterator != nil {
