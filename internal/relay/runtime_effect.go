@@ -7,22 +7,19 @@ import (
 	"github.com/bestruirui/octopus/internal/relay/availability"
 )
 
-// recordRuntimeAvailabilityEvidence applies the runtime effect already chosen by
-// the unified routing decision. Legacy/unit-test callers that construct a raw
-// attemptResult still get one decision synthesized here.
-func recordRuntimeAvailabilityEvidence(
-	ctx context.Context,
+// applyRuntimeAvailabilityEffect applies a runtime effect that has already been
+// projected by AttemptCoordinator. It does not classify status codes, errors,
+// or transport facts.
+func applyRuntimeAvailabilityEffect(
 	channelID int,
 	upstreamModel string,
 	result attemptResult,
+	effects attemptEffectPlan,
 	now time.Time,
 ) {
 	decision := result.Decision
-	if !decision.Valid {
-		decision = decideRoutingAttempt(ctx, nil, channelID, result)
-	}
 
-	switch decision.RuntimeEffect {
+	switch effects.RuntimeEffect {
 	case routingRuntimeSuccessClear:
 		availability.RecordSuccess(channelID, upstreamModel, now)
 	case routingRuntimeModelSuspect:
@@ -45,9 +42,35 @@ func recordRuntimeAvailabilityEvidence(
 	if result.traceSpan != nil {
 		info := availability.CandidateInfo(channelID, upstreamModel, now)
 		result.traceSpan.SetRoutingRuntime(
-			string(decision.RuntimeEffect),
+			string(effects.RuntimeEffect),
 			runtimeStateString(int(info.State)),
 			unixMillisOrZero(info.CooldownUntil),
 		)
 	}
+}
+
+// recordRuntimeAvailabilityEvidence is the compatibility path for callers that
+// have not migrated to AttemptCoordinator yet. Raw/unit-test results may still
+// synthesize one RoutingDecision here; Core HTTP and WS use
+// applyRuntimeAvailabilityEffect directly from the coordinator projection.
+func recordRuntimeAvailabilityEvidence(
+	ctx context.Context,
+	channelID int,
+	upstreamModel string,
+	result attemptResult,
+	now time.Time,
+) {
+	decision := result.Decision
+	if !decision.Valid {
+		decision = decideRoutingAttempt(ctx, nil, channelID, result)
+		result.Decision = decision
+	}
+
+	applyRuntimeAvailabilityEffect(
+		channelID,
+		upstreamModel,
+		result,
+		attemptEffectPlan{RuntimeEffect: decision.RuntimeEffect},
+		now,
+	)
 }
