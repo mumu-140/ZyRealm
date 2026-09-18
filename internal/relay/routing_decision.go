@@ -64,9 +64,10 @@ type RoutingDecision struct {
 	FailureScope        routingFailureScope
 	Directive           routingDirective
 	RuntimeEffect       routingRuntimeEffect
-	OutlierScope        failureScope
-	CircuitEffect       string
-	ReplaySafety        routingReplaySafety
+	OutlierScope          failureScope
+	RouteLearningEligible bool
+	CircuitEffect         string
+	ReplaySafety          routingReplaySafety
 	SkipProvider        bool
 	RetrySameCredential bool
 	Terminal            bool
@@ -80,7 +81,18 @@ func withRoutingDecision(ctx context.Context, request *relayRequest, channelID i
 	return result
 }
 
-func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID int, result attemptResult) RoutingDecision {
+func routeLearningEligibilityFromCircuitEffect(effect string) bool {
+	return effect != "none" && effect != "success"
+}
+
+func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID int, result attemptResult) (decision RoutingDecision) {
+	// P4C3A migration bridge: preserve the exact pre-existing route-learning
+	// semantics while moving the consumer off the legacy CircuitEffect field.
+	// P4C3B will populate RouteLearningEligible directly and delete this bridge.
+	defer func() {
+		decision.RouteLearningEligible = routeLearningEligibilityFromCircuitEffect(decision.CircuitEffect)
+	}()
+
 	if result.Decision.Valid {
 		return result.Decision
 	}
@@ -91,7 +103,7 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 	legacyScope := classifyFailureScope(status, text)
 	hasAlternative := request != nil && request.iter != nil && request.iter.HasAlternativeProvider(channelID)
 
-	decision := RoutingDecision{
+	decision = RoutingDecision{
 		Valid:         true,
 		Domain:        domain,
 		RuleID:        routingRuleID(domain, status, text),
