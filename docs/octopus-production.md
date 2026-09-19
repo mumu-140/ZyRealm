@@ -17,9 +17,9 @@
 | 发布目标与运行状态 | `deploy/fwq57ys/production-state.json` | staging 目标 release/image + 切换后 live 指纹 | 必须标明阶段，不把 staging 声称为已运行 |
 | 生产控制面 | `/opt/octopus/` | Compose 副本、真实数据、备份、部署日志 | 不是源码仓库，不构建 |
 | 生产数据 | `/opt/octopus/data/` | `config.json`、SQLite 和运行数据 | 只挂生产容器；候选不得使用 |
-| 生产容器 | `octopus` | 对外正式服务 | 不兼任候选或回滚容器 |
+| 生产容器 | `zyrealm` | 对外正式服务 | 不兼任候选或回滚容器 |
 | 回滚容器 | 状态清单声明的精确名称 | 保留上一验证版本的可启动容器 | 不常态运行，不改名冒充候选 |
-| 候选容器 | `octopus-candidate-<version>` 或任务声明的唯一名 | 独立端口、独立数据副本验收 | 不占 35276，不挂生产数据，不自动晋级 |
+| 候选容器 | `zyrealm-candidate-<version>` 或任务声明的唯一名 | 独立端口、独立数据副本验收 | 不占 35276，不挂生产数据，不自动晋级 |
 | 历史目录 | `octopus-src*`、`octopus-build-cache` | 只读现场/缓存 | 不开发、不构建、不发布、不部署 |
 
 `octopus-mumu/` 和 `octopus/` 的职责必须保持分离。不要合并目录，也不要把大型生产数据移入
@@ -77,14 +77,14 @@ scripts/check-governance.sh --live
 
 | 项目 | 不变量 |
 | --- | --- |
-| 容器名 | `octopus`，唯一对外服务容器；候选与回滚容器不得复用此名 |
+| 容器名 | `zyrealm`，唯一对外服务容器；候选与回滚容器不得复用此名 |
 | 网络与监听 | `host` / `0.0.0.0:35276`；不改回 bridge，不加端口映射 |
 | 数据挂载 | `/opt/octopus/data:/app/data` 读写，且只挂给生产容器 |
 | 镜像引用 | `ghcr.io/mumu-140/zyrealm:v<major>.<minor>.<patch>-mumu.<revision>`，Compose `pull_policy: never`，切换前显式拉取并核对 image ID |
 | Compose | 受管 `deploy/fwq57ys/compose.yaml` 与生产副本 `/opt/octopus/docker-compose.yml` 逐字一致 |
 | 公网入口 | `https://octopus.muaiword.com`（Cloudflare Tunnel → caddy-gateway `127.0.0.1:27057` → `35276`）；常态关闭，用时经 fwq57ys `~/software/cloudflared/cf-octopus on|off` 开关 |
 | 时区 | 镜像内 `TZ=Asia/Shanghai`，决定小时级统计分桶时区，不得删除 |
-| 回滚网 | 本机保留上一验证版本镜像 + 切换前预建 `octopus-rollback-<上一版本>`（`--restart no`，`Created` 不启动）+ 快照目录 `/opt/octopus/backups/pre-<新版本>-cutover-<UTC 时间戳>/`（含 `data.db`、`config.json`、切换前后 Compose、旧状态清单、旧容器 inspect） |
+| 回滚网 | 本机保留上一验证版本镜像 + 切换前预建 `zyrealm-rollback-<上一版本>`（`--restart no`，`Created` 不启动）+ 快照目录 `/opt/octopus/backups/pre-<新版本>-cutover-<UTC 时间戳>/`（含 `data.db`、`config.json`、切换前后 Compose、旧状态清单、旧容器 inspect） |
 | 部署证据 | `/opt/octopus/deployments/<run-id>/`：日志、PID、阶段状态、快照校验、前后 inspect |
 
 切换只走脱离会话的后台任务，固定顺序：在线快照 → 预建回滚容器 → `stop -t 30` → 受管 Compose
@@ -92,7 +92,7 @@ scripts/check-governance.sh --live
 日志无 panic/FATAL → live `quick_check`。正常中断时间为秒级；镜像 `commit` 标签是 7 位短 SHA，
 容器启动横幅同时打印 `Version` 和 `Commit`，两者是核对「跑的是不是这份源码」的第一手证据。
 
-回滚路径有两条，优先第一条：一是直接 `docker start` 切换前预建的 `octopus-rollback-<上一版本>`
+回滚路径有两条，优先第一条：一是直接 `docker start` 切换前预建的 `zyrealm-rollback-<上一版本>`
 容器（本机仍有上一版本镜像，无需拉取）；二是从 GHCR 重新拉取目标版本镜像，再配合切换前快照
 恢复数据。任何切换都不得删除生产容器和生产 SQLite。
 
@@ -146,7 +146,7 @@ GHCR 是发布分发源。包为私有时，拉取凭据必须具备 `read:packa
 
 ### 强制隔离
 
-- 容器名不得为 `octopus`，不得复用回滚容器名；
+- 容器名不得为 `zyrealm`，不得复用回滚容器名；
 - 不得监听 `35276`；
 - 任一 Mount.Source 都不得等于 `/opt/octopus/data`；
 - 数据副本、日志和状态目录使用本次任务唯一名称；
