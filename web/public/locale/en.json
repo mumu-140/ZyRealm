@@ -554,6 +554,23 @@
         "confirmDelete": "Confirm Delete"
       }
     },
+    "logs": {
+      "title": "Group Logs",
+      "activeTitle": "Active Requests",
+      "noActive": "No active requests",
+      "historyTitle": "Recent Requests",
+      "noHistory": "No recent requests",
+      "viewAll": "View all in Logs",
+      "clickToInspect": "Click to inspect detail",
+      "tabConfig": "Config",
+      "tabLogs": "Logs",
+      "interrupt": "Interrupt",
+      "interrupted": "Interrupt requested",
+      "success": "Success",
+      "failed": "Failed",
+      "live": "Live",
+      "refresh": "Refresh Logs"
+    },
     "form": {
       "name": "Group Name",
       "matchRegex": "Match Regex",

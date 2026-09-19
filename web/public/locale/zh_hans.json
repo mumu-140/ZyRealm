@@ -554,6 +554,23 @@
         "confirmDelete": "确认删除"
       }
     },
+    "logs": {
+      "title": "运行日志",
+      "activeTitle": "活跃请求",
+      "noActive": "当前无进行中的请求",
+      "historyTitle": "最近请求",
+      "noHistory": "暂无最近请求记录",
+      "viewAll": "在日志页查看全部",
+      "clickToInspect": "点击查看完整详情",
+      "tabConfig": "配置",
+      "tabLogs": "日志",
+      "interrupt": "中断请求",
+      "interrupted": "已请求中断",
+      "success": "成功",
+      "failed": "失败",
+      "live": "实时",
+      "refresh": "刷新日志"
+    },
     "form": {
       "name": "分组名称",
       "matchRegex": "匹配正则",

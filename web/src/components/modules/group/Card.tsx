@@ -4,6 +4,7 @@ import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Trash2, X, Pencil, Pin, PinOff, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { type Group, useDeleteGroup, useUpdateGroup, useToggleGroupPin, useGroupAutoAdd } from '@/api/endpoints/group';
+import { useLiveRequests } from '@/api/endpoints/live-request';
 import type { LLMChannel } from '@/api/endpoints/model';
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
@@ -14,7 +15,8 @@ import type { SelectedMember } from './ItemList';
 import { MemberList } from './ItemList';
 import { GroupEditor, type GroupEditorValues } from './Editor';
 import { GroupDiagnosticAction } from './health';
-import { modelChannelKey, MODE_LABELS } from './utils';
+import { GroupLogsPanel } from './GroupLogsPanel';
+import { matchesGroupName, modelChannelKey, MODE_LABELS } from './utils';
 import { compressConfigPayload, GroupMode, type GroupUpdateRequest, normalizeGroupCompressConfig, normalizeGroupProtocolMode, normalizePreferredProtocols } from '@/api/endpoints/group';
 import { PresetPopover } from './PresetPopover';
 import { ProtocolPolicyPopover } from './ProtocolPolicyPopover';
@@ -46,38 +48,92 @@ interface GroupCardProps {
 function EditDialogContent({ group, displayMembers, isSubmitting, onSubmit }: EditDialogContentProps) {
     const { setIsOpen } = useMorphingDialog();
     const t = useTranslations('group');
+    const [mobileTab, setMobileTab] = useState<'config' | 'logs'>('config');
+
     return (
         <>
             <MorphingDialogTitle className="shrink-0">
-                <header className="mb-3 flex items-center justify-between">
-                    <h2 className="text-2xl font-bold text-card-foreground">
-                        {t('detail.actions.edit')}
-                    </h2>
-                    <MorphingDialogClose className="relative right-0 top-0" />
+                <header className="mb-3 flex items-center justify-between border-b border-border/60 pb-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                        <h2 className="text-xl md:text-2xl font-bold text-card-foreground truncate">
+                            {group.name}
+                        </h2>
+                        <span className="hidden sm:inline-block text-xs text-muted-foreground">
+                            {t('detail.actions.edit')}
+                        </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex lg:hidden rounded-lg bg-muted/60 p-0.5 text-xs">
+                            <button
+                                type="button"
+                                onClick={() => setMobileTab('config')}
+                                className={cn(
+                                    'px-2.5 py-1 rounded-md font-medium transition-colors',
+                                    mobileTab === 'config'
+                                        ? 'bg-background text-foreground shadow-xs'
+                                        : 'text-muted-foreground hover:text-foreground',
+                                )}
+                            >
+                                {t('logs.tabConfig') ?? '配置'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setMobileTab('logs')}
+                                className={cn(
+                                    'px-2.5 py-1 rounded-md font-medium transition-colors',
+                                    mobileTab === 'logs'
+                                        ? 'bg-background text-foreground shadow-xs'
+                                        : 'text-muted-foreground hover:text-foreground',
+                                )}
+                            >
+                                {t('logs.tabLogs') ?? '日志'}
+                            </button>
+                        </div>
+                        <MorphingDialogClose className="relative right-0 top-0" />
+                    </div>
                 </header>
             </MorphingDialogTitle>
             <MorphingDialogDescription className="flex-1 min-h-0 overflow-hidden">
-                <GroupEditor
-                    key={`edit-group-${group.id}`}
-                    initial={{
-                        name: group.name,
-                        match_regex: group.match_regex ?? '',
-                        mode: group.mode,
-                        first_token_time_out: group.first_token_time_out ?? 0,
-                        session_keep_time: group.session_keep_time ?? 0,
-                        retry_enabled: group.retry_enabled ?? false,
-                        max_retries: group.max_retries ?? 3,
-                        protocol_mode: normalizeGroupProtocolMode(group.protocol_mode),
-                        preferred_protocols: normalizePreferredProtocols(group.preferred_protocols),
-                        compress_config: normalizeGroupCompressConfig(group.compress_config),
-                        members: displayMembers,
-                    }}
-                    submitText={t('detail.actions.save')}
-                    submittingText={t('create.submitting')}
-                    isSubmitting={isSubmitting}
-                    onCancel={() => setIsOpen(false)}
-                    onSubmit={(v) => onSubmit(v, () => setIsOpen(false))}
-                />
+                <div className="flex flex-col lg:flex-row gap-5 h-full min-h-0 overflow-hidden">
+                    <div
+                        className={cn(
+                            'flex-1 min-w-0 min-h-0 flex-col overflow-hidden',
+                            mobileTab === 'config' ? 'flex' : 'hidden lg:flex',
+                        )}
+                    >
+                        <GroupEditor
+                            key={`edit-group-${group.id}`}
+                            initial={{
+                                name: group.name,
+                                match_regex: group.match_regex ?? '',
+                                mode: group.mode,
+                                first_token_time_out: group.first_token_time_out ?? 0,
+                                session_keep_time: group.session_keep_time ?? 0,
+                                retry_enabled: group.retry_enabled ?? false,
+                                max_retries: group.max_retries ?? 3,
+                                protocol_mode: normalizeGroupProtocolMode(group.protocol_mode),
+                                preferred_protocols: normalizePreferredProtocols(group.preferred_protocols),
+                                compress_config: normalizeGroupCompressConfig(group.compress_config),
+                                members: displayMembers,
+                            }}
+                            submitText={t('detail.actions.save')}
+                            submittingText={t('create.submitting')}
+                            isSubmitting={isSubmitting}
+                            onCancel={() => setIsOpen(false)}
+                            onSubmit={(v) => onSubmit(v, () => setIsOpen(false))}
+                        />
+                    </div>
+
+                    <aside
+                        className={cn(
+                            'w-full lg:w-[380px] xl:w-[440px] shrink-0 min-h-0 flex-col overflow-hidden rounded-2xl border border-border/50 bg-muted/20 p-3.5',
+                            mobileTab === 'logs' ? 'flex' : 'hidden lg:flex',
+                        )}
+                    >
+                        <GroupLogsPanel group={group} onCloseDialog={() => setIsOpen(false)} />
+                    </aside>
+                </div>
             </MorphingDialogDescription>
         </>
     );
@@ -89,6 +145,7 @@ export function GroupCard({ group, modelChannelByKey }: GroupCardProps) {
     const deleteGroup = useDeleteGroup();
     const togglePin = useToggleGroupPin();
     const autoAdd = useGroupAutoAdd();
+    const liveQuery = useLiveRequests();
 
     const [confirmDelete, setConfirmDelete] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
@@ -96,6 +153,12 @@ export function GroupCard({ group, modelChannelByKey }: GroupCardProps) {
     const [weightOverrides, setWeightOverrides] = useState<Record<string, number>>({});
     const weightTimerRef = useRef<NodeJS.Timeout | null>(null);
     const membersRef = useRef<SelectedMember[]>([]);
+
+    const activeCount = useMemo(() => {
+        const list = liveQuery.data?.requests ?? [];
+        const channelIds = new Set((group.items || []).map((i) => i.channel_id));
+        return list.filter((r) => matchesGroupName(r.requested_model, group.name, group.match_regex) || (r.channel_id > 0 && channelIds.has(r.channel_id))).length;
+    }, [group.items, group.match_regex, group.name, liveQuery.data?.requests]);
 
     const displayMembers = useMemo((): SelectedMember[] =>
         [...(group.items || [])]
@@ -272,13 +335,19 @@ export function GroupCard({ group, modelChannelByKey }: GroupCardProps) {
             className="relative group/card flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-card text-card-foreground p-3 custom-shadow"
         >
             <header className="flex items-start justify-between mb-3 relative overflow-visible rounded-xl -mx-1 px-1 -my-1 py-1">
-                <div className="relative flex-1 mr-2 min-w-0 group/title">
+                <div className="relative flex-1 mr-2 min-w-0 group/title flex items-center gap-1.5">
                     <Tooltip side="top" sideOffset={10} align="center">
                         <TooltipTrigger asChild>
                             <h3 className="text-base font-bold truncate">{group.name}</h3>
                         </TooltipTrigger>
                         <TooltipContent key={group.name}>{group.name}</TooltipContent>
                     </Tooltip>
+                    {activeCount > 0 ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums shrink-0">
+                            <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            {activeCount}
+                        </span>
+                    ) : null}
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
@@ -340,7 +409,7 @@ export function GroupCard({ group, modelChannelByKey }: GroupCardProps) {
                         </MorphingDialogTrigger>
 
                         <MorphingDialogContainer>
-                            <MorphingDialogContent className="relative w-screen max-w-full md:max-w-4xl bg-card text-card-foreground px-6 py-4 rounded-3xl h-[calc(100vh-2rem)] flex flex-col overflow-hidden">
+                            <MorphingDialogContent className="relative w-screen max-w-full md:max-w-5xl lg:max-w-7xl xl:max-w-[1440px] bg-card text-card-foreground px-5 md:px-6 py-4 rounded-3xl h-[calc(100vh-2rem)] flex flex-col overflow-hidden">
                                 <EditDialogContent
                                     group={group}
                                     displayMembers={displayMembers}
