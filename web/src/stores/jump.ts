@@ -12,7 +12,11 @@ export type SiteChannelJumpTarget =
 
 export type ChannelJumpTarget = { kind: 'channel-card'; channelId: number };
 
-export type JumpTarget = SiteJumpTarget | SiteChannelJumpTarget | ChannelJumpTarget;
+export type LogJumpTarget =
+    | { kind: 'log-detail'; logId: number }
+    | { kind: 'log-group'; groupName: string };
+
+export type JumpTarget = SiteJumpTarget | SiteChannelJumpTarget | ChannelJumpTarget | LogJumpTarget;
 
 export type PendingJump = {
     requestId: number;
@@ -36,6 +40,9 @@ export function getJumpTargetRoute(target: JumpTarget): NavItem {
         case 'site-channel-model':
         case 'channel-card':
             return 'channel';
+        case 'log-detail':
+        case 'log-group':
+            return 'log';
         default:
             return 'home';
     }
@@ -55,6 +62,10 @@ export function isSiteChannelJumpTarget(target: JumpTarget): target is SiteChann
 
 export function isChannelJumpTarget(target: JumpTarget): target is ChannelJumpTarget {
     return target.kind === 'channel-card';
+}
+
+export function isLogJumpTarget(target: JumpTarget): target is LogJumpTarget {
+    return target.kind === 'log-detail' || target.kind === 'log-group';
 }
 
 export const useJumpStore = create<JumpState>((set, get) => ({

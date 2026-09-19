@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLogs, type LogKeywordMode, type LogKeywordScope, type RelayLog } from '@/api/endpoints/log';
+import { getLogDetail, useLogs, type LogKeywordMode, type LogKeywordScope, type RelayLog } from '@/api/endpoints/log';
 import { LogCard, LogDetailModal } from './Item';
 import { ActiveRequests } from './ActiveRequests';
 import { RoutingInspector } from './RoutingInspector';
@@ -11,6 +11,7 @@ import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
 import { useSearchStore } from '@/components/modules/toolbar';
 import { useToolbarViewOptionsStore } from '@/components/modules/toolbar/view-options-store';
 import { useLogUIStore } from './ui-store';
+import { useJumpStore } from '@/stores/jump';
 import { TooltipProvider } from '@/components/animate-ui/components/animate/tooltip';
 
 type LogFilters = {
@@ -86,6 +87,41 @@ export function Log() {
     const warning = liveLogsQuery.warning;
 
     const [selectedLog, setSelectedLog] = useState<RelayLog | null>(null);
+    const pendingJump = useJumpStore((s) => s.pending);
+    const clearPending = useJumpStore((s) => s.clearPending);
+
+    useEffect(() => {
+        if (!pendingJump) return;
+        const { target, requestId } = pendingJump;
+        if (target.kind === 'log-detail') {
+            const local = logs.find((l) => l.id === target.logId);
+            if (local) {
+                setSelectedLog(local);
+                clearPending(requestId);
+                return;
+            }
+            let cancelled = false;
+            void getLogDetail(target.logId)
+                .then((detail) => {
+                    if (!cancelled && detail) {
+                        setSelectedLog(detail);
+                    }
+                })
+                .catch(() => {})
+                .finally(() => {
+                    if (!cancelled) {
+                        clearPending(requestId);
+                    }
+                });
+            return () => {
+                cancelled = true;
+            };
+        }
+        if (target.kind === 'log-group') {
+            useSearchStore.getState().setSearchTerm(pageKey, target.groupName);
+            clearPending(requestId);
+        }
+    }, [clearPending, logs, pageKey, pendingJump]);
 
     const canLoadMore = hasMore && !isLoading && !isLoadingMore && logs.length > 0;
     const handleReachEnd = useCallback(() => {

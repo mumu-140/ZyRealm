@@ -554,6 +554,23 @@
         "confirmDelete": "確認刪除"
       }
     },
+    "logs": {
+      "title": "運行日誌",
+      "activeTitle": "活躍請求",
+      "noActive": "當前無進行中的請求",
+      "historyTitle": "最近請求",
+      "noHistory": "暫無最近請求記錄",
+      "viewAll": "在日誌頁查看全部",
+      "clickToInspect": "點擊查看完整詳情",
+      "tabConfig": "配置",
+      "tabLogs": "日誌",
+      "interrupt": "中斷請求",
+      "interrupted": "已請求中斷",
+      "success": "成功",
+      "failed": "失敗",
+      "live": "實時",
+      "refresh": "重新整理日誌"
+    },
     "form": {
       "name": "分組名稱",
       "matchRegex": "匹配正規",
