@@ -7,7 +7,6 @@ import type { Group } from '@/api/endpoints/group';
 import { useInterruptLiveRequest, useLiveRequests, type LiveRequest } from '@/api/endpoints/live-request';
 import { useLogPage, type RelayLog } from '@/api/endpoints/log';
 import { useJumpStore } from '@/stores/jump';
-import { matchesGroupName } from './utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
@@ -51,6 +50,22 @@ function sanitizeErrorMessage(raw: string | undefined | null): string {
     return cleaned.length > 100 ? `${cleaned.slice(0, 100)}…` : cleaned;
 }
 
+export function matchesGroupModel(requestedModel: string | undefined | null, group: Group): boolean {
+    if (!requestedModel) return false;
+    const lower = requestedModel.toLowerCase();
+    const groupNameLower = group.name.toLowerCase();
+    if (lower === groupNameLower || lower.includes(groupNameLower)) return true;
+    if (group.match_regex) {
+        try {
+            const re = new RegExp(group.match_regex, 'i');
+            if (re.test(requestedModel)) return true;
+        } catch {
+            // ignore invalid regex
+        }
+    }
+    return false;
+}
+
 export function GroupLogsPanel({ group, onCloseDialog }: GroupLogsPanelProps) {
     const t = useTranslations('group');
     const liveQuery = useLiveRequests();
@@ -73,11 +88,11 @@ export function GroupLogsPanel({ group, onCloseDialog }: GroupLogsPanelProps) {
     const activeRequests = useMemo(() => {
         const list = liveQuery.data?.requests ?? [];
         return list.filter((req) => {
-            if (matchesGroupName(req.requested_model, group.name, group.match_regex)) return true;
+            if (matchesGroupModel(req.requested_model, group)) return true;
             if (req.channel_id > 0 && channelIdSet.has(req.channel_id)) return true;
             return false;
         });
-    }, [channelIdSet, group.match_regex, group.name, liveQuery.data?.requests]);
+    }, [channelIdSet, group, liveQuery.data?.requests]);
 
     // History logs query for this group
     const historyQuery = useLogPage({
@@ -92,12 +107,12 @@ export function GroupLogsPanel({ group, onCloseDialog }: GroupLogsPanelProps) {
         const list = historyQuery.data?.logs ?? [];
         return list
             .filter((log) => {
-                if (matchesGroupName(log.request_model_name, group.name, group.match_regex)) return true;
+                if (matchesGroupModel(log.request_model_name, group)) return true;
                 if (log.channel > 0 && channelIdSet.has(log.channel)) return true;
                 return false;
             })
             .slice(0, 10);
-    }, [channelIdSet, group.match_regex, group.name, historyQuery.data?.logs]);
+    }, [channelIdSet, group, historyQuery.data?.logs]);
 
     const handleJumpToLogDetail = useCallback((logId: number) => {
         onCloseDialog?.();

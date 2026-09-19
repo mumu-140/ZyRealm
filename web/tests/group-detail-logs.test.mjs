@@ -35,7 +35,7 @@ test('GroupLogsPanel component renders active requests and recent history with j
     assert.match(panel, /useInterruptLiveRequest\(\)/, 'GroupLogsPanel must support interrupting active requests');
     assert.match(panel, /useJumpStore\.getState\(\)\.requestJump\(\{\s*kind:\s*'log-detail'/, 'clicking history item must jump to log-detail');
     assert.match(panel, /useJumpStore\.getState\(\)\.requestJump\(\{\s*kind:\s*'log-group'/, 'clicking view-all must jump to log-group');
-    assert.match(panel, /matchesGroupName/, 'GroupLogsPanel must match requests by group name or regex');
+    assert.match(panel, /matchesGroupModel/, 'GroupLogsPanel must match requests by group name or regex');
 });
 
 test('GroupCard embeds GroupLogsPanel on the right side of detail block and displays active count badge', async () => {

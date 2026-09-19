@@ -15,8 +15,8 @@ import type { SelectedMember } from './ItemList';
 import { MemberList } from './ItemList';
 import { GroupEditor, type GroupEditorValues } from './Editor';
 import { GroupDiagnosticAction } from './health';
-import { GroupLogsPanel } from './GroupLogsPanel';
-import { matchesGroupName, modelChannelKey, MODE_LABELS } from './utils';
+import { GroupLogsPanel, matchesGroupModel } from './GroupLogsPanel';
+import { modelChannelKey, MODE_LABELS } from './utils';
 import { compressConfigPayload, GroupMode, type GroupUpdateRequest, normalizeGroupCompressConfig, normalizeGroupProtocolMode, normalizePreferredProtocols } from '@/api/endpoints/group';
 import { PresetPopover } from './PresetPopover';
 import { ProtocolPolicyPopover } from './ProtocolPolicyPopover';
@@ -157,8 +157,8 @@ export function GroupCard({ group, modelChannelByKey }: GroupCardProps) {
     const activeCount = useMemo(() => {
         const list = liveQuery.data?.requests ?? [];
         const channelIds = new Set((group.items || []).map((i) => i.channel_id));
-        return list.filter((r) => matchesGroupName(r.requested_model, group.name, group.match_regex) || (r.channel_id > 0 && channelIds.has(r.channel_id))).length;
-    }, [group.items, group.match_regex, group.name, liveQuery.data?.requests]);
+        return list.filter((r) => matchesGroupModel(r.requested_model, group) || (r.channel_id > 0 && channelIds.has(r.channel_id))).length;
+    }, [group, liveQuery.data?.requests]);
 
     const displayMembers = useMemo((): SelectedMember[] =>
         [...(group.items || [])]
