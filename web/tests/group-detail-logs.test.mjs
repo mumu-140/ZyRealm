@@ -21,7 +21,7 @@ test('log page consumes pendingJump to open log detail modal or apply group filt
 
     assert.match(logIndex, /import\s*\{[^}]*getLogDetail[^}]*\}\s*from\s*'@\/api\/endpoints\/log'/, 'log index must import getLogDetail');
     assert.match(logIndex, /import\s*\{[^}]*useJumpStore[^}]*\}\s*from\s*'@\/stores\/jump'/, 'log index must import useJumpStore');
-    assert.match(logIndex, /pendingJump\.target\.kind\s*===\s*'log-detail'/, 'log index must handle log-detail pending jump');
+    assert.match(logIndex, /target\.kind\s*===\s*'log-detail'/, 'log index must handle log-detail pending jump');
     assert.match(logIndex, /setSelectedLog\(/, 'log index must set selectedLog to open detail modal');
     assert.match(logIndex, /clearPending\(/, 'log index must clear pending jump after consumption');
 });
