@@ -1,11 +1,13 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-13T17:37:49Z",
+  "updatedAt": "2026-09-17T12:52:24.424436747Z",
   "repository": {
     "github": "mumu-140/ZyRealm",
     "canonicalPath": "/opt/octopus-mumu",
     "integrationBranch": "main",
-    "minimumNormalizedCommit": "f7c587f602d84f88390a90b56e397078ae98f096"
+    "minimumNormalizedCommit": "f7c587f602d84f88390a90b56e397078ae98f096",
+    "liveSourceCommit": "452c39422f6421415dc6add8ffe11bca9dd8b8c6",
+    "liveSourceTree": "9ecdfd3728e23671272236d00a1feefe7be597ff"
   },
   "production": {
     "host": "fwq57ys",
@@ -14,11 +16,11 @@
     "managedCompose": "deploy/fwq57ys/compose.yaml",
     "composeReplica": "/opt/octopus/docker-compose.yml",
     "container": {
-      "name": "octopus",
-      "id": "d5d28ccdbd84f6af38edad011ae4524b0beda1c4aa9369424de74f6ebb4198c9",
-      "image": "mumu-140/octopus-concurrency:v0.11.0-mumu.1",
-      "imageId": "sha256:5e35801c9f6508a26b592ac6f0dd153cfe5043cc29213a63ce2c2d84e3b340c1",
-      "startedAt": "2026-09-13T17:37:00.825871556Z",
+      "name": "zyrealm",
+      "id": "0ab4d1c8cf40106901a713235f2a370ca567f4b402f69b3b5c21a999048f7aad",
+      "image": "ghcr.io/mumu-140/zyrealm:v0.11.0-mumu.10",
+      "imageId": "sha256:59755aee7b9fbd8ed8e1c99262e5b5ac476e53f8777a87f8e2d8de6fb545879d",
+      "startedAt": "2026-09-17T12:37:09.762606244Z",
       "networkMode": "host",
       "restartCount": 0,
       "dataMount": {
@@ -28,21 +30,30 @@
       }
     },
     "release": {
-      "version": "v0.11.0-mumu.1",
-      "tag": "v0.11.0-mumu.1",
-      "sourceCommit": "46a347b340a5bc612a873658933b7fa10e752ea6"
+      "version": "v0.11.0-mumu.10",
+      "tag": "v0.11.0-mumu.10",
+      "sourceCommit": "452c39422f6421415dc6add8ffe11bca9dd8b8c6",
+      "sourceTree": "9ecdfd3728e23671272236d00a1feefe7be597ff",
+      "repoDigest": "ghcr.io/mumu-140/zyrealm@sha256:59755aee7b9fbd8ed8e1c99262e5b5ac476e53f8777a87f8e2d8de6fb545879d"
     },
     "httpChecks": [
       "http://127.0.0.1:35276/",
       "http://203.0.113.10:35276/"
     ],
-    "rollbackSnapshot": "/home/yangs/API/octopus-data/backups/pre-v0.11.0-mumu.1-cutover-20260913T173255Z"
+    "rollbackSnapshot": "/opt/octopus/backups/pre-v0.11.0-mumu.10-cutover-20260917T1228Z"
   },
-  "preservedDirectories": [
-    "/opt/octopus-src",
-    "/opt/octopus-src.failed-clone-20260713",
-    "/opt/octopus-build-cache"
-  ],
+  "rollback": {
+    "available": true,
+    "container": "zyrealm-rollback-v0.11.0-mumu.8",
+    "snapshot": "/opt/octopus/backups/pre-v0.11.0-mumu.10-cutover-20260917T1228Z",
+    "note": "Prebuilt rollback container for the previous verified production line."
+  },
+  "cutover": {
+    "runId": "cutover-v0.11.0-mumu.10-20260917T1228Z",
+    "status": "COMPLETE",
+    "scriptSha256": "55b949004fb787e228ccbbabcdef3b2f6c3afa8fad41e714f08db8e0a95a00e3",
+    "rollbackOccurred": false
+  },
   "quarantinedBranches": [
     {
       "name": "codex/v0.10.1-image-api",
