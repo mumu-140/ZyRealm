@@ -56,7 +56,7 @@ ARG SOURCE_REVISION
 ARG SOURCE_TREE
 ARG BUILD_TIME
 ARG GIT_AUTHOR=mumu-140
-ARG SOURCE_URL=https://github.com/mumu-140/octopus-concurrency
+ARG SOURCE_URL=https://github.com/mumu-140/ZyRealm
 
 # TZ 决定小时级统计的分桶时区，必须保留 Asia/Shanghai
 ENV TZ=Asia/Shanghai
@@ -78,8 +78,8 @@ RUN chmod +x /app/octopus /entrypoint.sh
 
 CMD ["/entrypoint.sh"]
 
-LABEL org.opencontainers.image.title="octopus" \
-      org.opencontainers.image.description="Octopus 并发控制二开版本" \
+LABEL org.opencontainers.image.title="ZyRealm" \
+      org.opencontainers.image.description="Adaptive LLM gateway with failure-aware routing and runtime recovery" \
       org.opencontainers.image.version="$GIT_VERSION" \
       org.opencontainers.image.revision="$SOURCE_REVISION" \
       org.opencontainers.image.created="$BUILD_TIME" \
