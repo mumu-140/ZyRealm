@@ -1,64 +1,60 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-17T12:52:24.424436747Z",
+  "updatedAt": "2026-09-19T09:07:40.315976643Z",
   "repository": {
     "github": "mumu-140/ZyRealm",
-    "canonicalPath": "/opt/octopus-mumu",
+    "canonicalPath": "/home/yangs/API/ZyRealm",
     "integrationBranch": "main",
-    "minimumNormalizedCommit": "f7c587f602d84f88390a90b56e397078ae98f096",
-    "liveSourceCommit": "452c39422f6421415dc6add8ffe11bca9dd8b8c6",
-    "liveSourceTree": "9ecdfd3728e23671272236d00a1feefe7be597ff"
+    "sourceCommit": "e13bc6f798f45cfd1b4880c0c25fc826cb96ea55",
+    "sourceTree": "0bdb6a09cf3095837d3449f2b72d857b003105ff"
   },
   "production": {
     "host": "fwq57ys",
-    "directory": "/opt/octopus",
-    "dataDirectory": "/opt/octopus/data",
-    "managedCompose": "deploy/fwq57ys/compose.yaml",
-    "composeReplica": "/opt/octopus/docker-compose.yml",
+    "directory": "/home/yangs/API/ZyRealm-data",
+    "dataDirectory": "/home/yangs/API/ZyRealm-data/data",
+    "compose": "/home/yangs/API/ZyRealm-data/docker-compose.yml",
     "container": {
       "name": "zyrealm",
-      "id": "0ab4d1c8cf40106901a713235f2a370ca567f4b402f69b3b5c21a999048f7aad",
-      "image": "ghcr.io/mumu-140/zyrealm:v0.11.0-mumu.10",
-      "imageId": "sha256:59755aee7b9fbd8ed8e1c99262e5b5ac476e53f8777a87f8e2d8de6fb545879d",
-      "startedAt": "2026-09-17T12:37:09.762606244Z",
+      "id": "d7d3600d8fbb50ba982aef129ef3006a557bbeab9e55f61155a330a94351dc21",
+      "image": "ghcr.io/mumu-140/zyrealm:v0.11.0-mumu.13",
+      "imageId": "sha256:990719d94ca3e11ce558fbe558f8c8b87a6e65dd3e8d60381fe93dd8c4ae46f0",
+      "startedAt": "2026-09-19T09:02:21.313165252Z",
       "networkMode": "host",
       "restartCount": 0,
       "dataMount": {
-        "source": "/opt/octopus/data",
+        "source": "/home/yangs/API/ZyRealm-data/data",
         "destination": "/app/data",
         "readWrite": true
       }
     },
     "release": {
-      "version": "v0.11.0-mumu.10",
-      "tag": "v0.11.0-mumu.10",
-      "sourceCommit": "452c39422f6421415dc6add8ffe11bca9dd8b8c6",
-      "sourceTree": "9ecdfd3728e23671272236d00a1feefe7be597ff",
-      "repoDigest": "ghcr.io/mumu-140/zyrealm@sha256:59755aee7b9fbd8ed8e1c99262e5b5ac476e53f8777a87f8e2d8de6fb545879d"
+      "version": "v0.11.0-mumu.13",
+      "tag": "v0.11.0-mumu.13",
+      "sourceCommit": "e13bc6f798f45cfd1b4880c0c25fc826cb96ea55",
+      "repoDigest": "ghcr.io/mumu-140/zyrealm@sha256:990719d94ca3e11ce558fbe558f8c8b87a6e65dd3e8d60381fe93dd8c4ae46f0"
     },
     "httpChecks": [
       "http://127.0.0.1:35276/",
-      "http://203.0.113.10:35276/"
+      "http://222.28.118.57:35276/"
     ],
-    "rollbackSnapshot": "/opt/octopus/backups/pre-v0.11.0-mumu.10-cutover-20260917T1228Z"
+    "rollbackSnapshot": "/home/yangs/API/ZyRealm-data/backups/pre-v0.11.0-mumu.13-cutover-20260919T0815Z",
+    "publicEntrypoint": {
+      "hostname": "octopus.muaiword.com",
+      "switchScript": "/home/yangs/software/cloudflared/cf-zyrealm",
+      "currentService": "http://127.0.0.1:27057",
+      "note": "ZyRealm public ingress switch; hostname remains as currently provisioned."
+    }
   },
   "rollback": {
     "available": true,
-    "container": "zyrealm-rollback-v0.11.0-mumu.8",
-    "snapshot": "/opt/octopus/backups/pre-v0.11.0-mumu.10-cutover-20260917T1228Z",
-    "note": "Prebuilt rollback container for the previous verified production line."
+    "container": "zyrealm-rollback-v0.11.0-mumu.12",
+    "snapshot": "/home/yangs/API/ZyRealm-data/backups/pre-v0.11.0-mumu.13-cutover-20260919T0815Z",
+    "note": "Prebuilt rollback container zyrealm-rollback-v0.11.0-mumu.12 created with verified image and data snapshot."
   },
   "cutover": {
-    "runId": "cutover-v0.11.0-mumu.10-20260917T1228Z",
+    "runId": "cutover-v0.11.0-mumu.13-20260919T0815Z",
     "status": "COMPLETE",
-    "scriptSha256": "55b949004fb787e228ccbbabcdef3b2f6c3afa8fad41e714f08db8e0a95a00e3",
+    "scriptSha256": "1a318e35479b215f4689108841f5e59868f5805f3c248404fd2984a2232bc045",
     "rollbackOccurred": false
-  },
-  "quarantinedBranches": [
-    {
-      "name": "codex/v0.10.1-image-api",
-      "commit": "9e49ffbde9eae17818aedf36a1522b83be01fec3",
-      "reason": "未发布协议路由进度；需要独立方案、数据库迁移验证和审查"
-    }
-  ]
+  }
 }

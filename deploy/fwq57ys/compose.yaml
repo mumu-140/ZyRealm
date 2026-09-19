@@ -2,7 +2,7 @@ name: zyrealm
 
 services:
   zyrealm:
-    image: ghcr.io/mumu-140/zyrealm:v0.11.0-mumu.10
+    image: ghcr.io/mumu-140/zyrealm:v0.11.0-mumu.13
     pull_policy: never
     container_name: zyrealm
     restart: unless-stopped
