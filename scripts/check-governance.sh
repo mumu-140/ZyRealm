@@ -98,7 +98,7 @@ check_manual_contracts() {
         "item_reference" "web/pnpm-workspace.yaml" "UPDATE_PRICE_DATA=1" \
         "actual_model_name" "request_model_name"
     require_document_text "$production" \
-        "octopus-candidate-<version>" "read:packages" "pull_policy: never" \
+        "zyrealm-candidate-<version>" "read:packages" "pull_policy: never" \
         "SELECT COUNT(*) FROM sqlite_schema;" "30 分钟" "自动回滚"
     for index in AGENTS.md CLAUDE.md; do
         require_document_text "$ROOT_DIR/$index" \
