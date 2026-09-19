@@ -139,12 +139,22 @@ check_versions() {
     local web_version
     local compose_image
     local expected_image
+    local compose_project
+    local compose_container
+    local expected_container
+    local release_tree
+    local repository_live_tree
 
     version="$(read_state '.production.release.version')"
     go_version="$(sed -n 's/^[[:space:]]*Version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT_DIR/internal/conf/version.go")"
     web_version="$(jq -er '.version' "$ROOT_DIR/web/package.json")"
     compose_image="$(sed -n 's/^[[:space:]]*image:[[:space:]]*//p' "$ROOT_DIR/deploy/fwq57ys/compose.yaml" | head -n 1)"
     expected_image="$(read_state '.production.container.image')"
+    compose_project="$(sed -n 's/^name:[[:space:]]*//p' "$ROOT_DIR/deploy/fwq57ys/compose.yaml" | head -n 1)"
+    compose_container="$(sed -n 's/^[[:space:]]*container_name:[[:space:]]*//p' "$ROOT_DIR/deploy/fwq57ys/compose.yaml" | head -n 1)"
+    expected_container="$(read_state '.production.container.name')"
+    release_tree="$(read_state '.production.release.sourceTree')"
+    repository_live_tree="$(read_state '.repository.liveSourceTree')"
 
     [ "$go_version" = "$version" ] || fail "Go version $go_version does not match $version"
     [ "$web_version" = "${version#v}" ] || fail "web version $web_version does not match $version"
@@ -152,6 +162,16 @@ check_versions() {
         || fail "frontend fallback version does not match $version"
     [ "$compose_image" = "$expected_image" ] \
         || fail "managed compose image $compose_image does not match $expected_image"
+    [[ "$expected_image" == ghcr.io/mumu-140/zyrealm:* ]] \
+        || fail "production image is not in the ZyRealm GHCR namespace: $expected_image"
+    [ "$compose_project" = "zyrealm" ] \
+        || fail "managed compose project is $compose_project, expected zyrealm"
+    [ "$compose_container" = "$expected_container" ] \
+        || fail "managed compose container $compose_container does not match $expected_container"
+    [ "$expected_container" = "zyrealm" ] \
+        || fail "production container is $expected_container, expected zyrealm"
+    [ "$release_tree" = "$repository_live_tree" ] \
+        || fail "release source tree $release_tree does not match repository live source tree $repository_live_tree"
 }
 
 check_git_truth() {
@@ -165,6 +185,8 @@ check_git_truth() {
     minimum_commit="$(read_state '.repository.minimumNormalizedCommit')"
     tag_commit="$(git -C "$ROOT_DIR" rev-parse "${release_tag}^{}")"
 
+    [ "$source_commit" = "$(read_state '.repository.liveSourceCommit')" ] \
+        || fail "release source commit does not match repository live source commit"
     [ "$tag_commit" = "$source_commit" ] \
         || fail "release tag $release_tag resolves to $tag_commit, expected $source_commit"
     git -C "$ROOT_DIR" merge-base --is-ancestor "$minimum_commit" HEAD \
