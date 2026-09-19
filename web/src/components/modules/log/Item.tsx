@@ -45,6 +45,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/animate-ui/components/animate/tooltip';
 import { toast } from '@/components/common/Toast';
 import { useUpdateSiteChannelModelDisabled } from '@/api/endpoints/site-channel';
+import { LogDetailRoutingInspector } from './RoutingInspector';
 
 export type LogSiteActionTarget = ApiLogSiteActionTarget;
 export type LogSiteActionTargets = ApiLogSiteActionTargets;
@@ -761,7 +762,7 @@ export function LogDetailModal({ log, open, onClose }: LogDetailModalProps) {
     return (
         <TooltipProvider>
             <Dialog open={open} onOpenChange={(val) => { if (!val) onClose(); }}>
-                <DialogContent className="max-w-[calc(100vw-2rem)] md:max-w-[85vw] lg:max-w-[1280px] h-[calc(100vh-2rem)] flex flex-col p-6 rounded-3xl overflow-hidden bg-card text-card-foreground gap-0 shadow-2xl">
+                <DialogContent className="max-w-[calc(100vw-2rem)] md:max-w-[90vw] lg:max-w-[1360px] h-[calc(100vh-2rem)] flex flex-col p-5 md:p-6 rounded-3xl overflow-hidden bg-card text-card-foreground gap-0 shadow-2xl">
                     <DialogHeader className="mb-3 flex flex-row items-center justify-between pr-8 text-left">
                         <DialogTitle className="flex min-w-0 flex-1 items-center gap-2 text-sm font-semibold">
                             <ModelAvatar size={28} />
@@ -793,8 +794,9 @@ export function LogDetailModal({ log, open, onClose }: LogDetailModalProps) {
                         </DialogDescription>
                     </DialogHeader>
 
-                    <div className="flex flex-col min-h-0 flex-1 gap-4 overflow-hidden">
-                        {showDiagnosticPanel ? (
+                    <div className="flex flex-row min-h-0 flex-1 gap-4 overflow-hidden">
+                        <div className="flex flex-col min-h-0 flex-1 gap-4 overflow-hidden">
+                            {showDiagnosticPanel ? (
                             <div
                                 className={cn(
                                     'flex-initial min-h-0 flex flex-col rounded-2xl border overflow-hidden max-h-[40%]',
@@ -1010,7 +1012,10 @@ export function LogDetailModal({ log, open, onClose }: LogDetailModalProps) {
                         </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-3 md:gap-4 pt-4 mt-auto text-xs text-muted-foreground shrink-0 border-t border-border/50">
+                    <LogDetailRoutingInspector logId={displayLog.id} />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 md:gap-4 pt-4 mt-auto text-xs text-muted-foreground shrink-0 border-t border-border/50">
                         <div className="flex items-center gap-1.5">
                             <Clock className="size-3.5" style={{ color: brandColor }} />
                             <span className="tabular-nums">{formatTime(displayLog.time)}</span>
