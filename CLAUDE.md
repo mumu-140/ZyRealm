@@ -19,5 +19,5 @@
   install/lint/test/build`、旁路镜像构建）；验证只在 GitHub CI 或 fwq57ys 固定版本容器内做。
   唯一例外是 `scripts/check-governance.sh --repo`（纯文本/Git 检查）。见 `AGENTS.md` §0。
 - 生产 compose/container 生命周期命令需明确维护窗口授权；发布完成 ≠ 已部署。
-- 数据只挂载 `/opt/octopus/data`；生产 SQLite 不用于开发测试。
+- 数据只挂载 `/home/yangs/API/ZyRealm-data/data`；生产 SQLite 不用于开发测试。
 - 禁止 force push、`--no-verify` 绕过 `.githooks`。

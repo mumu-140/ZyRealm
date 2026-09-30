@@ -4,19 +4,18 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly STATE_FILE="$ROOT_DIR/deploy/fwq57ys/production-state.json"
 
-# 公开仓库只含占位路径（/opt/octopus-*、203.0.113.10）。
-# 生产机通过 gitignored 的 deploy/fwq57ys/.deploy-local.env 注入真实部署路径，
-# 使 --live 门禁在真实环境仍可用；CI/公开环境无此文件时使用占位值。
+# 旧部署仍可通过 gitignored 的 deploy/fwq57ys/.deploy-local.env 覆盖路径与 LAN IP。
+# 变量名保留为兼容接口；默认值与当前 ZyRealm 生产台账一致。
 DEPLOY_LOCAL_ENV="$ROOT_DIR/deploy/fwq57ys/.deploy-local.env"
 if [ -f "$DEPLOY_LOCAL_ENV" ]; then
     # shellcheck disable=SC1090
     . "$DEPLOY_LOCAL_ENV"
 fi
-OCTOPUS_DEPLOY_ROOT="${OCTOPUS_DEPLOY_ROOT:-/opt/octopus}"
-OCTOPUS_SRC_DIR="${OCTOPUS_SRC_DIR:-/opt/octopus-mumu}"
-OCTOPUS_LAN_IP="${OCTOPUS_LAN_IP:-203.0.113.10}"
+OCTOPUS_DEPLOY_ROOT="${OCTOPUS_DEPLOY_ROOT:-/home/yangs/API/ZyRealm-data}"
+OCTOPUS_SRC_DIR="${OCTOPUS_SRC_DIR:-/home/yangs/API/ZyRealm}"
+OCTOPUS_LAN_IP="${OCTOPUS_LAN_IP:-222.28.118.57}"
 
-# 把 state 中的占位路径还原为真实路径（生产机覆盖；公开环境原样返回）
+# 兼容旧 state 中的占位路径；当前 state 已直接记录真实规范路径。
 real_path() {
     local p="$1"
     p="${p//\/opt\/octopus-mumu/$OCTOPUS_SRC_DIR}"
@@ -94,7 +93,7 @@ check_manual_contracts() {
         "## 数据备份" "## 生产切换" "## 验证与回滚" \
         "## 已知事故与处理" "## 停止条件" "## 交付证据"
     require_document_text "$development" \
-        "/opt/octopus-mumu/" "stats_leaderboard" \
+        "/home/yangs/API/ZyRealm/" "stats_leaderboard" \
         "item_reference" "web/pnpm-workspace.yaml" "UPDATE_PRICE_DATA=1" \
         "actual_model_name" "request_model_name"
     require_document_text "$production" \
@@ -108,6 +107,12 @@ check_manual_contracts() {
     if git -C "$ROOT_DIR" grep -n -E \
         "docs/(development-governance|production)\.md" -- . >/dev/null; then
         fail "obsolete generic Octopus manual path detected"
+    fi
+    if git -C "$ROOT_DIR" grep -n -E \
+        "/opt/octopus(-mumu|-build-cache|-src[^/]*)?" -- \
+        AGENTS.md CLAUDE.md docs/octopus-development-governance.md \
+        docs/octopus-production.md USAGE.md >/dev/null; then
+        fail "obsolete Octopus operational path detected"
     fi
 }
 
@@ -142,8 +147,10 @@ check_versions() {
     local compose_project
     local compose_container
     local expected_container
-    local release_tree
-    local repository_live_tree
+    local release_commit
+    local repository_source_commit
+    local repository_source_tree
+    local actual_source_tree
 
     version="$(read_state '.production.release.version')"
     go_version="$(sed -n 's/^[[:space:]]*Version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT_DIR/internal/conf/version.go")"
@@ -153,8 +160,10 @@ check_versions() {
     compose_project="$(sed -n 's/^name:[[:space:]]*//p' "$ROOT_DIR/deploy/fwq57ys/compose.yaml" | head -n 1)"
     compose_container="$(sed -n 's/^[[:space:]]*container_name:[[:space:]]*//p' "$ROOT_DIR/deploy/fwq57ys/compose.yaml" | head -n 1)"
     expected_container="$(read_state '.production.container.name')"
-    release_tree="$(read_state '.production.release.sourceTree')"
-    repository_live_tree="$(read_state '.repository.liveSourceTree')"
+    release_commit="$(read_state '.production.release.sourceCommit')"
+    repository_source_commit="$(read_state '.repository.sourceCommit')"
+    repository_source_tree="$(read_state '.repository.sourceTree')"
+    actual_source_tree="$(git -C "$ROOT_DIR" rev-parse "${release_commit}^{tree}")"
 
     [ "$go_version" = "$version" ] || fail "Go version $go_version does not match $version"
     [ "$web_version" = "${version#v}" ] || fail "web version $web_version does not match $version"
@@ -170,8 +179,10 @@ check_versions() {
         || fail "managed compose container $compose_container does not match $expected_container"
     [ "$expected_container" = "zyrealm" ] \
         || fail "production container is $expected_container, expected zyrealm"
-    [ "$release_tree" = "$repository_live_tree" ] \
-        || fail "release source tree $release_tree does not match repository live source tree $repository_live_tree"
+    [ "$release_commit" = "$repository_source_commit" ] \
+        || fail "release source commit $release_commit does not match repository source commit $repository_source_commit"
+    [ "$actual_source_tree" = "$repository_source_tree" ] \
+        || fail "release source tree $actual_source_tree does not match repository source tree $repository_source_tree"
 }
 
 check_git_truth() {
@@ -185,8 +196,8 @@ check_git_truth() {
     minimum_commit="$(read_state '.repository.minimumNormalizedCommit')"
     tag_commit="$(git -C "$ROOT_DIR" rev-parse "${release_tag}^{}")"
 
-    [ "$source_commit" = "$(read_state '.repository.liveSourceCommit')" ] \
-        || fail "release source commit does not match repository live source commit"
+    [ "$source_commit" = "$(read_state '.repository.sourceCommit')" ] \
+        || fail "release source commit does not match repository source commit"
     [ "$tag_commit" = "$source_commit" ] \
         || fail "release tag $release_tag resolves to $tag_commit, expected $source_commit"
     git -C "$ROOT_DIR" merge-base --is-ancestor "$minimum_commit" HEAD \
@@ -242,8 +253,17 @@ check_shell() {
 check_repository() {
     require_command git
     require_command jq
-    jq -e '.schemaVersion == 1' "$STATE_FILE" >/dev/null \
-        || fail "invalid production state schema"
+    jq -e '
+        .schemaVersion == 1 and
+        ([.repository.github, .repository.canonicalPath, .repository.integrationBranch,
+          .repository.minimumNormalizedCommit, .repository.sourceCommit, .repository.sourceTree,
+          .production.directory, .production.dataDirectory, .production.compose,
+          .production.container.name, .production.container.id, .production.container.image,
+          .production.container.imageId, .production.container.startedAt,
+          .production.release.version, .production.release.tag,
+          .production.release.sourceCommit, .production.rollbackSnapshot] | all(type == "string"))
+    ' "$STATE_FILE" >/dev/null \
+        || fail "invalid or incomplete production state schema"
     check_required_files
     check_manual_contracts
     check_project_identity
@@ -317,11 +337,11 @@ check_live() {
     require_command docker
     require_command curl
     canonical_path="$(real_path "$(read_state '.repository.canonicalPath')")"
-    compose_replica="$(real_path "$(read_state '.production.composeReplica')")"
+    compose_replica="$(real_path "$(read_state '.production.compose')")"
     rollback_snapshot="$(real_path "$(read_state '.production.rollbackSnapshot')")"
     [ "$ROOT_DIR" = "$canonical_path" ] \
         || fail "live check must run from canonical repository $canonical_path"
-    cmp -s "$ROOT_DIR/$(read_state '.production.managedCompose')" "$compose_replica" \
+    cmp -s "$ROOT_DIR/deploy/fwq57ys/compose.yaml" "$compose_replica" \
         || fail "production compose replica drifted from the managed compose"
     [ -d "$rollback_snapshot" ] \
         || fail "rollback snapshot is missing: $rollback_snapshot"

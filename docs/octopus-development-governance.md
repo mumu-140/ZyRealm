@@ -1,4 +1,4 @@
-# Octopus 开发治理
+# ZyRealm 开发治理
 
 本文件把根目录 `AGENTS.md` 的规则落实为可执行的开发手册，回答“修改什么、在哪里改、怎么改、
 最低验证是什么、哪些做法禁止”。本手册只记录能由当前代码、Git、CI、生产状态或已复盘事故
@@ -40,11 +40,9 @@ inspect 证据为准。以下四项必须分别记录，不得相互推导：
 
 | 目录 | 路径 | 用途 | 禁止 |
 | --- | --- | --- | --- |
-| 唯一源码 | `/opt/octopus-mumu/` | 开发、测试、构建、提交 | 不在第二份源码中继续工作 |
-| 生产控制面 | `/opt/octopus/` | Compose 副本、真实数据、备份、部署证据 | 不初始化 Git、不放源码、不构建 |
-| 生产数据 | `/opt/octopus/data/` | 仅获批的生产读写 | 不用于开发、单测或候选 |
-| 历史源码 | `/opt/octopus-src*` | 只读追溯 | 不恢复旧改动、不构建、不部署 |
-| 构建缓存 | `/opt/octopus-build-cache/` | 只作缓存 | 不视为源码或发布证据 |
+| 唯一源码 | `/home/yangs/API/ZyRealm/` | 开发、测试、构建、提交 | 不在第二份源码中继续工作 |
+| 生产控制面 | `/home/yangs/API/ZyRealm-data/` | Compose 副本、真实数据、备份、部署证据 | 不初始化 Git、不放源码、不构建 |
+| 生产数据 | `/home/yangs/API/ZyRealm-data/data/` | 仅获批的生产读写 | 不用于开发、单测或候选 |
 | 生产声明 | `deploy/fwq57ys/compose.yaml` | 版本控制的目标 Compose | 不直接挂候选数据 |
 | 发布目标与运行指纹 | `deploy/fwq57ys/production-state.json` | staging 记录目标 release/image，切换后记录 live 指纹 | 不把 staging 状态声称为已运行 |
 
@@ -72,7 +70,7 @@ inspect 证据为准。以下四项必须分别记录，不得相互推导：
 | 生产构建 | `Dockerfile.build`、`scripts/build-production-image.sh` | OCI labels、固定摘要、源码 tree、前后端完整构建 |
 | CI 与 Release | `.github/workflows/` | tag 触发、权限、GHCR、归档、治理 job |
 | 生产声明 | `deploy/fwq57ys/compose.yaml`、`production-state.json` | 只在发布/部署各自阶段修改；不得把文本变更写成已部署 |
-| 治理文档与守卫 | `AGENTS.md`、两份 Octopus 手册、`scripts/check-governance.sh` | README、USAGE、`CLAUDE.md` 的入口链接 |
+| 治理文档与守卫 | `AGENTS.md`、两份 ZyRealm 手册、`scripts/check-governance.sh` | README、USAGE、`CLAUDE.md` 的入口链接 |
 
 ### 发布与部署字段矩阵
 
@@ -95,7 +93,7 @@ Release tag 指向应用源码 commit，不指向后续部署 staging commit。�
 ### 开始
 
 ```bash
-cd /opt/octopus-mumu
+cd /home/yangs/API/ZyRealm
 scripts/check-governance.sh --repo
 git status --short --branch
 git fetch origin
@@ -194,7 +192,7 @@ fwq10ys、fwq57ys 都不可达，`docker.1ms.run/v2/` 三处都可达（401 是�
   install/lint/test/build`、旁路镜像构建）；也禁止把本机跑出的结果当验证证据。
   见 `AGENTS.md` §0。
 - 禁止未获维护窗口授权时执行生产容器生命周期命令或生产数据写入。
-- 禁止在当前代理 API 所依赖的前台 SSH 会话中 stop/restart/recreate Octopus。
+- 禁止在当前代理 API 所依赖的前台 SSH 会话中 stop/restart/recreate ZyRealm。
 
 ## 已知缺陷与历史坑
 
@@ -242,7 +240,7 @@ fwq10ys、fwq57ys 都不可达，`docker.1ms.run/v2/` 三处都可达（401 是�
 
 ```text
 任务与范围：
-源码目录：/opt/octopus-mumu
+源码目录：/home/yangs/API/ZyRealm
 分支 / HEAD / origin SHA：
 当前 main / 运行应用源码：
 运行镜像 tag / image ID / 容器 ID：

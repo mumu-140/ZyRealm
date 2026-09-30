@@ -1,6 +1,6 @@
 # ZyRealm 生产部署手册
 
-本文件是 fwq57ys 上 Octopus 的唯一现行生产手册，回答“生产对象分别负责什么、候选怎么验、
+本文件是 fwq57ys 上 ZyRealm 的唯一现行生产手册，回答“生产对象分别负责什么、候选怎么验、
 切换怎么做、什么必须禁止、失败时如何停止和回滚”。仓库最高规则见 `AGENTS.md`，开发修改
 路线见 `docs/octopus-development-governance.md`，机器可读运行真值见
 `deploy/fwq57ys/production-state.json`。
@@ -12,25 +12,24 @@
 | 对象 | 规范位置/名称 | 职责 | 使用边界 |
 | --- | --- | --- | --- |
 | GitHub | `mumu-140/ZyRealm` | 远端源码、CI、Release、GHCR | 不移动公开 tag，不重写 `main` |
-| 规范源码 | `/opt/octopus-mumu/` | 唯一开发、测试、构建、提交入口 | 不放真实数据，不直接承担生产运行 |
+| 规范源码 | `/home/yangs/API/ZyRealm/` | 唯一开发、测试、构建、提交入口 | 不放真实数据，不直接承担生产运行 |
 | 受管 Compose | `deploy/fwq57ys/compose.yaml` | 生产目标声明 | 只声明精确镜像、host 网络和正式挂载 |
 | 发布目标与运行状态 | `deploy/fwq57ys/production-state.json` | staging 目标 release/image + 切换后 live 指纹 | 必须标明阶段，不把 staging 声称为已运行 |
-| 生产控制面 | `/opt/octopus/` | Compose 副本、真实数据、备份、部署日志 | 不是源码仓库，不构建 |
-| 生产数据 | `/opt/octopus/data/` | `config.json`、SQLite 和运行数据 | 只挂生产容器；候选不得使用 |
+| 生产控制面 | `/home/yangs/API/ZyRealm-data/` | Compose 副本、真实数据、备份、部署日志 | 不是源码仓库，不构建 |
+| 生产数据 | `/home/yangs/API/ZyRealm-data/data/` | `config.json`、SQLite 和运行数据 | 只挂生产容器；候选不得使用 |
 | 生产容器 | `zyrealm` | 对外正式服务 | 不兼任候选或回滚容器 |
 | 回滚容器 | 状态清单声明的精确名称 | 保留上一验证版本的可启动容器 | 不常态运行，不改名冒充候选 |
 | 候选容器 | `zyrealm-candidate-<version>` 或任务声明的唯一名 | 独立端口、独立数据副本验收 | 不占 35276，不挂生产数据，不自动晋级 |
-| 历史目录 | `octopus-src*`、`octopus-build-cache` | 只读现场/缓存 | 不开发、不构建、不发布、不部署 |
 
-`octopus-mumu/` 和 `octopus/` 的职责必须保持分离。不要合并目录，也不要把大型生产数据移入
+`/home/yangs/API/ZyRealm/` 和 `/home/yangs/API/ZyRealm-data/` 的职责必须保持分离。不要合并目录，也不要把大型生产数据移入
 源码仓库或 Docker build context。
 
 ## 操作前真值核验
 
-每次 Octopus 任务先执行以下只读步骤：
+每次 ZyRealm 任务先执行以下只读步骤：
 
 ```bash
-cd /opt/octopus-mumu
+cd /home/yangs/API/ZyRealm
 git status --short --branch
 git rev-parse HEAD origin/main
 jq '.repository, .production' deploy/fwq57ys/production-state.json
@@ -45,7 +44,7 @@ scripts/check-governance.sh --live
 - 运行镜像 tag 和 image ID；
 - 生产容器 ID、启动时间和 restart count；
 - Compose 副本与受管 Compose 是否逐字一致；
-- host 网络、`/opt/octopus/data:/app/data` 挂载和 HTTP 状态；
+- host 网络、`/home/yangs/API/ZyRealm-data/data:/app/data` 挂载和 HTTP 状态；
 - 状态清单声明的回滚容器/快照是否真实存在。
 
 目录名、最新 commit、镜像名或容器名中的任意一个都不能单独证明生产身份。只读核验失败时
@@ -79,13 +78,13 @@ scripts/check-governance.sh --live
 | --- | --- |
 | 容器名 | `zyrealm`，唯一对外服务容器；候选与回滚容器不得复用此名 |
 | 网络与监听 | `host` / `0.0.0.0:35276`；不改回 bridge，不加端口映射 |
-| 数据挂载 | `/opt/octopus/data:/app/data` 读写，且只挂给生产容器 |
+| 数据挂载 | `/home/yangs/API/ZyRealm-data/data:/app/data` 读写，且只挂给生产容器 |
 | 镜像引用 | `ghcr.io/mumu-140/zyrealm:v<major>.<minor>.<patch>-mumu.<revision>`，Compose `pull_policy: never`，切换前显式拉取并核对 image ID |
-| Compose | 受管 `deploy/fwq57ys/compose.yaml` 与生产副本 `/opt/octopus/docker-compose.yml` 逐字一致 |
-| 公网入口 | `https://octopus.muaiword.com`（Cloudflare Tunnel → caddy-gateway `127.0.0.1:27057` → `35276`）；常态关闭，用时经 fwq57ys `~/software/cloudflared/cf-octopus on|off` 开关 |
+| Compose | 受管 `deploy/fwq57ys/compose.yaml` 与生产副本 `/home/yangs/API/ZyRealm-data/docker-compose.yml` 逐字一致 |
+| 公网入口 | `https://octopus.muaiword.com`（Cloudflare Tunnel → caddy-gateway `127.0.0.1:27057` → `35276`）；常态关闭，用时经 fwq57ys `/home/yangs/software/cloudflared/cf-zyrealm on|off` 开关 |
 | 时区 | 镜像内 `TZ=Asia/Shanghai`，决定小时级统计分桶时区，不得删除 |
-| 回滚网 | 本机保留上一验证版本镜像 + 切换前预建 `zyrealm-rollback-<上一版本>`（`--restart no`，`Created` 不启动）+ 快照目录 `/opt/octopus/backups/pre-<新版本>-cutover-<UTC 时间戳>/`（含 `data.db`、`config.json`、切换前后 Compose、旧状态清单、旧容器 inspect） |
-| 部署证据 | `/opt/octopus/deployments/<run-id>/`：日志、PID、阶段状态、快照校验、前后 inspect |
+| 回滚网 | 本机保留上一验证版本镜像 + 切换前预建 `zyrealm-rollback-<上一版本>`（`--restart no`，`Created` 不启动）+ 快照目录 `/home/yangs/API/ZyRealm-data/backups/pre-<新版本>-cutover-<UTC 时间戳>/`（含 `data.db`、`config.json`、切换前后 Compose、旧状态清单、旧容器 inspect） |
+| 部署证据 | `/home/yangs/API/ZyRealm-data/deployments/<run-id>/`：日志、PID、阶段状态、快照校验、前后 inspect |
 
 切换只走脱离会话的后台任务，固定顺序：在线快照 → 预建回滚容器 → `stop -t 30` → 受管 Compose
 `up -d --no-build --pull never` → 双端点 200 就绪门禁 → 身份/网络/挂载/restart count 断言 →
@@ -148,7 +147,7 @@ GHCR 是发布分发源。包为私有时，拉取凭据必须具备 `read:packa
 
 - 容器名不得为 `zyrealm`，不得复用回滚容器名；
 - 不得监听 `35276`；
-- 任一 Mount.Source 都不得等于 `/opt/octopus/data`；
+- 任一 Mount.Source 都不得等于 `/home/yangs/API/ZyRealm-data/data`；
 - 数据副本、日志和状态目录使用本次任务唯一名称；
 - 禁止修改生产 Compose 副本、生产状态清单或生产容器。
 
@@ -172,7 +171,7 @@ GHCR 是发布分发源。包为私有时，拉取凭据必须具备 `read:packa
 
 ## 数据备份
 
-Octopus SQLite 使用 WAL。在线备份必须使用 SQLite backup API；禁止分别复制活动中的
+ZyRealm SQLite 使用 WAL。在线备份必须使用 SQLite backup API；禁止分别复制活动中的
 `data.db`、`data.db-wal`、`data.db-shm` 作为一致性快照。
 
 在获批脚本中使用以下已验证模式，路径必须先固定并检查可用空间：
@@ -225,11 +224,11 @@ Release 成功不等于部署授权。只有明确维护窗口、候选全部通
 7. 任一步失败触发 trap：移除失败容器、恢复旧 Compose/声明、重命名并启动回滚容器；
 8. 回滚后再次验证 HTTP、旧镜像身份、`quick_check` 和 `--live`；
 9. 全部通过后才按 live inspect 更新 `production-state.json`，保存证据并写 `COMPLETE`；
-10. 日志、PID、阶段和最终状态保存在 `/opt/octopus/deployments/<run-id>/`。
+10. 日志、PID、阶段和最终状态保存在 `/home/yangs/API/ZyRealm-data/deployments/<run-id>/`。
 
 后台任务必须通过 `nohup` 或等价的脱离会话机制启动，stdin 关闭，stdout/stderr 写入部署日志；
 启动后用新的只读 SSH/API 连接观察状态。禁止在承载 Codex/Claude/Hermes 当前通信的前台 SSH
-命令中直接 stop/restart/recreate Octopus，也禁止把后续启动/回滚依赖当前会话继续发命令。
+命令中直接 stop/restart/recreate ZyRealm，也禁止把后续启动/回滚依赖当前会话继续发命令。
 
 ## 验证与回滚
 
@@ -254,18 +253,18 @@ Compose 用 `com.docker.compose.*` 标签识别归属，被改名“挪开”的
 `docker compose up` 会重新认领并重建它。因此“改名保活”不是有效回滚手段，真正的回滚杠杆
 只有镜像加数据快照。清理镜像时注意：若旧镜像正是新镜像的基础来源，`docker rmi` 通常只摘
 tag、不输出 `Deleted: sha256:<layer>`、不回收磁盘；反过来，删掉仍被回滚容器引用的镜像会
-直接废掉快路径。删任何 Octopus 镜像前先确认它不是当前回滚容器的基础。
+直接废掉快路径。删任何 ZyRealm 镜像前先确认它不是当前回滚容器的基础。
 
 ## 已知事故与处理
 
 | 现象 | 已确认原因 | 正确处理 | 禁止的错误处理 |
 | --- | --- | --- | --- |
-| Claude/Codex 把旧 Octopus 当生产修改 | 目录名或旧容器被误当成唯一真值 | 只进 `octopus-mumu/`，读状态清单并运行 `--repo/--live` | 在 `octopus/`、`octopus-src*`、cache 初始化 Git 或恢复代码 |
+| Claude/Codex 把旧目录当 ZyRealm 生产修改 | 目录名或旧容器被误当成唯一真值 | 只进 `/home/yangs/API/ZyRealm/`，读状态清单并运行 `--repo/--live` | 在 `/home/yangs/API/ZyRealm-data/` 或任何历史/cache 目录初始化 Git 或恢复代码 |
 | 镜像名正确但应用不是目标源码 | 把 `main`、tag、image ID、container ID 混为一个事实 | 同时核对 tag commit、OCI revision/tree、image ID 和容器 inspect | 只看镜像名或首页版本 |
 | 拉 GHCR 返回 401/403 | 私有包凭据缺少 `read:packages` | 修复凭据范围后重拉原始镜像 | 改用 Docker Hub、旧 tag 或本地重建冒充 |
 | 上游基础层被当成生产镜像 | 误读 `Dockerfile.build` 最后一阶段 | 只部署受管 Compose/状态清单共同声明的 mumu 镜像 | 直接启动 `hureru/octopus` |
-| bridge 容器 accept 连接但 HTTP 永久无响应 | fwq57ys 内核 MPTCP 与 Go 1.24+ socket 在 Docker bridge/ports 组合下复现故障 | Octopus 使用 host 网络；候选用回环独立端口 | 改回 bridge、反复重启或误判应用死锁 |
-| 前台 stop 后代理失联，后续启动/回滚无法发送 | Octopus 承载当前代理 API 调用链 | 所有中断操作放入带日志和回滚的脱离会话后台任务 | 在前台 SSH 分步 stop、再计划发送 start |
+| bridge 容器 accept 连接但 HTTP 永久无响应 | fwq57ys 内核 MPTCP 与 Go 1.24+ socket 在 Docker bridge/ports 组合下复现故障 | ZyRealm 使用 host 网络；候选用回环独立端口 | 改回 bridge、反复重启或误判应用死锁 |
+| 前台 stop 后代理失联，后续启动/回滚无法发送 | ZyRealm 承载当前代理 API 调用链 | 所有中断操作放入带日志和回滚的脱离会话后台任务 | 在前台 SSH 分步 stop、再计划发送 start |
 | WAL 在线备份长时间反复重启 | 只 `BEGIN` 未实际读取，未固定 WAL 读快照，外部写入持续推进 | query_only + BEGIN + 实际 SELECT + `.backup`，然后 SHA-256/`quick_check` | 复制 db/wal/shm，或无验证就切换 |
 | 首次历史回填被判超时并自动回滚 | 120 秒级健康窗口不足以完成大型历史回填 | 就绪门禁最多等待 30 分钟并持续记录进度 | 只看 HTTP 200，或用短超时反复切换 |
 | 候选页面可用但三维统计数据严重缺失 | 缺完整历史回填且遗漏独立计量写入路径 | 拒绝候选，补齐回填与写入路径后逐项对账 | 因 UI 正常而切生产 |
