@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-30T08:53:23Z",
+  "updatedAt": "2026-09-30T14:31:01Z",
   "repository": {
     "github": "mumu-140/ZyRealm",
     "canonicalPath": "/home/yangs/API/ZyRealm",
     "integrationBranch": "main",
-    "sourceCommit": "e13bc6f798f45cfd1b4880c0c25fc826cb96ea55",
-    "sourceTree": "0bdb6a09cf3095837d3449f2b72d857b003105ff",
+    "sourceCommit": "f36f5a26ad2624e77f12f6011e22636e4e302915",
+    "sourceTree": "d4a73c912660c74662b5cc390ad18fbeebab70d8",
     "minimumNormalizedCommit": "f7c587f602d84f88390a90b56e397078ae98f096"
   },
   "production": {
@@ -17,8 +17,8 @@
     "container": {
       "name": "zyrealm",
       "id": "d7d3600d8fbb50ba982aef129ef3006a557bbeab9e55f61155a330a94351dc21",
-      "image": "ghcr.io/mumu-140/zyrealm:v0.11.0-mumu.13",
-      "imageId": "sha256:990719d94ca3e11ce558fbe558f8c8b87a6e65dd3e8d60381fe93dd8c4ae46f0",
+      "image": "ghcr.io/mumu-140/zyrealm:v0.11.0-mumu.14",
+      "imageId": "sha256:6302dd8c29cd503ea5caf66f7a769afaa5c39c27b2651f6cedec3a39efc4b4ad",
       "startedAt": "2026-09-29T07:22:54.334726484Z",
       "networkMode": "host",
       "restartCount": 0,
@@ -29,10 +29,10 @@
       }
     },
     "release": {
-      "version": "v0.11.0-mumu.13",
-      "tag": "v0.11.0-mumu.13",
-      "sourceCommit": "e13bc6f798f45cfd1b4880c0c25fc826cb96ea55",
-      "repoDigest": "ghcr.io/mumu-140/zyrealm@sha256:990719d94ca3e11ce558fbe558f8c8b87a6e65dd3e8d60381fe93dd8c4ae46f0"
+      "version": "v0.11.0-mumu.14",
+      "tag": "v0.11.0-mumu.14",
+      "sourceCommit": "f36f5a26ad2624e77f12f6011e22636e4e302915",
+      "repoDigest": "ghcr.io/mumu-140/zyrealm@sha256:6302dd8c29cd503ea5caf66f7a769afaa5c39c27b2651f6cedec3a39efc4b4ad"
     },
     "httpChecks": [
       "http://127.0.0.1:35276/",
@@ -44,14 +44,6 @@
       "switchScript": "/home/yangs/software/cloudflared/cf-zyrealm",
       "currentService": "http://127.0.0.1:27057",
       "note": "ZyRealm public ingress switch; hostname remains as currently provisioned."
-    },
-    "runtimeReconciliation": {
-      "observedAt": "2026-09-30T08:53:23Z",
-      "reason": "host_reboot_recovery",
-      "hostBootAt": "2026-09-29T07:21:08Z",
-      "containerIdUnchanged": true,
-      "imageIdUnchanged": true,
-      "deploymentCutover": false
     }
   },
   "rollback": {
