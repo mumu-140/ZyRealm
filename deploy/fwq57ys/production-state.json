@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-30T14:31:01Z",
+  "updatedAt": "2026-09-30T15:02:55.637896Z",
   "repository": {
     "github": "mumu-140/ZyRealm",
     "canonicalPath": "/home/yangs/API/ZyRealm",
@@ -16,10 +16,10 @@
     "compose": "/home/yangs/API/ZyRealm-data/docker-compose.yml",
     "container": {
       "name": "zyrealm",
-      "id": "d7d3600d8fbb50ba982aef129ef3006a557bbeab9e55f61155a330a94351dc21",
+      "id": "5bfdde72588ad2bd2ae1b48998f88bb64e1504c926badeabe03a1c9a59a7fdb9",
       "image": "ghcr.io/mumu-140/zyrealm:v0.11.0-mumu.14",
       "imageId": "sha256:6302dd8c29cd503ea5caf66f7a769afaa5c39c27b2651f6cedec3a39efc4b4ad",
-      "startedAt": "2026-09-29T07:22:54.334726484Z",
+      "startedAt": "2026-09-30T14:57:20.179817168Z",
       "networkMode": "host",
       "restartCount": 0,
       "dataMount": {
@@ -38,7 +38,7 @@
       "http://127.0.0.1:35276/",
       "http://222.28.118.57:35276/"
     ],
-    "rollbackSnapshot": "/home/yangs/API/ZyRealm-data/backups/pre-v0.11.0-mumu.13-cutover-20260919T0815Z",
+    "rollbackSnapshot": "/home/yangs/API/ZyRealm-data/backups/pre-v0.11.0-mumu.14-cutover-20260930T143504Z",
     "publicEntrypoint": {
       "hostname": "octopus.muaiword.com",
       "switchScript": "/home/yangs/software/cloudflared/cf-zyrealm",
@@ -48,14 +48,14 @@
   },
   "rollback": {
     "available": true,
-    "container": "zyrealm-rollback-v0.11.0-mumu.12",
-    "snapshot": "/home/yangs/API/ZyRealm-data/backups/pre-v0.11.0-mumu.13-cutover-20260919T0815Z",
-    "note": "Prebuilt rollback container zyrealm-rollback-v0.11.0-mumu.12 created with verified image and data snapshot."
+    "container": "zyrealm-rollback-v0.11.0-mumu.13",
+    "snapshot": "/home/yangs/API/ZyRealm-data/backups/pre-v0.11.0-mumu.14-cutover-20260930T143504Z",
+    "note": "Prebuilt rollback container zyrealm-rollback-v0.11.0-mumu.13 created with verified image and current production data mount."
   },
   "cutover": {
-    "runId": "cutover-v0.11.0-mumu.13-20260919T0815Z",
+    "runId": "cutover-v0.11.0-mumu.14-20260930T143504Z",
     "status": "COMPLETE",
-    "scriptSha256": "1a318e35479b215f4689108841f5e59868f5805f3c248404fd2984a2232bc045",
+    "scriptSha256": "78d64efe6040550983be2a0e8d7bd43ebf5635b43529ae230026f8247790b21a",
     "rollbackOccurred": false
   }
 }
