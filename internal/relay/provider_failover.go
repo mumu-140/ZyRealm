@@ -46,10 +46,33 @@ var modelOrCapacityMarkers = []string{
 	"rpm limit",
 }
 
-var contentPolicyMarkers = []string{
+var sensitiveWordsMarkers = []string{
 	"sensitive_words_detected",
+}
+
+var leakProtectionMarkers = []string{
+	"request blocked by leak protection",
+}
+
+var genericContentPolicyMarkers = []string{
 	"content_policy_violation",
 	"content policy",
+}
+
+func isSensitiveWordsFailureText(text string) bool {
+	return containsAny(text, sensitiveWordsMarkers)
+}
+
+func isLeakProtectionFailureText(text string) bool {
+	return containsAny(text, leakProtectionMarkers)
+}
+
+func isModelHealthPolicyFailureText(text string) bool {
+	return isSensitiveWordsFailureText(text) || isLeakProtectionFailureText(text)
+}
+
+func isContentPolicyFailureText(text string) bool {
+	return isModelHealthPolicyFailureText(text) || containsAny(text, genericContentPolicyMarkers)
 }
 
 // shouldFailoverProviderImmediately recognizes only high-confidence provider
@@ -81,7 +104,7 @@ func shouldFailoverProviderImmediately(result attemptResult) bool {
 	// they belong to request/model/capability/credential scopes rather than a
 	// hard provider transport failure and receive their own runtime policy.
 	if isBlockedInvalidRequestError(text) || containsAny(text, clientErrorMarkers) ||
-		containsAny(text, contentPolicyMarkers) {
+		isContentPolicyFailureText(text) {
 		return false
 	}
 	if containsAny(text, modelOrCapacityMarkers) || containsAny(text, modelErrorMarkers) ||

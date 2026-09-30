@@ -130,3 +130,28 @@ func TestStickyCanPromoteAvailableCandidate(t *testing.T) {
 		t.Fatalf("available sticky preference was not preserved")
 	}
 }
+
+func TestRuntimeDecisionEventsPreserveChannelNameSnapshot(t *testing.T) {
+	availability.Reset()
+	now := time.Now()
+	availability.RecordModelFailure(10, "upstream-a", "first_token_timeout", now)
+	availability.RecordModelSuspect(20, "upstream-b", "ambiguous_cancel", now)
+	group := model.Group{
+		Mode: model.GroupModeFailover,
+		Items: []model.GroupItem{
+			{ChannelID: 10, ModelName: "upstream-a", RuntimeChannelName: "provider-a"},
+			{ChannelID: 20, ModelName: "upstream-b", RuntimeChannelName: "provider-b"},
+		},
+	}
+
+	ordered := runtimeOrderedCandidatesWithDecisions(group, "request-model", now)
+	if len(ordered.Decisions) != 2 {
+		t.Fatalf("decisions=%d, want 2", len(ordered.Decisions))
+	}
+	if ordered.Decisions[0].ChannelName != "provider-a" {
+		t.Fatalf("cooldown channel name=%q, want provider-a", ordered.Decisions[0].ChannelName)
+	}
+	if ordered.Decisions[1].ChannelName != "provider-b" {
+		t.Fatalf("suspect channel name=%q, want provider-b", ordered.Decisions[1].ChannelName)
+	}
+}

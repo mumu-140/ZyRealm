@@ -27,7 +27,9 @@ type LiveRequestSnapshot struct {
 	Transport           string `json:"transport"`
 	APIKeyID            int    `json:"api_key_id"`
 	RequestedModel      string `json:"requested_model"`
+	GroupID             int    `json:"group_id"`
 	ChannelID           int    `json:"channel_id"`
+	ChannelName         string `json:"channel_name"`
 	ChannelKeyID        int    `json:"channel_key_id"`
 	IngressProtocol     string `json:"ingress_protocol"`
 	UpstreamProtocol    string `json:"upstream_protocol"`

@@ -60,6 +60,16 @@ func TestLiveRequestSnapshotTracksActiveWireAttempt(t *testing.T) {
 	}
 
 	snapshot := waitForHTTPManualInterruptSnapshot(t, groupName, 2*time.Second)
+	group, err := op.GroupGetEnabledMap(groupName, dbCtx)
+	if err != nil {
+		t.Fatalf("load group: %v", err)
+	}
+	if snapshot.GroupID != group.ID {
+		t.Fatalf("group id=%d, want %d", snapshot.GroupID, group.ID)
+	}
+	if snapshot.ChannelName != "live-runtime-metadata" {
+		t.Fatalf("channel name=%q, want live-runtime-metadata", snapshot.ChannelName)
+	}
 	if snapshot.ChannelID == 0 || snapshot.ChannelKeyID == 0 {
 		t.Fatalf("active snapshot is missing channel/key identity: %#v", snapshot)
 	}

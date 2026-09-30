@@ -114,6 +114,7 @@ func buildRelayHandler(
 		Transport:       "http",
 		APIKeyID:        apiKeyID,
 		RequestedModel:  request.Model,
+		GroupID:         group.ID,
 		IngressProtocol: string(protocol.FromAPIFormat(request.RawAPIFormat)),
 		Phase:           string(livePhaseRouting),
 	})

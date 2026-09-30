@@ -15,7 +15,7 @@ import type { SelectedMember } from './ItemList';
 import { MemberList } from './ItemList';
 import { GroupEditor, type GroupEditorValues } from './Editor';
 import { GroupDiagnosticAction } from './health';
-import { GroupLogsPanel, matchesGroupModel } from './GroupLogsPanel';
+import { GroupLogsPanel } from './GroupLogsPanel';
 import { modelChannelKey, MODE_LABELS } from './utils';
 import { compressConfigPayload, GroupMode, type GroupUpdateRequest, normalizeGroupCompressConfig, normalizeGroupProtocolMode, normalizePreferredProtocols } from '@/api/endpoints/group';
 import { PresetPopover } from './PresetPopover';
@@ -156,8 +156,7 @@ export function GroupCard({ group, modelChannelByKey }: GroupCardProps) {
 
     const activeCount = useMemo(() => {
         const list = liveQuery.data?.requests ?? [];
-        const channelIds = new Set((group.items || []).map((i) => i.channel_id));
-        return list.filter((r) => matchesGroupModel(r.requested_model, group) || (r.channel_id > 0 && channelIds.has(r.channel_id))).length;
+        return list.filter((r) => group.id !== undefined && r.group_id === group.id).length;
     }, [group, liveQuery.data?.requests]);
 
     const displayMembers = useMemo((): SelectedMember[] =>

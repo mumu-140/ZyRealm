@@ -51,12 +51,13 @@ func runtimeOrderedCandidatesWithDecisions(group model.Group, requestModel strin
 		switch info.State {
 		case availability.StateCooldown:
 			event := model.RoutingDecisionEvent{
-				Stage:     model.DecisionStageCandidate,
-				Outcome:   model.DecisionOutcomeRejected,
-				Reason:    model.DecisionReasonRuntimeCooldown,
-				ChannelID: item.ChannelID,
-				ModelName: upstreamModel,
-				Detail:    boundedRuntimeDecisionDetail(info.Reason),
+				Stage:       model.DecisionStageCandidate,
+				Outcome:     model.DecisionOutcomeRejected,
+				Reason:      model.DecisionReasonRuntimeCooldown,
+				ChannelID:   item.ChannelID,
+				ChannelName: item.RuntimeChannelName,
+				ModelName:   upstreamModel,
+				Detail:      boundedRuntimeDecisionDetail(info.Reason),
 			}
 			if !info.CooldownUntil.IsZero() {
 				event.ExpiresAt = info.CooldownUntil.Unix()
@@ -65,12 +66,13 @@ func runtimeOrderedCandidatesWithDecisions(group model.Group, requestModel strin
 			continue
 		case availability.StateSuspect:
 			decisions = append(decisions, model.RoutingDecisionEvent{
-				Stage:     model.DecisionStageCandidate,
-				Outcome:   model.DecisionOutcomeEligible,
-				Reason:    model.DecisionReasonRuntimeSuspect,
-				ChannelID: item.ChannelID,
-				ModelName: upstreamModel,
-				Detail:    boundedRuntimeDecisionDetail(info.Reason),
+				Stage:       model.DecisionStageCandidate,
+				Outcome:     model.DecisionOutcomeEligible,
+				Reason:      model.DecisionReasonRuntimeSuspect,
+				ChannelID:   item.ChannelID,
+				ChannelName: item.RuntimeChannelName,
+				ModelName:   upstreamModel,
+				Detail:      boundedRuntimeDecisionDetail(info.Reason),
 			})
 			suspect = append(suspect, item)
 		default:

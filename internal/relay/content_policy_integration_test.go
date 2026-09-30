@@ -9,13 +9,14 @@ import (
 
 	dbmodel "github.com/bestruirui/octopus/internal/model"
 	"github.com/bestruirui/octopus/internal/op"
+	"github.com/bestruirui/octopus/internal/outlierwindow"
 	"github.com/bestruirui/octopus/internal/relay/availability"
 	"github.com/bestruirui/octopus/internal/transformer/inbound"
 	"github.com/bestruirui/octopus/internal/transformer/outbound"
 	"github.com/gin-gonic/gin"
 )
 
-func TestContentPolicyFailureRemainsTerminalAndRuntimeNeutral(t *testing.T) {
+func TestSensitiveWordsFailureIsTerminalAndCountsInModelHealth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx := setupRelayTestDB(t)
 	availability.Reset()
@@ -24,7 +25,7 @@ func TestContentPolicyFailureRemainsTerminalAndRuntimeNeutral(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":{"message":"sensitive_words_detected","type":"content_policy_violation"}}`))
+		_, _ = w.Write([]byte(`{"error":{"message":"request blocked by leak protection","type":"new_api_error","code":"sensitive_words_detected"}}`))
 	}))
 	defer server.Close()
 
@@ -62,6 +63,10 @@ func TestContentPolicyFailureRemainsTerminalAndRuntimeNeutral(t *testing.T) {
 	}
 
 	if state := availability.CandidateState(channel.ID, "policy-runtime-neutral-model", time.Now()); state != availability.StateAvailable {
-		t.Fatalf("content-policy runtime state = %v, want available", state)
+		t.Fatalf("sensitive-words runtime state = %v, want available (no hard cooldown)", state)
+	}
+	stats := outlierwindow.Evaluate(channel.ID, "policy-runtime-neutral-model", time.Now())
+	if stats.Samples != 5 || stats.Failures != 5 {
+		t.Fatalf("outlier stats = %+v, want five direct failures", stats)
 	}
 }

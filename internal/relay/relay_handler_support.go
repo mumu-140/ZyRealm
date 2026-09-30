@@ -265,12 +265,26 @@ func updateLiveRequestAttemptStart(request *relayRequest, channel *dbmodel.Chann
 	}
 	request.control.Update(func(snapshot *LiveRequestSnapshot) {
 		snapshot.ChannelID = channel.ID
+		snapshot.ChannelName = channel.Name
 		snapshot.ChannelKeyID = key.ID
 		snapshot.UpstreamProtocol = string(plan.UpstreamProtocol())
 		snapshot.ProviderAttempt = providerAttempt
 		snapshot.WireAttempt = wireAttempt
 		snapshot.DispatchState = dispatchStateString(dispatchNotSent)
 		snapshot.Phase = string(livePhaseAttempting)
+	})
+}
+
+func updateLiveRequestWSAttemptStart(request *relayRequest, channel *dbmodel.Channel, key dbmodel.ChannelKey) {
+	if request == nil || request.control == nil || channel == nil {
+		return
+	}
+	request.control.Update(func(snapshot *LiveRequestSnapshot) {
+		snapshot.ChannelID = channel.ID
+		snapshot.ChannelName = channel.Name
+		snapshot.ChannelKeyID = key.ID
+		snapshot.Phase = string(livePhaseAttempting)
+		snapshot.DispatchState = dispatchStateString(dispatchNotSent)
 	})
 }
 
@@ -371,7 +385,7 @@ type exhaustedRelayInput struct {
 	lastErr                 error
 	lastResult              attemptResult
 	capacitySkipped         bool
-	rateSkipped            bool
+	rateSkipped             bool
 	passthroughRequired     bool
 	passthroughCapableFound bool
 }

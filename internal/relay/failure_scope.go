@@ -75,10 +75,17 @@ func classifyFailureScope(statusCode int, text string) failureScope {
 	if strings.Contains(text, "first token timeout") {
 		return scopeModel
 	}
+	// sensitive_words_detected and explicit leak-protection blocks are terminal
+	// for the current request, but they are also direct provider-model failure
+	// samples. Keep them model-scoped so unrelated models on the channel are not
+	// penalized, and do not turn them into a hard runtime cooldown.
+	if isModelHealthPolicyFailureText(text) {
+		return scopeModel
+	}
 	if statusCode == 0 || containsAny(text, connectionErrorMarkers) {
 		return scopeChannel
 	}
-	if isBlockedInvalidRequestError(text) || containsAny(text, clientErrorMarkers) || containsAny(text, contentPolicyMarkers) {
+	if isBlockedInvalidRequestError(text) || containsAny(text, clientErrorMarkers) || containsAny(text, genericContentPolicyMarkers) {
 		return scopeIgnore
 	}
 	// Anthropic-compatible gateways can reject a newer MessageContent variant

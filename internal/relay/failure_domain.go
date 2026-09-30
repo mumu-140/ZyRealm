@@ -126,7 +126,7 @@ func classifyRoutingFailure(result attemptResult) routingFailureDomain {
 	status := fallbackStatus(result)
 
 	// Explicit blocked/content semantics terminate before provider/key health.
-	if isBlockedInvalidRequestError(text) || containsAny(text, contentPolicyMarkers) {
+	if isBlockedInvalidRequestError(text) || isContentPolicyFailureText(text) {
 		return failureDomainRequest
 	}
 

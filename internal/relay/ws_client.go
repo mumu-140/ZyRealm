@@ -260,6 +260,9 @@ func processWSResponseCreate(
 		return conversationState
 	}
 	req.control = roundControl
+	roundControl.Update(func(snapshot *LiveRequestSnapshot) {
+		snapshot.GroupID = group.ID
+	})
 
 	autoRestart := conversationState != nil && continuationRequested && conversationState.CanAutoRestart(originalRequest)
 	failedPreviousResponseID := currentPreviousResponseID(originalRequest)
@@ -286,6 +289,9 @@ func processWSResponseCreate(
 		replayReq, replayGroup, replayErr := newWSRelayRequest(roundCtx, conn, inAdapter, apiKeyID, requestModel, replayedRequest, originalRequest, preferredSticky, bodyBytes)
 		if replayErr == nil {
 			replayReq.control = roundControl
+			roundControl.Update(func(snapshot *LiveRequestSnapshot) {
+				snapshot.GroupID = replayGroup.ID
+			})
 			replayReq.metrics.SetWSMode(dbmodel.RelayLogWSModeReplay)
 			replayReq.metrics.SetWSRecovery(dbmodel.RelayLogWSRecoveryReplay)
 			req = replayReq
@@ -623,7 +629,9 @@ func runWSRelay(ctx context.Context, req *relayRequest, group *dbmodel.Group) ws
 					firstTokenTimeOutSec: group.FirstTokenTimeOut,
 				}
 
+				updateLiveRequestWSAttemptStart(req, channel, usedKey)
 				result = ra.attempt()
+				updateLiveRequestAttemptResult(req, result)
 				if isManualInterrupt(req.requestContext(), result.Err) {
 					return wsRelayResult{Canceled: true, Err: contextError(req.requestContext())}, true
 				}

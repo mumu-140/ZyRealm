@@ -58,19 +58,19 @@ const (
 // classifiers, but one wire result is converted into this object exactly once
 // on the relay path.
 type RoutingDecision struct {
-	Valid               bool
-	Domain              routingFailureDomain
-	RuleID              string
-	FailureScope        routingFailureScope
-	Directive           routingDirective
-	RuntimeEffect       routingRuntimeEffect
-	OutlierScope        failureScope
+	Valid                  bool
+	Domain                 routingFailureDomain
+	RuleID                 string
+	FailureScope           routingFailureScope
+	Directive              routingDirective
+	RuntimeEffect          routingRuntimeEffect
+	OutlierScope           failureScope
 	RouteLearningCandidate bool
-	ReplaySafety        routingReplaySafety
-	SkipProvider        bool
-	RetrySameCredential bool
-	Terminal            bool
-	ContentPolicy       bool
+	ReplaySafety           routingReplaySafety
+	SkipProvider           bool
+	RetrySameCredential    bool
+	Terminal               bool
+	ContentPolicy          bool
 }
 
 func withRoutingDecision(ctx context.Context, request *relayRequest, channelID int, result attemptResult) attemptResult {
@@ -92,15 +92,15 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 	hasAlternative := request != nil && request.iter != nil && request.iter.HasAlternativeProvider(channelID)
 
 	decision := RoutingDecision{
-		Valid:         true,
-		Domain:        domain,
-		RuleID:        routingRuleID(domain, status, text),
-		FailureScope:  routingScopeFor(domain, legacyScope),
-		Directive:     routingDirectiveNextCandidate,
-		RuntimeEffect: routingRuntimeNone,
-		OutlierScope:  legacyScope,
+		Valid:                  true,
+		Domain:                 domain,
+		RuleID:                 routingRuleID(domain, status, text),
+		FailureScope:           routingScopeFor(domain, legacyScope),
+		Directive:              routingDirectiveNextCandidate,
+		RuntimeEffect:          routingRuntimeNone,
+		OutlierScope:           legacyScope,
 		RouteLearningCandidate: true,
-		ReplaySafety:  routingReplaySafetyFor(result),
+		ReplaySafety:           routingReplaySafetyFor(result),
 	}
 
 	if result.Success {
@@ -270,9 +270,14 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 		decision.ContentPolicy = isExplicitContentPolicyFailure(result)
 		if decision.ContentPolicy {
 			decision.Directive = routingDirectiveTerminal
-			decision.OutlierScope = scopeIgnore
 			decision.RouteLearningCandidate = false
 			decision.Terminal = true
+			if isModelHealthPolicyFailureText(text) {
+				decision.FailureScope = routingScopeProviderModel
+				decision.OutlierScope = scopeModel
+			} else {
+				decision.OutlierScope = scopeIgnore
+			}
 		} else if status >= 400 && status < 500 {
 			decision.RouteLearningCandidate = false
 		}
@@ -297,7 +302,13 @@ func decideRoutingAttempt(ctx context.Context, request *relayRequest, channelID 
 func routingRuleID(domain routingFailureDomain, status int, text string) string {
 	switch domain {
 	case failureDomainRequest:
-		if containsAny(text, contentPolicyMarkers) {
+		if isSensitiveWordsFailureText(text) {
+			return "sensitive_words_detected"
+		}
+		if isLeakProtectionFailureText(text) {
+			return "leak_protection"
+		}
+		if containsAny(text, genericContentPolicyMarkers) {
 			return "content_policy"
 		}
 		if isBlockedInvalidRequestError(text) || containsAny(text, clientErrorMarkers) {

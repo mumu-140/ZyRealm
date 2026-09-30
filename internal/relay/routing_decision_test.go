@@ -146,6 +146,24 @@ func TestRoutingDecisionFirstTokenTimeoutIsModelScoped(t *testing.T) {
 	}
 }
 
+func TestRoutingDecisionSensitiveWordsIsTerminalModelHealthFailure(t *testing.T) {
+	result := attemptResult{
+		Err:               errors.New("channel failed"),
+		StatusCode:        http.StatusInternalServerError,
+		UpstreamErrorBody: `{"error":{"message":"request blocked by leak protection","code":"sensitive_words_detected"}}`,
+	}
+	decision := decideRoutingAttempt(context.Background(), nil, 1, result)
+	if decision.RuleID != "sensitive_words_detected" || !decision.ContentPolicy || !decision.Terminal {
+		t.Fatalf("unexpected sensitive-words decision: %+v", decision)
+	}
+	if decision.FailureScope != routingScopeProviderModel || decision.OutlierScope != scopeModel {
+		t.Fatalf("sensitive-words failure must count at provider-model scope: %+v", decision)
+	}
+	if decision.RuntimeEffect != routingRuntimeNone || decision.RouteLearningCandidate {
+		t.Fatalf("sensitive-words failure must avoid cooldown and route learning: %+v", decision)
+	}
+}
+
 func TestRoutingDecisionContentPolicyIsTerminalAndHealthNeutral(t *testing.T) {
 	result := attemptResult{
 		Err:               errors.New("channel failed"),

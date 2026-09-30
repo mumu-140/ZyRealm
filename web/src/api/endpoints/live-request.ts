@@ -7,7 +7,9 @@ export interface LiveRequest {
     transport: string;
     api_key_id: number;
     requested_model: string;
+    group_id: number;
     channel_id: number;
+    channel_name: string;
     channel_key_id: number;
     ingress_protocol: string;
     upstream_protocol: string;

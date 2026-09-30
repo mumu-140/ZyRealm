@@ -35,7 +35,9 @@ test('GroupLogsPanel component renders active requests and recent history with j
     assert.match(panel, /useInterruptLiveRequest\(\)/, 'GroupLogsPanel must support interrupting active requests');
     assert.match(panel, /useJumpStore\.getState\(\)\.requestJump\(\{\s*kind:\s*'log-detail'/, 'clicking history item must jump to log-detail');
     assert.match(panel, /useJumpStore\.getState\(\)\.requestJump\(\{\s*kind:\s*'log-group'/, 'clicking view-all must jump to log-group');
-    assert.match(panel, /matchesGroupModel/, 'GroupLogsPanel must match requests by group name or regex');
+    assert.match(panel, /req\.group_id\s*===\s*group\.id/, 'active requests must use the backend group identity');
+    assert.doesNotMatch(panel, /channelIdSet\.has\(req\.channel_id\)/, 'shared channels must not assign active requests to another group');
+    assert.doesNotMatch(panel, /lower\.includes\(groupNameLower\)/, 'group matching must not use substring guesses');
 });
 
 test('GroupCard embeds GroupLogsPanel on the right side of detail block and displays active count badge', async () => {
@@ -45,6 +47,8 @@ test('GroupCard embeds GroupLogsPanel on the right side of detail block and disp
     assert.match(card, /<GroupLogsPanel\s+group=\{group\}/, 'EditDialogContent must embed GroupLogsPanel');
     assert.match(card, /useLiveRequests\(\)/, 'GroupCard must query live requests to detect active state');
     assert.match(card, /activeCount/, 'GroupCard must compute activeCount');
+    assert.match(card, /r\.group_id\s*===\s*group\.id/, 'GroupCard active badge must use the backend group identity');
+    assert.doesNotMatch(card, /channelIds\.has\(r\.channel_id\)/, 'GroupCard must not infer group identity from a shared channel');
     assert.match(card, /max-w-5xl\s+lg:max-w-7xl\s+xl:max-w-\[1440px\]/, 'MorphingDialogContent must be widened for side-by-side layout');
 });
 
@@ -64,4 +68,16 @@ test('locales contain group.logs translations in zh_hans, en, and zh_hant', asyn
     assert.ok(zhHant.group.logs, 'zh_hant must have group.logs');
     assert.equal(zhHant.group.logs.title, '運行日誌');
     assert.equal(zhHant.group.logs.activeTitle, '活躍請求');
+});
+
+
+test('live request contract and views expose stable group and channel names', async () => {
+    const endpoint = await source('../src/api/endpoints/live-request.ts');
+    const active = await source('../src/components/modules/log/ActiveRequests.tsx');
+    const panel = await source('../src/components/modules/group/GroupLogsPanel.tsx');
+
+    assert.match(endpoint, /group_id:\s*number;/, 'LiveRequest must expose group_id');
+    assert.match(endpoint, /channel_name:\s*string;/, 'LiveRequest must expose channel_name');
+    assert.match(active, /request\.channel_name/, 'global active requests must prefer channel_name');
+    assert.match(panel, /req\.channel_name/, 'group active requests must prefer channel_name');
 });

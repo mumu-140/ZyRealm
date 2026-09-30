@@ -54,7 +54,7 @@ export function matchesGroupModel(requestedModel: string | undefined | null, gro
     if (!requestedModel) return false;
     const lower = requestedModel.toLowerCase();
     const groupNameLower = group.name.toLowerCase();
-    if (lower === groupNameLower || lower.includes(groupNameLower)) return true;
+    if (lower === groupNameLower) return true;
     if (group.match_regex) {
         try {
             const re = new RegExp(group.match_regex, 'i');
@@ -82,22 +82,18 @@ export function GroupLogsPanel({ group, onCloseDialog }: GroupLogsPanelProps) {
         [group.items],
     );
 
-    const channelIdSet = useMemo(() => new Set(channelIds), [channelIds]);
-
-    // Active requests matching this group (by name/regex match on requested_model, or channel match)
+    // Live requests carry the resolved backend group identity. Do not infer
+    // ownership from shared channels or model-name substrings.
     const activeRequests = useMemo(() => {
         const list = liveQuery.data?.requests ?? [];
-        return list.filter((req) => {
-            if (matchesGroupModel(req.requested_model, group)) return true;
-            if (req.channel_id > 0 && channelIdSet.has(req.channel_id)) return true;
-            return false;
-        });
-    }, [channelIdSet, group, liveQuery.data?.requests]);
+        return list.filter((req) => group.id !== undefined && req.group_id === group.id);
+    }, [group.id, liveQuery.data?.requests]);
 
     // History logs query for this group
     const historyQuery = useLogPage({
         channel_ids: channelIds.length > 0 ? channelIds : undefined,
-        keyword: group.name,
+        keyword: group.match_regex ? undefined : group.name,
+        keyword_mode: group.match_regex ? undefined : 'exact',
         page_size: 15,
         with_total: false,
         include_content: false,
@@ -106,13 +102,9 @@ export function GroupLogsPanel({ group, onCloseDialog }: GroupLogsPanelProps) {
     const historyLogs = useMemo(() => {
         const list = historyQuery.data?.logs ?? [];
         return list
-            .filter((log) => {
-                if (matchesGroupModel(log.request_model_name, group)) return true;
-                if (log.channel > 0 && channelIdSet.has(log.channel)) return true;
-                return false;
-            })
+            .filter((log) => matchesGroupModel(log.request_model_name, group))
             .slice(0, 10);
-    }, [channelIdSet, group, historyQuery.data?.logs]);
+    }, [group, historyQuery.data?.logs]);
 
     const handleJumpToLogDetail = useCallback((logId: number) => {
         onCloseDialog?.();
@@ -263,7 +255,7 @@ export function GroupLogsPanel({ group, onCloseDialog }: GroupLogsPanelProps) {
 
                                             <div className="flex items-center justify-between text-[11px] text-muted-foreground">
                                                 <span className="truncate">
-                                                    {req.channel_id > 0 ? `Channel ${req.channel_id}` : (req.phase || 'routing')}
+                                                    {req.channel_id > 0 ? (req.channel_name || `Channel ${req.channel_id}`) : (req.phase || 'routing')}
                                                     {req.wire_attempt > 1 ? ` · try ${req.wire_attempt}` : ''}
                                                 </span>
                                                 <span className="text-[10px] uppercase font-mono">

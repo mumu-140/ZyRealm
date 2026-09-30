@@ -16,8 +16,9 @@ function protocolLabel(request: LiveRequest) {
 
 function routeLabel(request: LiveRequest) {
     if (request.channel_id <= 0) return 'Routing';
-    if (request.channel_key_id <= 0) return `Channel ${request.channel_id}`;
-    return `Channel ${request.channel_id} · Key ${request.channel_key_id}`;
+    const channel = request.channel_name || `Channel ${request.channel_id}`;
+    if (request.channel_key_id <= 0) return channel;
+    return `${channel} · Key ${request.channel_key_id}`;
 }
 
 function startedAtLabel(startedAt: number) {
